@@ -25,11 +25,11 @@ cat ~/.claude/sync-config.json
 레포를 최신 상태로 가져온다 (clone 또는 pull):
 
 ```bash
-if [ -d /tmp/claude-sync-repo/.git ]; then
-  cd /tmp/claude-sync-repo && git pull --rebase
+if [ -d ${TMPDIR:-/tmp}/claude-sync-repo/.git ]; then
+  cd ${TMPDIR:-/tmp}/claude-sync-repo && git pull --rebase
 else
-  rm -rf /tmp/claude-sync-repo
-  git clone <repo_url> /tmp/claude-sync-repo
+  rm -rf ${TMPDIR:-/tmp}/claude-sync-repo
+  git clone <repo_url> ${TMPDIR:-/tmp}/claude-sync-repo
 fi
 ```
 
@@ -42,7 +42,7 @@ python3 << 'PYEOF'
 import json, os, datetime
 
 HOME = os.path.expanduser("~")
-REPO = "/tmp/claude-sync-repo"
+REPO = "${TMPDIR:-/tmp}/claude-sync-repo"
 META = os.path.join(REPO, "sync-metadata.json")
 
 # 경로 매핑: 레포 상대경로 → 로컬 절대경로
@@ -139,7 +139,7 @@ for rel in sorted(all_files):
         # 메타데이터 있으면 충돌 분석
         if has_meta and rel in file_times:
             backed_mtime = file_times[rel]
-            local_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(local)).isoformat()
+            local_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(local), tz=datetime.timezone.utc).isoformat()
             if local_mtime > backed_mtime:
                 conflict.append(rel)
             else:

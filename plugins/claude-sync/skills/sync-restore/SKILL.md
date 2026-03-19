@@ -37,11 +37,11 @@ cat ~/.claude/sync-config.json
 ### 2. 레포에서 최신 상태 가져오기
 
 ```bash
-if [ -d /tmp/claude-sync-repo/.git ]; then
-  cd /tmp/claude-sync-repo && git pull --rebase
+if [ -d ${TMPDIR:-/tmp}/claude-sync-repo/.git ]; then
+  cd ${TMPDIR:-/tmp}/claude-sync-repo && git pull --rebase
 else
-  rm -rf /tmp/claude-sync-repo
-  git clone <repo_url> /tmp/claude-sync-repo
+  rm -rf ${TMPDIR:-/tmp}/claude-sync-repo
+  git clone <repo_url> ${TMPDIR:-/tmp}/claude-sync-repo
 fi
 ```
 
@@ -53,7 +53,7 @@ fi
 python3 -c "
 import json, os, datetime
 
-meta_path = '/tmp/claude-sync-repo/sync-metadata.json'
+meta_path = '${TMPDIR:-/tmp}/claude-sync-repo/sync-metadata.json'
 if not os.path.exists(meta_path):
     print('메타데이터 없음 — 전체 비교 모드로 전환')
     exit(0)
@@ -80,7 +80,7 @@ for repo_rel, backed_up_mtime in file_times.items():
         status['repo_only'].append(repo_rel)
         continue
 
-    local_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(local)).isoformat()
+    local_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(local), tz=datetime.timezone.utc).isoformat()
     if local_mtime > backed_up_mtime:
         status['conflict'].append((repo_rel, backed_up_mtime, local_mtime))
     else:
@@ -102,7 +102,7 @@ print(json.dumps(status, indent=2, default=str))
 
 1. 충돌 파일 목록과 각각의 diff를 보여준다:
    ```bash
-   diff /tmp/claude-sync-repo/<path> ~/.claude/<path>
+   diff ${TMPDIR:-/tmp}/claude-sync-repo/<path> ~/.claude/<path>
    ```
 
 2. 복원을 **전체 중단**한다. 어떤 파일도 덮어쓰지 않는다.
@@ -126,14 +126,22 @@ print(json.dumps(status, indent=2, default=str))
 사용자가 확인하면 파일들을 복사한다:
 
 ```bash
-# agents 복원 (레포에 있는 경우만)
-[ -d /tmp/claude-sync-repo/agents ] && cp -r /tmp/claude-sync-repo/agents/ ~/.claude/agents/
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+
+# agents 복원 (레포에 있는 경우만) — 기존 디렉토리를 먼저 정리하여 삭제된 파일이 잔존하지 않게 한다
+if [ -d "$SYNC_REPO/agents" ]; then
+  rm -rf ~/.claude/agents
+  cp -r "$SYNC_REPO/agents/" ~/.claude/agents/
+fi
 
 # skills 복원 (레포에 있는 경우만)
-[ -d /tmp/claude-sync-repo/skills ] && cp -r /tmp/claude-sync-repo/skills/ ~/.claude/skills/
+if [ -d "$SYNC_REPO/skills" ]; then
+  rm -rf ~/.claude/skills
+  cp -r "$SYNC_REPO/skills/" ~/.claude/skills/
+fi
 
 # CLAUDE.md 복원
-[ -f /tmp/claude-sync-repo/CLAUDE.md ] && cp /tmp/claude-sync-repo/CLAUDE.md ~/.claude/CLAUDE.md
+[ -f "$SYNC_REPO/CLAUDE.md" ] && cp "$SYNC_REPO/CLAUDE.md" ~/.claude/CLAUDE.md
 ```
 
 레포에 없는 디렉토리는 건너뛴다.

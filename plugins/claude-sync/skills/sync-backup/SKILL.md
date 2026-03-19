@@ -67,21 +67,21 @@ EOF
 
 ### 2. 레포 준비
 
-작업 디렉토리는 `/tmp/claude-sync-repo`를 사용한다.
+작업 디렉토리는 `${TMPDIR:-/tmp}/claude-sync-repo`를 사용한다.
 
 ```bash
-if [ -d /tmp/claude-sync-repo/.git ]; then
-  cd /tmp/claude-sync-repo && git pull --rebase
+if [ -d ${TMPDIR:-/tmp}/claude-sync-repo/.git ]; then
+  cd ${TMPDIR:-/tmp}/claude-sync-repo && git pull --rebase
 else
-  rm -rf /tmp/claude-sync-repo
-  git clone <repo_url> /tmp/claude-sync-repo
+  rm -rf ${TMPDIR:-/tmp}/claude-sync-repo
+  git clone <repo_url> ${TMPDIR:-/tmp}/claude-sync-repo
 fi
 ```
 
 레포가 비어 있으면(최초) 초기 커밋을 생성한다:
 
 ```bash
-cd /tmp/claude-sync-repo
+cd ${TMPDIR:-/tmp}/claude-sync-repo
 git commit --allow-empty -m "initial commit"
 git push -u origin main
 ```
@@ -91,7 +91,7 @@ git push -u origin main
 `.syncignore`가 있으면 해당 패턴에 매칭되는 파일을 제외한다.
 
 ```bash
-cd /tmp/claude-sync-repo
+cd ${TMPDIR:-/tmp}/claude-sync-repo
 
 # agents 복사
 rm -rf agents/
@@ -110,7 +110,7 @@ if [ -f ~/.claude/.syncignore ]; then
     # 빈 줄과 주석 건너뛰기
     [[ -z "$pattern" || "$pattern" == \#* ]] && continue
     # 매칭되는 파일 삭제 (레포 작업 디렉토리에서)
-    find . -path "./.git" -prune -o -path "./$pattern" -print | xargs rm -rf 2>/dev/null || true
+    find . -path "./.git" -prune -o -path "./$pattern" -print | while IFS= read -r f; do rm -rf "$f"; done
   done < ~/.claude/.syncignore
   echo ".syncignore 적용됨"
 fi
@@ -153,7 +153,7 @@ def get_file_times(base_path, prefix=''):
         return result
     if os.path.isfile(base_path):
         mtime = os.path.getmtime(base_path)
-        result[prefix or os.path.basename(base_path)] = datetime.datetime.fromtimestamp(mtime).isoformat()
+        result[prefix or os.path.basename(base_path)] = datetime.datetime.fromtimestamp(mtime, tz=datetime.timezone.utc).isoformat()
         return result
     for root, dirs, files in os.walk(base_path):
         for f in files:
@@ -161,17 +161,17 @@ def get_file_times(base_path, prefix=''):
             rel = os.path.relpath(full, base_path)
             key = f'{prefix}/{rel}' if prefix else rel
             mtime = os.path.getmtime(full)
-            result[key] = datetime.datetime.fromtimestamp(mtime).isoformat()
+            result[key] = datetime.datetime.fromtimestamp(mtime, tz=datetime.timezone.utc).isoformat()
     return result
 
 metadata = {
-    'backup_timestamp': datetime.datetime.now().isoformat(),
+    'backup_timestamp': datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
     'files': {}
 }
 metadata['files'].update(get_file_times(os.path.expanduser('~/.claude/agents'), 'agents'))
 metadata['files'].update(get_file_times(os.path.expanduser('~/.claude/skills'), 'skills'))
 metadata['files'].update(get_file_times(os.path.expanduser('~/.claude/CLAUDE.md'), 'CLAUDE.md'))
-metadata['files'].update({'plugins.json': datetime.datetime.now().isoformat()})
+metadata['files'].update({'plugins.json': datetime.datetime.now(tz=datetime.timezone.utc).isoformat()})
 
 print(json.dumps(metadata, indent=2))
 " > sync-metadata.json
@@ -270,8 +270,8 @@ cat > README.md << 'README'
 ### 방법 1: bootstrap.sh (빠른 복원)
 
 ```bash
-git clone <이 레포 URL> /tmp/claude-sync-repo
-bash /tmp/claude-sync-repo/bootstrap.sh
+git clone <이 레포 URL> ${TMPDIR:-/tmp}/claude-sync-repo
+bash ${TMPDIR:-/tmp}/claude-sync-repo/bootstrap.sh
 ```
 
 Git만 있으면 동작합니다. 파일 복원 후 플러그인 설치가 필요하면 Claude Code에서 `/sync-restore`를 실행하세요.
@@ -303,7 +303,7 @@ README
 ### 8. 커밋 & 푸시
 
 ```bash
-cd /tmp/claude-sync-repo
+cd ${TMPDIR:-/tmp}/claude-sync-repo
 git add -A
 git diff --cached --stat
 ```
