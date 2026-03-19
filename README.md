@@ -67,3 +67,19 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 - **충돌 감지**: 백업 시점 이후 로컬에서 수정된 파일이 있으면 restore를 전체 중단
 - **민감 정보 보호**: `settings.json` 원본은 레포에 올리지 않고, 플러그인 목록만 추출
 - **메타데이터**: 백업마다 파일별 수정 시각을 기록하여 충돌 판단에 활용
+
+## 보안
+
+CLAUDE.md나 에이전트 파일에 사내 URL, 내부 규칙 등 민감 정보가 포함될 수 있습니다. **백업 레포는 private으로 만드는 것을 권장합니다.**
+
+특정 파일을 백업에서 제외하려면 `~/.claude/.syncignore`를 만드세요 (gitignore 형식):
+
+```
+# 사내 전용 에이전트 제외
+agents/internal-*.md
+
+# 특정 스킬 제외
+skills/secret-tool/
+```
+
+다른 사람에게 설정을 공유할 때는 `.syncignore`로 민감 파일을 제외한 뒤 백업하면 됩니다.

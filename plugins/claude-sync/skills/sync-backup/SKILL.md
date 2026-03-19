@@ -31,6 +31,22 @@ Claude 설정 파일들을 Git 레포에 백업하는 스킬이다.
 
 settings.json에는 API 키 등 민감 정보가 포함될 수 있으므로, `enabledPlugins`와 `extraKnownMarketplaces` 필드만 추출하여 `plugins.json`으로 관리한다. settings.json 원본은 레포에 올리지 않는다.
 
+## 보안
+
+백업 레포에는 CLAUDE.md나 에이전트 파일에 사내 URL, 내부 규칙 등 민감 정보가 포함될 수 있다. 따라서:
+
+- **백업 레포는 private 권장**. 최초 실행 시 사용자에게 이 점을 안내한다.
+- **`.syncignore`** 파일로 특정 파일을 백업에서 제외할 수 있다. `~/.claude/.syncignore`에 gitignore 형식으로 패턴을 작성한다.
+
+`.syncignore` 예시:
+```
+# 사내 전용 에이전트 제외
+agents/internal-*.md
+
+# 특정 스킬 제외
+skills/secret-tool/
+```
+
 ## 실행 절차
 
 ### 1. 설정 확인
@@ -72,6 +88,8 @@ git push -u origin main
 
 ### 3. 파일 수집
 
+`.syncignore`가 있으면 해당 패턴에 매칭되는 파일을 제외한다.
+
 ```bash
 cd /tmp/claude-sync-repo
 
@@ -85,6 +103,17 @@ cp -r ~/.claude/skills/ skills/ 2>/dev/null || true
 
 # CLAUDE.md 복사
 cp ~/.claude/CLAUDE.md CLAUDE.md 2>/dev/null || true
+
+# .syncignore 적용
+if [ -f ~/.claude/.syncignore ]; then
+  while IFS= read -r pattern || [ -n "$pattern" ]; do
+    # 빈 줄과 주석 건너뛰기
+    [[ -z "$pattern" || "$pattern" == \#* ]] && continue
+    # 매칭되는 파일 삭제 (레포 작업 디렉토리에서)
+    find . -path "./.git" -prune -o -path "./$pattern" -print | xargs rm -rf 2>/dev/null || true
+  done < ~/.claude/.syncignore
+  echo ".syncignore 적용됨"
+fi
 ```
 
 ### 4. plugins.json 생성
