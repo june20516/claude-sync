@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-sync",
+  "owner": {
+    "name": "june20516"
+  },
+  "plugins": [
+    {
+      "name": "claude-sync",
+      "source": "./plugins/claude-sync",
+      "description": "Claude 설정 파일들을 Git 레포를 통해 기기 간 동기화하는 스킬 모음 (backup, restore, status)",
+      "version": "1.0.0",
+      "author": {
+        "name": "june20516"
+      },
+      "category": "utilities",
+      "homepage": "https://github.com/june20516/claude-sync"
+    }
+  ]
+}
