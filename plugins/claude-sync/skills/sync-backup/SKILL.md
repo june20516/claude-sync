@@ -122,22 +122,7 @@ fi
 settings.json에서 플러그인 관련 필드만 추출한다:
 
 ```bash
-if command -v jq &>/dev/null; then
-  jq '{enabledPlugins: .enabledPlugins, extraKnownMarketplaces: .extraKnownMarketplaces}' \
-    ~/.claude/settings.json > plugins.json
-else
-  python3 -c "
-import json
-with open('$HOME/.claude/settings.json') as f:
-    data = json.load(f)
-result = {}
-if 'enabledPlugins' in data:
-    result['enabledPlugins'] = data['enabledPlugins']
-if 'extraKnownMarketplaces' in data:
-    result['extraKnownMarketplaces'] = data['extraKnownMarketplaces']
-print(json.dumps(result, indent=2))
-" > plugins.json
-fi
+python3 ~/.claude/skills/sync-backup/scripts/extract_plugins.py plugins.json
 ```
 
 ### 5. mcp-servers.json 생성
@@ -145,22 +130,7 @@ fi
 `claude mcp list`의 출력을 파싱하여 MCP 서버 목록을 추출한다. 복원에 필요한 name, url, type만 저장한다.
 
 ```bash
-claude mcp list 2>/dev/null | python3 -c "
-import sys, json, re
-
-servers = []
-for line in sys.stdin:
-    line = line.strip()
-    m = re.match(r'^(.+?):\s+(\S+)\s+(?:\((\w+)\)\s+)?-\s+.+$', line)
-    if m:
-        servers.append({
-            'name': m.group(1).strip(),
-            'url': m.group(2).strip(),
-            'type': m.group(3) or 'stdio'
-        })
-
-print(json.dumps(servers, indent=2))
-" > mcp-servers.json
+claude mcp list 2>/dev/null | python3 ~/.claude/skills/sync-backup/scripts/parse_mcp.py mcp-servers.json
 ```
 
 ### 6. sync-metadata.json 생성
@@ -168,37 +138,7 @@ print(json.dumps(servers, indent=2))
 백업 시점의 메타데이터를 기록한다. 이 파일은 restore나 status에서 충돌 판단에 사용된다.
 
 ```bash
-python3 -c "
-import json, os, datetime
-
-def get_file_times(base_path, prefix=''):
-    result = {}
-    if not os.path.exists(base_path):
-        return result
-    if os.path.isfile(base_path):
-        mtime = os.path.getmtime(base_path)
-        result[prefix or os.path.basename(base_path)] = datetime.datetime.fromtimestamp(mtime, tz=datetime.timezone.utc).isoformat()
-        return result
-    for root, dirs, files in os.walk(base_path):
-        for f in files:
-            full = os.path.join(root, f)
-            rel = os.path.relpath(full, base_path)
-            key = f'{prefix}/{rel}' if prefix else rel
-            mtime = os.path.getmtime(full)
-            result[key] = datetime.datetime.fromtimestamp(mtime, tz=datetime.timezone.utc).isoformat()
-    return result
-
-metadata = {
-    'backup_timestamp': datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
-    'files': {}
-}
-metadata['files'].update(get_file_times(os.path.expanduser('~/.claude/agents'), 'agents'))
-metadata['files'].update(get_file_times(os.path.expanduser('~/.claude/skills'), 'skills'))
-metadata['files'].update(get_file_times(os.path.expanduser('~/.claude/CLAUDE.md'), 'CLAUDE.md'))
-metadata['files'].update({'plugins.json': datetime.datetime.now(tz=datetime.timezone.utc).isoformat()})
-
-print(json.dumps(metadata, indent=2))
-" > sync-metadata.json
+python3 ~/.claude/skills/sync-backup/scripts/generate_metadata.py sync-metadata.json
 ```
 
 생성되는 파일 예시:
