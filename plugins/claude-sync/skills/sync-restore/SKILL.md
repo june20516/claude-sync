@@ -26,6 +26,17 @@ Git 레포에서 Claude 설정 파일들을 복원하는 스킬이다.
 
 ## 실행 절차
 
+### 0. 스크립트 경로 확인
+
+이 스킬에서 사용하는 스크립트들의 경로를 먼저 찾는다. 이후 모든 단계에서 `$SYNC_SCRIPTS`로 참조한다.
+
+```bash
+SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-restore/scripts" -type d 2>/dev/null | head -1)
+echo "Scripts: $SYNC_SCRIPTS"
+```
+
+이 경로를 찾지 못하면 플러그인이 제대로 설치되지 않은 것이므로 사용자에게 안내한다.
+
 ### 1. 설정 확인
 
 ```bash
@@ -50,7 +61,7 @@ fi
 레포의 `sync-metadata.json`을 읽어 각 파일에 대해 충돌 가능성을 판단한다:
 
 ```bash
-python3 ~/.claude/skills/sync-restore/scripts/analyze_conflicts.py ${TMPDIR:-/tmp}/claude-sync-repo
+python3 $SYNC_SCRIPTS/analyze_conflicts.py ${TMPDIR:-/tmp}/claude-sync-repo
 ```
 
 상태 분류:

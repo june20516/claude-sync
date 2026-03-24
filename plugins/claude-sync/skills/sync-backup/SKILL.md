@@ -53,6 +53,17 @@ skills/secret-tool/
 
 ## 실행 절차
 
+### 0. 스크립트 경로 확인
+
+이 스킬에서 사용하는 스크립트들의 경로를 먼저 찾는다. 이후 모든 단계에서 `$SYNC_SCRIPTS`로 참조한다.
+
+```bash
+SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-backup/scripts" -type d 2>/dev/null | head -1)
+echo "Scripts: $SYNC_SCRIPTS"
+```
+
+이 경로를 찾지 못하면 플러그인이 제대로 설치되지 않은 것이므로 사용자에게 안내한다.
+
 ### 1. 설정 확인
 
 ```bash
@@ -149,7 +160,7 @@ fi
 settings.json에서 플러그인 관련 필드만 추출한다:
 
 ```bash
-python3 ~/.claude/skills/sync-backup/scripts/extract_plugins.py plugins.json
+python3 $SYNC_SCRIPTS/extract_plugins.py plugins.json
 ```
 
 ### 6. mcp-servers.json 생성
@@ -157,7 +168,7 @@ python3 ~/.claude/skills/sync-backup/scripts/extract_plugins.py plugins.json
 `claude mcp list`의 출력을 파싱하여 MCP 서버 목록을 추출한다. 복원에 필요한 name, url, type만 저장한다.
 
 ```bash
-claude mcp list 2>/dev/null | python3 ~/.claude/skills/sync-backup/scripts/parse_mcp.py mcp-servers.json
+claude mcp list 2>/dev/null | python3 $SYNC_SCRIPTS/parse_mcp.py mcp-servers.json
 ```
 
 ### 7. sync-metadata.json 생성
@@ -165,7 +176,7 @@ claude mcp list 2>/dev/null | python3 ~/.claude/skills/sync-backup/scripts/parse
 백업 시점의 메타데이터를 기록한다. 이 파일은 restore나 status에서 충돌 판단에 사용된다.
 
 ```bash
-python3 ~/.claude/skills/sync-backup/scripts/generate_metadata.py sync-metadata.json
+python3 $SYNC_SCRIPTS/generate_metadata.py sync-metadata.json
 ```
 
 생성되는 파일 예시:
@@ -187,7 +198,7 @@ python3 ~/.claude/skills/sync-backup/scripts/generate_metadata.py sync-metadata.
 새 기기에서 Git과 이 레포 URL만으로 전체 설정을 복원할 수 있는 부트스트랩 스크립트를 레포에 복사한다.
 
 ```bash
-cp ~/.claude/skills/sync-backup/scripts/bootstrap.sh bootstrap.sh
+cp $SYNC_SCRIPTS/bootstrap.sh bootstrap.sh
 chmod +x bootstrap.sh
 ```
 
@@ -196,13 +207,13 @@ chmod +x bootstrap.sh
 백업 레포의 내용을 설명하는 README(영어)를 레포에 복사한다. 한국어 README가 필요한지 사용자에게 물어보고, 필요하면 함께 복사한다.
 
 ```bash
-cp ~/.claude/skills/sync-backup/scripts/backup-readme.md README.md
+cp $SYNC_SCRIPTS/backup-readme.md README.md
 ```
 
 사용자가 한국어 README도 원하면:
 
 ```bash
-cp ~/.claude/skills/sync-backup/scripts/backup-readme.ko.md README.ko.md
+cp $SYNC_SCRIPTS/backup-readme.ko.md README.ko.md
 ```
 
 ### 10. 커밋 & 푸시

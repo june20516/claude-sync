@@ -16,6 +16,17 @@ backup이나 restore 전에 "지금 상태가 어떤지" 확인하고 싶을 때
 
 ## 실행 절차
 
+### 0. 스크립트 경로 확인
+
+이 스킬에서 사용하는 스크립트들의 경로를 먼저 찾는다. 이후 모든 단계에서 `$SYNC_SCRIPTS`로 참조한다.
+
+```bash
+SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-status/scripts" -type d 2>/dev/null | head -1)
+echo "Scripts: $SYNC_SCRIPTS"
+```
+
+이 경로를 찾지 못하면 플러그인이 제대로 설치되지 않은 것이므로 사용자에게 안내한다.
+
 ### 1. 설정 확인 및 레포 준비
 
 ```bash
@@ -39,7 +50,7 @@ fi
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-python3 ~/.claude/skills/sync-status/scripts/check_status.py "$SYNC_REPO"
+python3 $SYNC_SCRIPTS/check_status.py "$SYNC_REPO"
 ```
 
 파일/플러그인 분석 이후, MCP 서버 비교도 수행한다:
@@ -47,7 +58,7 @@ python3 ~/.claude/skills/sync-status/scripts/check_status.py "$SYNC_REPO"
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 if [ -f "$SYNC_REPO/mcp-servers.json" ]; then
-  claude mcp list 2>/dev/null | python3 ~/.claude/skills/sync-status/scripts/compare_mcp.py "$SYNC_REPO/mcp-servers.json"
+  claude mcp list 2>/dev/null | python3 $SYNC_SCRIPTS/compare_mcp.py "$SYNC_REPO/mcp-servers.json"
 fi
 ```
 
