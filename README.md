@@ -23,6 +23,7 @@ claude plugin install claude-sync@claude-sync
 - `~/.claude/skills/` — 범용 스킬
 - `~/.claude/CLAUDE.md` — 글로벌 규칙
 - `~/.claude/settings.json` → `plugins.json` — 플러그인/마켓플레이스 목록 (민감 정보 제외)
+- `claude mcp list` → `mcp-servers.json` — MCP 서버 목록 (이름, URL, 타입)
 
 ## 사용 흐름
 
@@ -65,7 +66,7 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 ## 안전 장치
 
 - **충돌 감지**: 백업 시점 이후 로컬에서 수정된 파일이 있으면 restore를 전체 중단
-- **민감 정보 보호**: `settings.json` 원본은 레포에 올리지 않고, 플러그인 목록만 추출
+- **민감 정보 보호**: `settings.json` 원본은 레포에 올리지 않고, 플러그인/MCP 서버 목록만 추출
 - **메타데이터**: 백업마다 파일별 수정 시각을 기록하여 충돌 판단에 활용
 
 ## 보안

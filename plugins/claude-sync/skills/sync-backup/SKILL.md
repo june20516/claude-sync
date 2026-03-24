@@ -263,13 +263,12 @@ EOF
   echo "✓ sync-config.json 생성됨 (repo: $REPO_URL)"
 fi
 
-# 플러그인 복원 안내
-if [ -f "$SCRIPT_DIR/plugins.json" ]; then
+# 플러그인 및 MCP 서버 복원 안내
+if [ -f "$SCRIPT_DIR/plugins.json" ] || [ -f "$SCRIPT_DIR/mcp-servers.json" ]; then
   echo ""
-  echo "=== 플러그인 설치 ==="
-  echo "plugins.json에 기록된 플러그인을 설치하려면"
+  echo "=== 플러그인 및 MCP 서버 설치 ==="
+  echo "plugins.json, mcp-servers.json에 기록된 항목을 설치하려면"
   echo "Claude Code에서 /sync-restore 를 실행하세요."
-  echo "(또는 수동으로 claude plugin install 명령을 사용하세요)"
 fi
 
 echo ""
@@ -320,6 +319,7 @@ Claude Code에서:
 - `CLAUDE.md` — 글로벌 규칙
 - `plugins.json` — 플러그인/마켓플레이스 목록 (settings.json에서 추출, 민감 정보 미포함)
 - `sync-metadata.json` — 파일별 수정 시각 (충돌 감지용)
+- `mcp-servers.json` — MCP 서버 목록 (이름, URL, 타입)
 - `bootstrap.sh` — 새 기기용 복원 스크립트
 README
 ```

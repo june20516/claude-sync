@@ -1,5 +1,5 @@
 {
   "name": "claude-sync",
-  "description": "Claude 설정(agents, skills, CLAUDE.md, 플러그인 목록)을 Git 레포로 백업/복원/상태확인하는 스킬 모음",
+  "description": "Claude 설정(agents, skills, CLAUDE.md, 플러그인 목록, MCP 서버)을 Git 레포로 백업/복원/상태확인하는 스킬 모음",
   "version": "1.0.0"
 }
