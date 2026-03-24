@@ -1,86 +1,86 @@
 # claude-sync
 
-Claude Code 설정을 Git 레포를 통해 기기 간 동기화하는 플러그인.
+A Claude Code plugin that syncs your settings across devices via a Git repository.
 
-## 설치
+## Installation
 
 ```bash
 claude plugin marketplace add claude-sync --source github --repo june20516/claude-sync
 claude plugin install claude-sync@claude-sync
 ```
 
-## 스킬
+## Skills
 
-| 명령어 | 설명 |
-|--------|------|
-| `/sync-backup` | 로컬 설정을 Git 레포에 백업 & push |
-| `/sync-restore` | Git 레포에서 설정을 복원 (충돌 시 안전 중단) |
-| `/sync-status` | 로컬과 레포 간 차이를 확인 (dry-run) |
+| Command | Description |
+|---------|-------------|
+| `/sync-backup` | Back up local settings to a Git repo and push |
+| `/sync-restore` | Restore settings from a Git repo (aborts safely on conflicts) |
+| `/sync-status` | Show differences between local and repo (dry-run) |
 
-## 동기화 대상
+## What Gets Synced
 
-- `~/.claude/agents/` — 커스텀 에이전트
-- `~/.claude/skills/` — 범용 스킬
-- `~/.claude/CLAUDE.md` — 글로벌 규칙
-- `~/.claude/settings.json` → `plugins.json` — 플러그인/마켓플레이스 목록 (민감 정보 제외)
-- `claude mcp list` → `mcp-servers.json` — MCP 서버 목록 (이름, URL, 타입)
+- `~/.claude/agents/` — Custom agents
+- `~/.claude/skills/` — General-purpose skills
+- `~/.claude/CLAUDE.md` — Global rules
+- `~/.claude/settings.json` -> `plugins.json` — Plugin/marketplace list (sensitive data excluded)
+- `claude mcp list` -> `mcp-servers.json` — MCP server list (name, URL, type)
 
-## 사용 흐름
+## Usage
 
-### 기존 기기에서 백업
+### Back up from an existing device
 
 ```
 /sync-backup
 ```
 
-최초 실행 시 백업용 Git 레포 URL을 물어봅니다. 이후엔 자동으로 사용합니다.
+On first run, you'll be prompted for a backup Git repo URL. It will be reused automatically after that.
 
-### 새 기기에서 복원
+### Restore on a new device
 
-**방법 1: 플러그인 설치 후 복원**
+**Option 1: Install the plugin first, then restore**
 
 ```bash
 claude plugin marketplace add claude-sync --source github --repo june20516/claude-sync
 claude plugin install claude-sync@claude-sync
 ```
 
-Claude Code에서:
+Then in Claude Code:
 
 ```
 /sync-restore
 ```
 
-**방법 2: bootstrap.sh (Claude Code 없이도 가능)**
+**Option 2: bootstrap.sh (works without Claude Code)**
 
 ```bash
-git clone <백업-레포-url> /tmp/claude-sync-repo
+git clone <backup-repo-url> /tmp/claude-sync-repo
 bash /tmp/claude-sync-repo/bootstrap.sh
 ```
 
-### 변경 전 확인
+### Check before applying changes
 
 ```
 /sync-status
 ```
 
-## 안전 장치
+## Safety
 
-- **충돌 감지**: 백업 시점 이후 로컬에서 수정된 파일이 있으면 restore를 전체 중단
-- **민감 정보 보호**: `settings.json` 원본은 레포에 올리지 않고, 플러그인/MCP 서버 목록만 추출
-- **메타데이터**: 백업마다 파일별 수정 시각을 기록하여 충돌 판단에 활용
+- **Conflict detection**: Restore aborts entirely if any local files have been modified since the last backup
+- **Sensitive data protection**: The raw `settings.json` is never pushed to the repo — only plugin and MCP server lists are extracted
+- **Metadata tracking**: Each backup records per-file modification timestamps for conflict detection
 
-## 보안
+## Security
 
-CLAUDE.md나 에이전트 파일에 사내 URL, 내부 규칙 등 민감 정보가 포함될 수 있습니다. **백업 레포는 private으로 만드는 것을 권장합니다.**
+Your `CLAUDE.md` or agent files may contain sensitive information such as internal URLs or company-specific rules. **It is strongly recommended to keep your backup repo private.**
 
-특정 파일을 백업에서 제외하려면 `~/.claude/.syncignore`를 만드세요 (gitignore 형식):
+To exclude specific files from backup, create `~/.claude/.syncignore` (gitignore format):
 
 ```
-# 사내 전용 에이전트 제외
+# Exclude internal agents
 agents/internal-*.md
 
-# 특정 스킬 제외
+# Exclude specific skills
 skills/secret-tool/
 ```
 
-다른 사람에게 설정을 공유할 때는 `.syncignore`로 민감 파일을 제외한 뒤 백업하면 됩니다.
+When sharing your settings with others, use `.syncignore` to filter out sensitive files before backing up.
