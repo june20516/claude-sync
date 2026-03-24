@@ -193,10 +193,16 @@ chmod +x bootstrap.sh
 
 ### 9. README.md 복사
 
-백업 레포의 내용을 설명하는 README를 레포에 복사한다.
+백업 레포의 내용을 설명하는 README(영어)를 레포에 복사한다. 한국어 README가 필요한지 사용자에게 물어보고, 필요하면 함께 복사한다.
 
 ```bash
 cp ~/.claude/skills/sync-backup/scripts/backup-readme.md README.md
+```
+
+사용자가 한국어 README도 원하면:
+
+```bash
+cp ~/.claude/skills/sync-backup/scripts/backup-readme.ko.md README.ko.md
 ```
 
 ### 10. 커밋 & 푸시
