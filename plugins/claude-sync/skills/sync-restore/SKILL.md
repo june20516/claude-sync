@@ -129,7 +129,7 @@ fi
 plugins.json의 `extraKnownMarketplaces`에 있지만 로컬 settings.json에 없는 마켓플레이스를 추가한다:
 
 ```bash
-claude plugin marketplace add <marketplace-name> --source github --repo <owner/repo>
+claude plugin marketplace add <owner/repo>
 ```
 
 #### 7-2. 플러그인 설치
@@ -156,7 +156,7 @@ claude mcp list 2>/dev/null
 mcp-servers.json에 있지만 현재 등록되지 않은 서버를 추가한다:
 
 ```bash
-claude mcp add <name> <url>
+claude mcp add <name> <url> --transport http --scope user
 ```
 
 인증이 필요한 서버(예: Google Calendar)는 등록 후 별도 인증이 필요할 수 있다. 등록만 하고 인증은 사용자에게 안내한다.
