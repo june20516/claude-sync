@@ -28,6 +28,7 @@ Claude 설정 파일들을 Git 레포에 백업하는 스킬이다.
 | `~/.claude/skills/` | `skills/` | 범용 스킬들 |
 | `~/.claude/CLAUDE.md` | `CLAUDE.md` | 글로벌 규칙 |
 | `~/.claude/settings.json` → 추출 | `plugins.json` | 플러그인/마켓플레이스 목록만 |
+| `claude mcp list` → 추출 | `mcp-servers.json` | MCP 서버 이름과 URL |
 
 settings.json에는 API 키 등 민감 정보가 포함될 수 있으므로, `enabledPlugins`와 `extraKnownMarketplaces` 필드만 추출하여 `plugins.json`으로 관리한다. settings.json 원본은 레포에 올리지 않는다.
 
@@ -139,7 +140,30 @@ print(json.dumps(result, indent=2))
 fi
 ```
 
-### 5. sync-metadata.json 생성
+### 5. mcp-servers.json 생성
+
+`claude mcp list`의 출력을 파싱하여 MCP 서버 목록을 추출한다. 복원에 필요한 name, url, type만 저장한다.
+
+```bash
+claude mcp list 2>/dev/null | python3 -c "
+import sys, json, re
+
+servers = []
+for line in sys.stdin:
+    line = line.strip()
+    m = re.match(r'^(.+?):\s+(\S+)\s+(?:\((\w+)\)\s+)?-\s+.+$', line)
+    if m:
+        servers.append({
+            'name': m.group(1).strip(),
+            'url': m.group(2).strip(),
+            'type': m.group(3) or 'stdio'
+        })
+
+print(json.dumps(servers, indent=2))
+" > mcp-servers.json
+```
+
+### 6. sync-metadata.json 생성
 
 백업 시점의 메타데이터를 기록한다. 이 파일은 restore나 status에서 충돌 판단에 사용된다.
 
@@ -191,7 +215,7 @@ print(json.dumps(metadata, indent=2))
 }
 ```
 
-### 6. bootstrap.sh 생성
+### 7. bootstrap.sh 생성
 
 새 기기에서 Git과 이 레포 URL만으로 전체 설정을 복원할 수 있는 부트스트랩 스크립트를 생성한다. 이 스크립트는 레포에 함께 커밋된다.
 
@@ -255,7 +279,7 @@ BOOTSTRAP
 chmod +x bootstrap.sh
 ```
 
-### 7. README.md 생성
+### 8. README.md 생성
 
 백업 레포의 내용을 설명하는 README를 생성한다. 매 백업마다 갱신되므로 항상 최신 상태를 반영한다.
 
@@ -300,7 +324,7 @@ Claude Code에서:
 README
 ```
 
-### 8. 커밋 & 푸시
+### 9. 커밋 & 푸시
 
 ```bash
 cd ${TMPDIR:-/tmp}/claude-sync-repo
@@ -316,6 +340,6 @@ git commit -m "sync: backup claude settings ($(date +%Y-%m-%d %H:%M))"
 git push
 ```
 
-### 8. 결과 보고
+### 10. 결과 보고
 
 백업 완료 후 변경된 파일 목록과 결과를 사용자에게 요약해서 보여준다.

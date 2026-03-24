@@ -170,11 +170,32 @@ claude plugin install <plugin-name>
 
 주의: `claude plugin` 명령어가 존재하지 않거나 실패하면, plugins.json 내용을 보여주고 수동 설치를 안내한다.
 
-### 8. 결과 보고
+### 8. MCP 서버 복원
+
+`mcp-servers.json`이 있으면 현재 등록된 MCP 서버와 비교하여 누락된 서버를 추가한다.
+
+```bash
+# 현재 등록된 서버 목록
+claude mcp list 2>/dev/null
+```
+
+mcp-servers.json에 있지만 현재 등록되지 않은 서버를 추가한다:
+
+```bash
+claude mcp add <name> <url>
+```
+
+인증이 필요한 서버(예: Google Calendar)는 등록 후 별도 인증이 필요할 수 있다. 등록만 하고 인증은 사용자에게 안내한다.
+
+주의: `claude mcp` 명령어가 실패하면, mcp-servers.json 내용을 보여주고 수동 등록을 안내한다.
+
+### 9. 결과 보고
 
 복원 완료 후 다음을 요약해서 보여준다:
 
 - 복원된 파일 목록
 - 새로 설치된 플러그인 목록
-- 설치 실패한 플러그인 (있으면)
+- 새로 등록된 MCP 서버 목록
+- 인증이 필요한 MCP 서버 (있으면)
+- 설치 실패한 항목 (있으면)
 - 건너뛴 항목 (있으면)

@@ -204,6 +204,41 @@ print()
 PYEOF
 ```
 
+python 스크립트 이후, MCP 서버 비교도 수행한다:
+
+```bash
+# mcp-servers.json이 레포에 있으면 현재 등록된 서버와 비교
+if [ -f "$SYNC_REPO/mcp-servers.json" ]; then
+  claude mcp list 2>/dev/null | python3 -c "
+import sys, json, re
+
+# 현재 등록된 서버 파싱
+current = set()
+for line in sys.stdin:
+    m = re.match(r'^(.+?):\s+', line.strip())
+    if m:
+        current.add(m.group(1).strip())
+
+# 백업된 서버 로드
+with open('$SYNC_REPO/mcp-servers.json') as f:
+    backed = json.load(f)
+backed_names = {s['name'] for s in backed}
+
+only_repo = backed_names - current
+only_local = current - backed_names
+
+if only_repo or only_local:
+    print('\nMCP 서버 차이:')
+    for s in only_repo:
+        print(f'  + 레포에만: {s}')
+    for s in only_local:
+        print(f'  - 로컬에만: {s}')
+else:
+    print('\nMCP 서버: 동일')
+"
+fi
+```
+
 ### 3. 결과 요약
 
 분석 결과를 사용자에게 보여준다. 이 스킬은 아무것도 변경하지 않으므로, 필요한 다음 단계를 안내한다:
