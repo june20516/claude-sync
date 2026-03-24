@@ -14,11 +14,14 @@ Claude 설정 파일들을 Git 레포에 백업하는 스킬이다.
 
 ```json
 {
-  "repo_url": "git@github.com:user/claude-sync.git"
+  "repo_url": "git@github.com:user/claude-sync.git",
+  "git_user_name": "Your Name",
+  "git_user_email": "you@example.com"
 }
 ```
 
-최초 실행 시 이 파일이 없으면 사용자에게 Git 레포 URL을 물어보고 저장한다.
+- 최초 실행 시 이 파일이 없으면 사용자에게 Git 레포 URL을 물어보고 저장한다.
+- `git_user_name`과 `git_user_email`은 선택 사항이다. 설정하면 백업 레포에 로컬 git config로 적용된다. 설정하지 않으면 글로벌 git config를 그대로 사용한다. 임시 디렉토리에 클론하므로 `includeIf` 기반 설정이 적용되지 않을 수 있어 필요한 경우 여기에 명시한다.
 
 ## 동기화 대상
 
@@ -87,7 +90,31 @@ git commit --allow-empty -m "initial commit"
 git push -u origin main
 ```
 
-### 3. 파일 수집
+### 3. Git User 설정
+
+`sync-config.json`에 `git_user_name`과 `git_user_email`이 있으면 레포에 로컬 설정을 적용한다. 없으면 이 단계를 건너뛴다(글로벌 설정 사용).
+
+```bash
+cd ${TMPDIR:-/tmp}/claude-sync-repo
+# sync-config.json에서 git_user_name, git_user_email 읽기
+GIT_USER_NAME=$(python3 -c "import json; c=json.load(open('$HOME/.claude/sync-config.json')); print(c.get('git_user_name',''))")
+GIT_USER_EMAIL=$(python3 -c "import json; c=json.load(open('$HOME/.claude/sync-config.json')); print(c.get('git_user_email',''))")
+
+if [ -n "$GIT_USER_NAME" ]; then
+  git config user.name "$GIT_USER_NAME"
+fi
+if [ -n "$GIT_USER_EMAIL" ]; then
+  git config user.email "$GIT_USER_EMAIL"
+fi
+```
+
+만약 `git_user_name`/`git_user_email`이 없고, 레포에서 `git config user.email`도 비어있으면(글로벌 설정도 없는 상태), 사용자에게 안내한다:
+
+> "백업 레포가 임시 디렉토리에 있어 gitconfig의 includeIf 조건에 매칭되지 않을 수 있습니다. `~/.claude/sync-config.json`에 `git_user_name`과 `git_user_email`을 추가하면 이 레포에 로컬로 적용됩니다."
+
+사용자가 이름/이메일을 알려주면 `sync-config.json`에 저장하고 레포에 적용한다. 스킵하겠다고 하면 그대로 진행한다.
+
+### 4. 파일 수집
 
 `.syncignore`가 있으면 해당 패턴에 매칭되는 파일을 제외한다.
 
@@ -117,7 +144,7 @@ if [ -f ~/.claude/.syncignore ]; then
 fi
 ```
 
-### 4. plugins.json 생성
+### 5. plugins.json 생성
 
 settings.json에서 플러그인 관련 필드만 추출한다:
 
@@ -125,7 +152,7 @@ settings.json에서 플러그인 관련 필드만 추출한다:
 python3 ~/.claude/skills/sync-backup/scripts/extract_plugins.py plugins.json
 ```
 
-### 5. mcp-servers.json 생성
+### 6. mcp-servers.json 생성
 
 `claude mcp list`의 출력을 파싱하여 MCP 서버 목록을 추출한다. 복원에 필요한 name, url, type만 저장한다.
 
@@ -133,7 +160,7 @@ python3 ~/.claude/skills/sync-backup/scripts/extract_plugins.py plugins.json
 claude mcp list 2>/dev/null | python3 ~/.claude/skills/sync-backup/scripts/parse_mcp.py mcp-servers.json
 ```
 
-### 6. sync-metadata.json 생성
+### 7. sync-metadata.json 생성
 
 백업 시점의 메타데이터를 기록한다. 이 파일은 restore나 status에서 충돌 판단에 사용된다.
 
@@ -155,116 +182,24 @@ python3 ~/.claude/skills/sync-backup/scripts/generate_metadata.py sync-metadata.
 }
 ```
 
-### 7. bootstrap.sh 생성
+### 8. bootstrap.sh 복사
 
-새 기기에서 Git과 이 레포 URL만으로 전체 설정을 복원할 수 있는 부트스트랩 스크립트를 생성한다. 이 스크립트는 레포에 함께 커밋된다.
+새 기기에서 Git과 이 레포 URL만으로 전체 설정을 복원할 수 있는 부트스트랩 스크립트를 레포에 복사한다.
 
 ```bash
-cat > bootstrap.sh << 'BOOTSTRAP'
-#!/bin/bash
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CLAUDE_DIR="$HOME/.claude"
-
-echo "=== Claude 설정 복원 (bootstrap) ==="
-
-# ~/.claude 디렉토리 생성
-mkdir -p "$CLAUDE_DIR"
-
-# agents 복원
-if [ -d "$SCRIPT_DIR/agents" ]; then
-  mkdir -p "$CLAUDE_DIR/agents"
-  cp -r "$SCRIPT_DIR/agents/" "$CLAUDE_DIR/agents/"
-  echo "✓ agents 복원됨"
-fi
-
-# skills 복원
-if [ -d "$SCRIPT_DIR/skills" ]; then
-  mkdir -p "$CLAUDE_DIR/skills"
-  cp -r "$SCRIPT_DIR/skills/" "$CLAUDE_DIR/skills/"
-  echo "✓ skills 복원됨"
-fi
-
-# CLAUDE.md 복원
-if [ -f "$SCRIPT_DIR/CLAUDE.md" ]; then
-  cp "$SCRIPT_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
-  echo "✓ CLAUDE.md 복원됨"
-fi
-
-# sync-config.json 생성 (레포 URL 자동 감지)
-REPO_URL=$(cd "$SCRIPT_DIR" && git remote get-url origin 2>/dev/null || echo "")
-if [ -n "$REPO_URL" ] && [ ! -f "$CLAUDE_DIR/sync-config.json" ]; then
-  cat > "$CLAUDE_DIR/sync-config.json" << EOF
-{
-  "repo_url": "$REPO_URL"
-}
-EOF
-  echo "✓ sync-config.json 생성됨 (repo: $REPO_URL)"
-fi
-
-# 플러그인 및 MCP 서버 복원 안내
-if [ -f "$SCRIPT_DIR/plugins.json" ] || [ -f "$SCRIPT_DIR/mcp-servers.json" ]; then
-  echo ""
-  echo "=== 플러그인 및 MCP 서버 설치 ==="
-  echo "plugins.json, mcp-servers.json에 기록된 항목을 설치하려면"
-  echo "Claude Code에서 /sync-restore 를 실행하세요."
-fi
-
-echo ""
-echo "=== 완료 ==="
-echo "Claude Code를 시작하면 복원된 설정이 적용됩니다."
-BOOTSTRAP
+cp ~/.claude/skills/sync-backup/scripts/bootstrap.sh bootstrap.sh
 chmod +x bootstrap.sh
 ```
 
-### 8. README.md 생성
+### 9. README.md 복사
 
-백업 레포의 내용을 설명하는 README를 생성한다. 매 백업마다 갱신되므로 항상 최신 상태를 반영한다.
-
-```bash
-cat > README.md << 'README'
-# Claude Settings Backup
-
-이 레포는 Claude Code 설정의 백업본입니다.
-
-## 복원 방법
-
-### 방법 1: bootstrap.sh (빠른 복원)
+백업 레포의 내용을 설명하는 README를 레포에 복사한다.
 
 ```bash
-git clone <이 레포 URL> ${TMPDIR:-/tmp}/claude-sync-repo
-bash ${TMPDIR:-/tmp}/claude-sync-repo/bootstrap.sh
+cp ~/.claude/skills/sync-backup/scripts/backup-readme.md README.md
 ```
 
-Git만 있으면 동작합니다. 파일 복원 후 플러그인 설치가 필요하면 Claude Code에서 `/sync-restore`를 실행하세요.
-
-### 방법 2: claude-sync 플러그인
-
-```bash
-claude plugin marketplace add claude-sync --source github --repo june20516/claude-sync
-claude plugin install claude-sync@claude-sync
-```
-
-Claude Code에서:
-
-```
-/sync-restore
-```
-
-## 포함된 내용
-
-- `agents/` — 커스텀 에이전트 정의
-- `skills/` — 범용 스킬
-- `CLAUDE.md` — 글로벌 규칙
-- `plugins.json` — 플러그인/마켓플레이스 목록 (settings.json에서 추출, 민감 정보 미포함)
-- `sync-metadata.json` — 파일별 수정 시각 (충돌 감지용)
-- `mcp-servers.json` — MCP 서버 목록 (이름, URL, 타입)
-- `bootstrap.sh` — 새 기기용 복원 스크립트
-README
-```
-
-### 9. 커밋 & 푸시
+### 10. 커밋 & 푸시
 
 ```bash
 cd ${TMPDIR:-/tmp}/claude-sync-repo
@@ -280,6 +215,6 @@ git commit -m "sync: backup claude settings ($(date +%Y-%m-%d %H:%M))"
 git push
 ```
 
-### 10. 결과 보고
+### 11. 결과 보고
 
 백업 완료 후 변경된 파일 목록과 결과를 사용자에게 요약해서 보여준다.
