@@ -243,23 +243,24 @@ git diff --cached --stat
 - **변경사항이 있으면**: 변경 내용을 간단히 요약하고, 커밋 & 푸시한다:
 
 ```bash
-git commit -m "sync: backup claude settings ($(date +%Y-%m-%d %H:%M))"
-git push
+if git commit -m "sync: backup claude settings ($(date '+%Y-%m-%d %H:%M'))" && git push; then
+  mapfile -t PUSHED_RELS < <(python3 -c "
+import json
+data = json.load(open('/tmp/claude-sync-reconcile.json'))
+for r in data.get('push', []):
+    print(r)
+")
+  if [ "${#PUSHED_RELS[@]}" -gt 0 ]; then
+    python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${PUSHED_RELS[@]}"
+  fi
+fi
 ```
 
 ### 11. base(.sync-state) 갱신
 
-커밋 & 푸시에 성공한 경우, push된 각 파일의 base를 방금 올린 로컬 내용으로 갱신한다. 이 base가 다음 sync의 merge-base가 된다:
+커밋 & 푸시에 **성공한 경우에만** push된 각 파일의 base를 방금 올린 로컬 내용으로 갱신한다. 이 base가 다음 sync의 merge-base가 된다. base 갱신은 반드시 push 성공 이후에 실행되며, push가 실패하면 base는 변경되지 않는다.
 
-```bash
-# reconcile에서 저장한 push 목록을 읽어 각 파일의 base를 갱신
-PUSHED_RELS=$(python3 -c "import json, sys; data=json.load(open('/tmp/claude-sync-reconcile.json')); print(' '.join(data.get('push', [])))")
-if [ -n "$PUSHED_RELS" ]; then
-  python3 $SYNC_SCRIPTS/update_base.py "$HOME/.claude" $PUSHED_RELS
-fi
-```
-
-`update_base.py`는 각 rel 파일을 `~/.claude/<rel>`에서 읽어 `~/.claude/.sync-state/base/<rel>`에 기록한다. **핵심 계약: push 성공 파일의 base ← 로컬 내용.**
+`update_base.py`는 각 rel 파일을 `~/.claude/<rel>`에서 읽어 `~/.claude/.sync-state/base/<rel>`에 기록한다. **핵심 계약: push 성공 파일의 base ← 로컬 내용.** base 갱신은 독립적으로 실행되거나 push 실패 후 실행되지 않는다.
 
 ### 12. 결과 보고
 

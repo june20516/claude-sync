@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """claude mcp list의 출력을 stdin으로 받아 name, url, type을 추출하여 JSON으로 저장한다."""
-import sys, json, re
+import sys
+import json
+import re
 
 output_path = sys.argv[1] if len(sys.argv) > 1 else "mcp-servers.json"
 

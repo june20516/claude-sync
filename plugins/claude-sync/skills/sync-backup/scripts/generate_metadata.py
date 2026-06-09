@@ -5,10 +5,6 @@ import json
 import os
 import sys
 
-output_path = sys.argv[1] if len(sys.argv) > 1 else "sync-metadata.json"
-claude_dir = os.path.expanduser("~/.claude")
-
-
 def file_sha256(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -30,11 +26,19 @@ def collect(base, prefix):
     return result
 
 
-metadata = {"files": {}}
-metadata["files"].update(collect(os.path.join(claude_dir, "agents"), "agents"))
-metadata["files"].update(collect(os.path.join(claude_dir, "skills"), "skills"))
-metadata["files"].update(collect(os.path.join(claude_dir, "CLAUDE.md"), "CLAUDE.md"))
+def main():
+    output_path = sys.argv[1] if len(sys.argv) > 1 else "sync-metadata.json"
+    claude_dir = os.path.expanduser("~/.claude")
 
-with open(output_path, "w") as f:
-    json.dump(metadata, f, indent=2)
-    f.write("\n")
+    metadata = {"files": {}}
+    metadata["files"].update(collect(os.path.join(claude_dir, "agents"), "agents"))
+    metadata["files"].update(collect(os.path.join(claude_dir, "skills"), "skills"))
+    metadata["files"].update(collect(os.path.join(claude_dir, "CLAUDE.md"), "CLAUDE.md"))
+
+    with open(output_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+        f.write("\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -21,8 +21,11 @@ def update_base_for_pushed(source_root, rels):
     """각 rel 파일의 base를 source_root/<rel>의 내용으로 갱신한다."""
     for rel in rels:
         path = os.path.join(source_root, rel)
-        with open(path, "rb") as f:
-            ss.write_base(rel, f.read())
+        try:
+            with open(path, "rb") as f:
+                ss.write_base(rel, f.read())
+        except FileNotFoundError:
+            print("경고: %s 이(가) push 직후 사라짐, base 갱신 건너뜀" % rel, file=sys.stderr)
 
 
 def main():
