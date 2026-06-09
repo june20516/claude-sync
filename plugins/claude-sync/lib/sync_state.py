@@ -105,3 +105,20 @@ def three_way_merge(local_bytes, base_bytes, repo_bytes):
     if proc.returncode < 0:
         raise RuntimeError("git merge-file 실패: %r" % proc.stderr)
     return proc.stdout, proc.returncode
+
+
+SYNCED_DIRS = ("agents", "skills")
+SYNCED_FILES = ("CLAUDE.md",)
+
+
+def iter_synced_relpaths(root):
+    """root(=~/.claude 또는 레포) 아래 동기화 대상 상대경로를 yield."""
+    for name in SYNCED_DIRS:
+        d = os.path.join(root, name)
+        if os.path.isdir(d):
+            for r, _, files in os.walk(d):
+                for f in files:
+                    yield os.path.relpath(os.path.join(r, f), root)
+    for name in SYNCED_FILES:
+        if os.path.isfile(os.path.join(root, name)):
+            yield name

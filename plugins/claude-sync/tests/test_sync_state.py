@@ -92,3 +92,15 @@ def test_merge_identical_change_no_conflict():
     merged, conflicts = ss.three_way_merge(local, base, repo)
     assert conflicts == 0
     assert merged == b"a\nZ\nc\n"
+
+
+def test_iter_synced_relpaths(tmp_path):
+    root = tmp_path
+    (root / "agents").mkdir()
+    (root / "agents" / "a.md").write_text("x")
+    (root / "skills" / "s").mkdir(parents=True)
+    (root / "skills" / "s" / "SKILL.md").write_text("y")
+    (root / "CLAUDE.md").write_text("z")
+    (root / "settings.json").write_text("{}")  # 대상 아님
+    got = set(ss.iter_synced_relpaths(str(root)))
+    assert got == {"agents/a.md", "skills/s/SKILL.md", "CLAUDE.md"}
