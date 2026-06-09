@@ -79,3 +79,29 @@ def classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
     if changed_local and changed_remote:
         return "conflict"
     return "in_sync"  # L==S and R==S면 L==R이라 도달 불가 — 방어
+
+
+def three_way_merge(local_bytes, base_bytes, repo_bytes):
+    """git merge-file로 3-way 머지.
+
+    반환 (merged_bytes, conflict_count).
+    conflict_count == 0 이면 깨끗한 자동 병합(안 겹침).
+    > 0 이면 그 수만큼 겹친 충돌 영역.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        lp = os.path.join(d, "local")
+        bp = os.path.join(d, "base")
+        rp = os.path.join(d, "repo")
+        with open(lp, "wb") as f:
+            f.write(local_bytes)
+        with open(bp, "wb") as f:
+            f.write(base_bytes)
+        with open(rp, "wb") as f:
+            f.write(repo_bytes)
+        proc = subprocess.run(
+            ["git", "merge-file", "-p", "--diff3", lp, bp, rp],
+            capture_output=True,
+        )
+    if proc.returncode < 0:
+        raise RuntimeError("git merge-file 실패: %r" % proc.stderr)
+    return proc.stdout, proc.returncode

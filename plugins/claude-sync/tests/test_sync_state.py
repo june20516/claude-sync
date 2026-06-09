@@ -65,3 +65,30 @@ def test_classify_conflict_both_changed():
 def test_classify_conflict_no_base():
     # base 없음 + 둘 다 존재 + 다름 → conflict
     assert ss.classify("L", "R", None, True, True) == "conflict"
+
+
+def test_merge_clean_non_overlapping():
+    base = b"a\nb\nc\nd\ne\n"
+    local = b"a\nB\nc\nd\ne\n"   # 2번 줄 변경
+    repo = b"a\nb\nc\nD\ne\n"    # 4번 줄 변경
+    merged, conflicts = ss.three_way_merge(local, base, repo)
+    assert conflicts == 0
+    assert merged == b"a\nB\nc\nD\ne\n"
+
+
+def test_merge_conflict_overlapping():
+    base = b"a\nb\nc\n"
+    local = b"a\nX\nc\n"
+    repo = b"a\nY\nc\n"
+    merged, conflicts = ss.three_way_merge(local, base, repo)
+    assert conflicts > 0
+    assert b"<<<<<<<" in merged
+
+
+def test_merge_identical_change_no_conflict():
+    base = b"a\nb\nc\n"
+    local = b"a\nZ\nc\n"
+    repo = b"a\nZ\nc\n"
+    merged, conflicts = ss.three_way_merge(local, base, repo)
+    assert conflicts == 0
+    assert merged == b"a\nZ\nc\n"
