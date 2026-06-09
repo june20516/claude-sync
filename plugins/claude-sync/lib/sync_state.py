@@ -56,3 +56,26 @@ def write_base(relpath, data, base_dir=BASE_DIR):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(data)
+
+
+def classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
+    """3-way 분류.
+
+    반환: in_sync | repo_only | local_only | local_ahead | fast_forward | conflict
+    seen_hash는 base가 없으면 None.
+    """
+    if not repo_exists:
+        return "local_only"
+    if not local_exists:
+        return "repo_only"
+    if local_hash == repo_hash:
+        return "in_sync"
+    changed_local = local_hash != seen_hash
+    changed_remote = repo_hash != seen_hash
+    if changed_local and not changed_remote:
+        return "local_ahead"
+    if changed_remote and not changed_local:
+        return "fast_forward"
+    if changed_local and changed_remote:
+        return "conflict"
+    return "in_sync"  # L==S and R==S면 L==R이라 도달 불가 — 방어
