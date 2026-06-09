@@ -94,6 +94,15 @@ def test_merge_identical_change_no_conflict():
     assert merged == b"a\nZ\nc\n"
 
 
+def test_merge_clean_no_trailing_newline():
+    base = b"a\nb\nc"
+    local = b"A\nb\nc"
+    repo = b"a\nb\nC"
+    merged, conflicts = ss.three_way_merge(local, base, repo)
+    assert conflicts == 0
+    assert merged == b"A\nb\nC"
+
+
 def test_iter_synced_relpaths(tmp_path):
     root = tmp_path
     (root / "agents").mkdir()

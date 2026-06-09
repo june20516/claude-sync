@@ -18,7 +18,7 @@ def content_hash(data):
 
 
 def file_hash(path):
-    """파일의 sha256 hex. 없으면 None."""
+    """파일의 sha256 hex. 파일이 없으면 None. (PermissionError 등 그 외 OSError는 전파한다.)"""
     try:
         with open(path, "rb") as f:
             return content_hash(f.read())
@@ -31,7 +31,7 @@ def base_blob_path(relpath, base_dir=BASE_DIR):
 
 
 def read_base(relpath, base_dir=BASE_DIR):
-    """base(마지막 reconcile한 remote) 내용. 없으면 None."""
+    """base(마지막 reconcile한 remote) 내용. 파일이 없으면 None. (PermissionError 등 그 외 OSError는 전파한다.)"""
     try:
         with open(base_blob_path(relpath, base_dir), "rb") as f:
             return f.read()
@@ -102,7 +102,8 @@ def three_way_merge(local_bytes, base_bytes, repo_bytes):
             ["git", "merge-file", "-p", "--diff3", lp, bp, rp],
             capture_output=True,
         )
-    if proc.returncode < 0:
+    # git merge-file: 0=clean, 1..127=N conflicts, 음수(시그널)/128+ (255 등)=치명적 오류
+    if proc.returncode < 0 or proc.returncode > 127:
         raise RuntimeError("git merge-file 실패: %r" % proc.stderr)
     return proc.stdout, proc.returncode
 
@@ -116,6 +117,7 @@ def iter_synced_relpaths(root):
     for name in SYNCED_DIRS:
         d = os.path.join(root, name)
         if os.path.isdir(d):
+            # followlinks=False(기본값): 동기 대상 디렉터리는 실제 디렉터리여야 하므로 심볼릭 링크 디렉터리는 의도적으로 따라가지 않는다.
             for r, _, files in os.walk(d):
                 for f in files:
                     yield os.path.relpath(os.path.join(r, f), root)
