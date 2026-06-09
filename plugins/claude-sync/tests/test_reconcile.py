@@ -1,5 +1,6 @@
 import sys
 import os
+import subprocess
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "sync-backup", "scripts"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "sync-restore", "scripts"))
@@ -94,6 +95,27 @@ def test_restore_set_base_from(tmp_path):
     # ss.write_base를 임시 base_dir로 테스트
     rr.apply_set_base_from(source_root, [rel], base_dir=base_dir)
     assert ss.read_base(rel, base_dir=base_dir) == content
+
+
+def test_apply_add_creates_nested_file_and_base(tmp_path):
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    (repo / "skills" / "nested").mkdir(parents=True)
+    (repo / "skills" / "nested" / "SKILL.md").write_text("hello")
+    script = os.path.join(
+        os.path.dirname(__file__), "..", "skills", "sync-restore", "scripts", "reconcile_restore.py"
+    )
+    env = dict(os.environ, HOME=str(home))
+    r = subprocess.run(
+        ["python3", os.path.abspath(script), str(repo), "--apply"],
+        capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    # local file created with nested dirs
+    assert (home / ".claude" / "skills" / "nested" / "SKILL.md").read_text() == "hello"
+    # base blob recorded under the isolated HOME
+    base_blob = home / ".claude" / ".sync-state" / "base" / "skills" / "nested" / "SKILL.md"
+    assert base_blob.read_bytes() == b"hello"
 
 
 def test_update_base_multiple_files(tmp_path):

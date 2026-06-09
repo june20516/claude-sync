@@ -14,7 +14,6 @@
 """
 import json
 import os
-import shutil
 import sys
 
 sys.path.insert(
@@ -104,10 +103,12 @@ def main():
 
         if action in ("add", "overwrite"):
             if apply:
-                os.makedirs(os.path.dirname(local), exist_ok=True)
-                shutil.copyfile(repo, local)
                 with open(repo, "rb") as f:
-                    ss.write_base(rel, f.read())
+                    repo_bytes = f.read()
+                os.makedirs(os.path.dirname(local), exist_ok=True)
+                with open(local, "wb") as f:
+                    f.write(repo_bytes)
+                ss.write_base(rel, repo_bytes)
             result["applied"].setdefault(action, []).append(rel)
             continue
 

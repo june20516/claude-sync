@@ -68,7 +68,7 @@ fi
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-python3 $SYNC_SCRIPTS/reconcile_restore.py "$SYNC_REPO" --apply
+python3 "$SYNC_SCRIPTS/reconcile_restore.py" "$SYNC_REPO" --apply
 ```
 
 스크립트가 자동 처리하는 것 (사용자 개입 없음):
@@ -93,18 +93,18 @@ python3 $SYNC_SCRIPTS/reconcile_restore.py "$SYNC_REPO" --apply
 
    - **백업 채택** (theirs): 레포 파일을 로컬에 복사한 뒤 base를 레포 내용으로 갱신.
      ```bash
-     cp "$SYNC_REPO/<rel>" ~/.claude/<rel>
-     python3 $SYNC_SCRIPTS/reconcile_restore.py --set-base-from "$SYNC_REPO" <rel>
+     cp "$SYNC_REPO/<rel>" "$HOME/.claude/<rel>"
+     python3 "$SYNC_SCRIPTS/reconcile_restore.py" --set-base-from "$SYNC_REPO" <rel>
      ```
 
    - **로컬 유지** (ours): 로컬 파일은 그대로 두고 base를 레포 내용으로 갱신 (remote를 봤고 거부 → 재충돌 방지). 로컬은 local_ahead가 된다.
      ```bash
-     python3 $SYNC_SCRIPTS/reconcile_restore.py --set-base-from "$SYNC_REPO" <rel>
+     python3 "$SYNC_SCRIPTS/reconcile_restore.py" --set-base-from "$SYNC_REPO" <rel>
      ```
 
-   - **병합** (겹침 / base 없음): 에이전트가 로컬·레포(가능하면 base) 내용을 읽어 병합안을 만들어 사용자에게 보여주고 확인받은 뒤 `~/.claude/<rel>`에 쓴다. 그 후 base를 레포 내용으로 갱신. 로컬은 local_ahead가 된다.
+   - **병합** (겹침 / base 없음): 에이전트가 로컬·레포(가능하면 base) 내용을 읽어 병합안을 만들어 사용자에게 보여주고 확인받은 뒤 `"$HOME/.claude/<rel>"`에 쓴다. 그 후 base를 레포 내용으로 갱신. 로컬은 local_ahead가 된다.
      ```bash
-     python3 $SYNC_SCRIPTS/reconcile_restore.py --set-base-from "$SYNC_REPO" <rel>
+     python3 "$SYNC_SCRIPTS/reconcile_restore.py" --set-base-from "$SYNC_REPO" <rel>
      ```
 
    - **나중에** (defer): 아무것도 하지 않는다. base 불변 → 다음 restore에서 다시 표시된다.
