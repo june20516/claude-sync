@@ -1,142 +1,77 @@
 #!/usr/bin/env python3
-"""로컬 Claude 설정과 레포 백업 간 차이를 분석하여 출력한다."""
-import json, os, datetime, sys
+"""로컬 ~/.claude 와 레포 백업의 차이를 3-way(내용 해시)로 분석해 출력한다. mtime 미사용."""
+import json
+import os
+import sys
 
-repo_path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("SYNC_REPO", "/tmp/claude-sync-repo")
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
+)
+import sync_state as ss  # noqa: E402
 
-HOME = os.path.expanduser("~")
-META = os.path.join(repo_path, "sync-metadata.json")
+repo_path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
+    "SYNC_REPO", "/tmp/claude-sync-repo"
+)
+HOME_CLAUDE = os.path.expanduser("~/.claude")
 
+rels = sorted(set(ss.iter_synced_relpaths(repo_path)) | set(ss.iter_synced_relpaths(HOME_CLAUDE)))
 
-def to_local(rel):
-    if rel == "CLAUDE.md":
-        return os.path.join(HOME, ".claude", "CLAUDE.md")
-    if rel == "plugins.json":
-        return None
-    return os.path.join(HOME, ".claude", rel)
+buckets = {
+    "in_sync": [],
+    "repo_only": [],      # restore 시 추가
+    "local_only": [],     # backup 시 push
+    "local_ahead": [],    # backup 시 push
+    "fast_forward": [],   # restore 시 업데이트
+    "conflict": [],       # 양쪽 변경
+}
 
-
-# 레포에 있는 파일 목록
-repo_files = set()
-for d in ["agents", "skills"]:
-    p = os.path.join(repo_path, d)
-    if os.path.isdir(p):
-        for r, _, fs in os.walk(p):
-            for f in fs:
-                repo_files.add(os.path.relpath(os.path.join(r, f), repo_path))
-if os.path.isfile(os.path.join(repo_path, "CLAUDE.md")):
-    repo_files.add("CLAUDE.md")
-if os.path.isfile(os.path.join(repo_path, "plugins.json")):
-    repo_files.add("plugins.json")
-
-# 로컬 파일 목록
-local_files = set()
-for d in ["agents", "skills"]:
-    p = os.path.join(HOME, ".claude", d)
-    if os.path.isdir(p):
-        for r, _, fs in os.walk(p):
-            for f in fs:
-                local_files.add(os.path.relpath(os.path.join(r, f), os.path.join(HOME, ".claude")))
-if os.path.isfile(os.path.join(HOME, ".claude", "CLAUDE.md")):
-    local_files.add("CLAUDE.md")
-
-# 메타데이터 로드
-has_meta = os.path.exists(META)
-metadata = {}
-file_times = {}
-if has_meta:
-    with open(META) as f:
-        metadata = json.load(f)
-    backup_ts = metadata.get("backup_timestamp")
-    file_times = metadata.get("files", {})
+for rel in rels:
+    local = os.path.join(HOME_CLAUDE, rel)
+    repo = os.path.join(repo_path, rel)
+    L = ss.file_hash(local)
+    R = ss.file_hash(repo)
+    S = ss.base_hash(rel)
+    cls = ss.classify(L, R, S, local_exists=L is not None, repo_exists=R is not None)
+    buckets[cls].append(rel)
 
 print("=" * 60)
-if has_meta:
-    print("마지막 백업: " + metadata.get("backup_timestamp", ""))
-else:
-    print("메타데이터 없음 (단순 비교 모드)")
+print("git-like 동기화 상태 (내용 해시 기준, mtime 미사용)")
 print("=" * 60)
 
-# 상태 분류
-added_local = []
-added_repo = []
-modified = []
-conflict = []
-unchanged = []
+labels = [
+    ("conflict", "⚠ 충돌 — 양쪽 변경 (restore 시 해소 필요)"),
+    ("fast_forward", "↓ 업데이트 가능 — 레포가 앞섬 (restore 시 적용)"),
+    ("repo_only", "+ 새 파일 — 레포에만 있음 (restore 시 추가)"),
+    ("local_ahead", "↑ 로컬 앞섬 (backup 시 push)"),
+    ("local_only", "+ 로컬 전용 (backup 시 push)"),
+    ("in_sync", "✓ 동일"),
+]
+for key, label in labels:
+    items = buckets[key]
+    if items:
+        print("\n%s (%d개):" % (label, len(items)))
+        for f in items:
+            print("  " + f)
 
-all_files = repo_files | local_files
-for rel in sorted(all_files):
-    if rel in ["sync-metadata.json", "plugins.json"]:
-        continue
-    local = to_local(rel)
-    if local is None:
-        continue
-    repo_file = os.path.join(repo_path, rel)
-    in_repo = rel in repo_files
-    in_local = os.path.exists(local) if local else False
+if not any(buckets[k] for k in buckets if k != "in_sync"):
+    print("\n모든 파일이 동기화 상태입니다.")
 
-    if in_local and not in_repo:
-        added_local.append(rel)
-    elif in_repo and not in_local:
-        added_repo.append(rel)
-    elif in_repo and in_local:
-        with open(repo_file, "rb") as a, open(local, "rb") as b:
-            if a.read() == b.read():
-                unchanged.append(rel)
-                continue
-        if has_meta and rel in file_times:
-            backed_mtime = file_times[rel]
-            local_mtime = datetime.datetime.fromtimestamp(
-                os.path.getmtime(local), tz=datetime.timezone.utc
-            ).isoformat()
-            if local_mtime > backed_mtime:
-                conflict.append(rel)
-            else:
-                modified.append(rel)
-        else:
-            modified.append(rel)
-
-if conflict:
-    print("\n⚠ 충돌 가능 (%d개) — 로컬과 레포 모두 변경됨:" % len(conflict))
-    for f in conflict:
-        print("  " + f)
-if modified:
-    print("\n↕ 차이 있음 (%d개) — 레포와 로컬이 다름:" % len(modified))
-    for f in modified:
-        print("  " + f)
-if added_local:
-    print("\n+ 로컬에만 있음 (%d개) — backup하면 레포에 추가됨:" % len(added_local))
-    for f in added_local:
-        print("  " + f)
-if added_repo:
-    print("\n+ 레포에만 있음 (%d개) — restore하면 로컬에 추가됨:" % len(added_repo))
-    for f in added_repo:
-        print("  " + f)
-if unchanged:
-    print("\n✓ 동일 (%d개)" % len(unchanged))
-if not any([conflict, modified, added_local, added_repo]):
-    print("\n모든 설정이 동기화 상태입니다.")
-
-# plugins.json 비교
+# 플러그인 비교 (enabledPlugins 키 집합)
 repo_plugins = os.path.join(repo_path, "plugins.json")
-if os.path.exists(repo_plugins):
+settings = os.path.join(HOME_CLAUDE, "settings.json")
+if os.path.exists(repo_plugins) and os.path.exists(settings):
     with open(repo_plugins) as f:
-        repo_p = json.load(f)
-    settings_path = os.path.join(HOME, ".claude", "settings.json")
-    if os.path.exists(settings_path):
-        with open(settings_path) as f:
-            local_s = json.load(f)
-        repo_set = set(repo_p.get("enabledPlugins", {}).keys())
-        local_set = set(local_s.get("enabledPlugins", {}).keys())
-        only_repo = repo_set - local_set
-        only_local = local_set - repo_set
-        if only_repo or only_local:
-            print("\n플러그인 차이:")
-            for p in only_repo:
-                print("  + 레포에만: " + p)
-            for p in only_local:
-                print("  - 로컬에만: " + p)
-        else:
-            print("\n플러그인: 동일")
+        rp = set(json.load(f).get("enabledPlugins", {}).keys())
+    with open(settings) as f:
+        lp = set(json.load(f).get("enabledPlugins", {}).keys())
+    only_repo, only_local = rp - lp, lp - rp
+    if only_repo or only_local:
+        print("\n플러그인 차이:")
+        for p in sorted(only_repo):
+            print("  + 레포에만(restore 시 설치): " + p)
+        for p in sorted(only_local):
+            print("  - 로컬에만(backup 시 추가): " + p)
+    else:
+        print("\n플러그인: 동일")
 
 print()
