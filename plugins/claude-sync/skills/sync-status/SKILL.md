@@ -64,6 +64,15 @@ fi
 
 ### 3. 결과 요약
 
+상태 분류 (내용 해시 3-way, mtime 미사용):
+- **in_sync**: 로컬과 레포 내용 동일
+- **fast_forward**: 레포가 앞섬 → restore 시 자동 업데이트
+- **repo_only**: 레포에만 있는 새 파일 → restore 시 추가
+- **local_ahead / local_only**: 로컬이 앞섬 → backup 시 push
+- **conflict**: 양쪽 모두 base 이후 변경 → restore 시 해소 필요
+
+이 명령은 아무것도 바꾸지 않는다. `plugin:`으로 시작하는 MCP 서버는 플러그인이 제공하므로 비교에서 제외한다.
+
 분석 결과를 사용자에게 보여준다. 이 스킬은 아무것도 변경하지 않으므로, 필요한 다음 단계를 안내한다:
 
 - 로컬 변경사항을 레포에 반영하려면 → `/sync-backup`
