@@ -63,7 +63,7 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 /sync-status
 ```
 
-## Sync Behavior Model (v1.0.1+)
+## Sync Behavior Model (v2.0.0+)
 
 claude-sync uses a **content-hash, git-like 3-way reconcile** — modification timestamps are never used.
 

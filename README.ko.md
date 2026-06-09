@@ -63,7 +63,7 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 /sync-status
 ```
 
-## 동작 모델 (v1.0.1+)
+## 동작 모델 (v2.0.0+)
 
 claude-sync는 **내용 해시(content-hash) 기반 git 3-way 방식**으로 동기화합니다. 수정 시각(mtime)은 일절 사용하지 않습니다.
 
