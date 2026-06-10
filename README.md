@@ -63,11 +63,20 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 /sync-status
 ```
 
+## Sync Behavior Model (v2.0.0+)
+
+claude-sync uses a **content-hash, git-like 3-way reconcile** — modification timestamps are never used.
+
+- **Restore is pull-only.** `/sync-restore` never auto-pushes local changes to the repo.
+- **New files are always added.** Files that exist only in the repo (new agents, skills, plugins, MCP entries) are always applied to the local machine, independent of any conflicts in other files.
+- **Conflicts arise only when both sides diverged from the last shared base.** In that case the tool attempts a `git merge-file` 3-way merge. If the changes do not overlap, the result is committed automatically (`auto_merge`). If the same lines were changed on both sides, the file is listed as a `conflict` and the local copy is left untouched. You then choose one of: keep local / adopt backup / merge manually / defer.
+- **`pull_only` machines never back up.** Machines designated as read-only consumers will never push their state to the repo.
+
 ## Safety
 
-- **Conflict detection**: Restore aborts entirely if any local files have been modified since the last backup
+- **Conflict detection**: Files changed on both sides since the last known base are flagged as conflicts; local copies are never silently overwritten.
 - **Sensitive data protection**: The raw `settings.json` is never pushed to the repo — only plugin and MCP server lists are extracted
-- **Metadata tracking**: Each backup records per-file modification timestamps for conflict detection
+- **Metadata tracking**: Each backup records a content-hash base snapshot for accurate 3-way conflict detection
 
 ## Security
 

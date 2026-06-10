@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """claude mcp list의 출력을 stdin으로 받아 name, url, type을 추출하여 JSON으로 저장한다."""
-import sys, json, re
+import sys
+import json
+import re
 
 output_path = sys.argv[1] if len(sys.argv) > 1 else "mcp-servers.json"
 
@@ -9,10 +11,13 @@ for line in sys.stdin:
     line = line.strip()
     m = re.match(r"^(.+?):\s+(\S+)\s+(?:\((\w+)\)\s+)?-\s+.+$", line)
     if m:
+        name = m.group(1).strip()
+        if name.startswith("plugin:"):
+            continue  # 플러그인 제공 서버 → 백업 제외
         servers.append({
-            "name": m.group(1).strip(),
+            "name": name,
             "url": m.group(2).strip(),
-            "type": m.group(3) or "stdio"
+            "type": m.group(3) or "stdio",
         })
 
 with open(output_path, "w") as f:

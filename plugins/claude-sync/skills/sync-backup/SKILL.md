@@ -35,6 +35,8 @@ Claude 설정 파일들을 Git 레포에 백업하는 스킬이다.
 
 settings.json에는 API 키 등 민감 정보가 포함될 수 있으므로, `enabledPlugins`와 `extraKnownMarketplaces` 필드만 추출하여 `plugins.json`으로 관리한다. settings.json 원본은 레포에 올리지 않는다.
 
+`~/.claude/.sync-state/`는 기기별 로컬 상태(merge-base)이므로 백업/복원 대상이 아니며 레포에 올리지 않는다.
+
 ## 보안
 
 백업 레포에는 CLAUDE.md나 에이전트 파일에 사내 URL, 내부 규칙 등 민감 정보가 포함될 수 있다. 따라서:
@@ -79,6 +81,9 @@ cat > ~/.claude/sync-config.json << 'EOF'
 }
 EOF
 ```
+
+설정에 `"pull_only": true`가 있으면 이 기기는 백업 금지다. 즉시 중단하고 안내한다:
+> "이 기기는 pull_only로 지정되어 있어 로컬→리모트 백업을 수행하지 않습니다. 설정을 바꾸려면 sync-config.json에서 pull_only를 제거하세요."
 
 ### 2. 레포 준비
 
@@ -125,31 +130,43 @@ fi
 
 사용자가 이름/이메일을 알려주면 `sync-config.json`에 저장하고 레포에 적용한다. 스킵하겠다고 하면 그대로 진행한다.
 
-### 4. 파일 수집
+### 4. 파일별 reconcile (push 판정)
 
-`.syncignore`가 있으면 해당 패턴에 매칭되는 파일을 제외한다.
+무차별 복사 대신 파일별로 판정한다:
 
 ```bash
-cd ${TMPDIR:-/tmp}/claude-sync-repo
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+python3 $SYNC_SCRIPTS/reconcile_backup.py "$SYNC_REPO"
+```
 
-# agents 복사
-rm -rf agents/
-cp -r ~/.claude/agents/ agents/ 2>/dev/null || true
+출력 JSON의 세 키를 확인한다:
+- `reject`가 하나라도 있으면: "리모트가 앞선 변경이 있습니다. 먼저 /sync-restore 하세요" 안내 후 그 파일은 건너뛴다(push하지 않는다).
+- `push` 파일만 `~/.claude/<rel>` → `$SYNC_REPO/<rel>`로 복사한다:
 
-# skills 복사
-rm -rf skills/
-cp -r ~/.claude/skills/ skills/ 2>/dev/null || true
+```bash
+# reconcile 결과를 임시 파일에 저장
+python3 $SYNC_SCRIPTS/reconcile_backup.py "$SYNC_REPO" > /tmp/claude-sync-reconcile.json
 
-# CLAUDE.md 복사
-cp ~/.claude/CLAUDE.md CLAUDE.md 2>/dev/null || true
+# push 목록 파일만 복사 (Python으로 처리)
+python3 - <<'PY'
+import json, os, shutil
+data = json.load(open("/tmp/claude-sync-reconcile.json"))
+repo = os.environ.get("SYNC_REPO", "/tmp/claude-sync-repo")
+for rel in data.get("push", []):
+    src = os.path.join(os.path.expanduser("~/.claude"), rel)
+    dst = os.path.join(repo, rel)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(src, dst)
+PY
+```
 
-# .syncignore 적용
+`.syncignore`가 있으면 해당 패턴은 push 목록에서 제외한다:
+
+```bash
 if [ -f ~/.claude/.syncignore ]; then
   while IFS= read -r pattern || [ -n "$pattern" ]; do
-    # 빈 줄과 주석 건너뛰기
     [[ -z "$pattern" || "$pattern" == \#* ]] && continue
-    # 매칭되는 파일 삭제 (레포 작업 디렉토리에서)
-    find . -path "./.git" -prune -o -path "./$pattern" -print | while IFS= read -r f; do rm -rf "$f"; done
+    find "$SYNC_REPO" -path "$SYNC_REPO/.git" -prune -o -path "$SYNC_REPO/$pattern" -print | while IFS= read -r f; do rm -rf "$f"; done
   done < ~/.claude/.syncignore
   echo ".syncignore 적용됨"
 fi
@@ -183,12 +200,10 @@ python3 $SYNC_SCRIPTS/generate_metadata.py sync-metadata.json
 
 ```json
 {
-  "backup_timestamp": "2026-03-19T15:30:00",
   "files": {
-    "agents/code-reviewer.md": "2026-03-18T15:41:00",
-    "skills/investigate/SKILL.md": "2026-03-18T17:15:00",
-    "CLAUDE.md": "2026-03-19T10:00:00",
-    "plugins.json": "2026-03-19T15:30:00"
+    "agents/code-reviewer.md": "a3f2c1d4e5b6...(sha256 64자)",
+    "skills/investigate/SKILL.md": "9d8e7f6a5b4c...(sha256 64자)",
+    "CLAUDE.md": "1c2d3e4f5a6b...(sha256 64자)"
   }
 }
 ```
@@ -228,10 +243,25 @@ git diff --cached --stat
 - **변경사항이 있으면**: 변경 내용을 간단히 요약하고, 커밋 & 푸시한다:
 
 ```bash
-git commit -m "sync: backup claude settings ($(date +%Y-%m-%d %H:%M))"
-git push
+if git commit -m "sync: backup claude settings ($(date '+%Y-%m-%d %H:%M'))" && git push; then
+  mapfile -t PUSHED_RELS < <(python3 -c "
+import json
+data = json.load(open('/tmp/claude-sync-reconcile.json'))
+for r in data.get('push', []):
+    print(r)
+")
+  if [ "${#PUSHED_RELS[@]}" -gt 0 ]; then
+    python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${PUSHED_RELS[@]}"
+  fi
+fi
 ```
 
-### 11. 결과 보고
+### 11. base(.sync-state) 갱신
+
+커밋 & 푸시에 **성공한 경우에만** push된 각 파일의 base를 방금 올린 로컬 내용으로 갱신한다. 이 base가 다음 sync의 merge-base가 된다. base 갱신은 반드시 push 성공 이후에 실행되며, push가 실패하면 base는 변경되지 않는다.
+
+`update_base.py`는 각 rel 파일을 `~/.claude/<rel>`에서 읽어 `~/.claude/.sync-state/base/<rel>`에 기록한다. **핵심 계약: push 성공 파일의 base ← 로컬 내용.** base 갱신은 독립적으로 실행되거나 push 실패 후 실행되지 않는다.
+
+### 12. 결과 보고
 
 백업 완료 후 변경된 파일 목록과 결과를 사용자에게 요약해서 보여준다.

@@ -1,41 +1,44 @@
 #!/usr/bin/env python3
-"""백업 시점의 파일별 수정 시각 메타데이터를 생성한다."""
-import json, os, datetime, sys
+"""백업 시점의 파일별 내용 해시(sha256) 메타데이터를 생성한다. mtime 미사용."""
+import hashlib
+import json
+import os
+import sys
 
-output_path = sys.argv[1] if len(sys.argv) > 1 else "sync-metadata.json"
+def file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        h.update(f.read())
+    return h.hexdigest()
 
 
-def get_file_times(base_path, prefix=""):
+def collect(base, prefix):
     result = {}
-    if not os.path.exists(base_path):
+    if os.path.isfile(base):
+        result[prefix] = file_sha256(base)
         return result
-    if os.path.isfile(base_path):
-        mtime = os.path.getmtime(base_path)
-        key = prefix or os.path.basename(base_path)
-        result[key] = datetime.datetime.fromtimestamp(mtime, tz=datetime.timezone.utc).isoformat()
-        return result
-    for root, dirs, files in os.walk(base_path):
-        for f in files:
-            full = os.path.join(root, f)
-            rel = os.path.relpath(full, base_path)
-            key = prefix + "/" + rel if prefix else rel
-            mtime = os.path.getmtime(full)
-            result[key] = datetime.datetime.fromtimestamp(mtime, tz=datetime.timezone.utc).isoformat()
+    if os.path.isdir(base):
+        for root, _, files in os.walk(base):
+            for f in files:
+                full = os.path.join(root, f)
+                rel = os.path.relpath(full, base)
+                result[prefix + "/" + rel] = file_sha256(full)
     return result
 
 
-now = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
-claude_dir = os.path.expanduser("~/.claude")
+def main():
+    output_path = sys.argv[1] if len(sys.argv) > 1 else "sync-metadata.json"
+    claude_dir = os.path.expanduser("~/.claude")
 
-metadata = {
-    "backup_timestamp": now,
-    "files": {}
-}
-metadata["files"].update(get_file_times(os.path.join(claude_dir, "agents"), "agents"))
-metadata["files"].update(get_file_times(os.path.join(claude_dir, "skills"), "skills"))
-metadata["files"].update(get_file_times(os.path.join(claude_dir, "CLAUDE.md"), "CLAUDE.md"))
-metadata["files"]["plugins.json"] = now
+    metadata = {"files": {}}
+    metadata["files"].update(collect(os.path.join(claude_dir, "agents"), "agents"))
+    metadata["files"].update(collect(os.path.join(claude_dir, "skills"), "skills"))
+    metadata["files"].update(collect(os.path.join(claude_dir, "CLAUDE.md"), "CLAUDE.md"))
 
-with open(output_path, "w") as f:
-    json.dump(metadata, f, indent=2)
-    f.write("\n")
+    with open(output_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+        f.write("\n")
+
+
+if __name__ == "__main__":
+    main()
