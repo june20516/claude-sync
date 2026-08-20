@@ -159,6 +159,13 @@ def redact(servers: dict) -> dict
 def secret_keys(cfg: dict) -> list[tuple[str, str]]
     """[("headers", "CONTEXT7_API_KEY"), ...] — 복원 시 사용자에게 물어볼 항목."""
 
+def parse_backup(data) -> dict[str, dict]
+    """바이트/문자열에서 servers 매핑을 읽는다. 깨진 입력은 {}로 degrade한다."""
+
+def parse_base(data) -> dict[str, dict] | None
+    """base 블롭 전용. data가 None이거나 파싱 불가면 None(이력 없음)을 반환한다.
+    "이력이 비어 있었다"({})와 "이력을 읽을 수 없다"(None)를 반드시 구별한다 — 9장."""
+
 def load_backup(path) -> dict[str, dict]
     """mcp-servers.json을 읽어 servers 매핑을 반환한다. v2 객체와 v1 배열을 모두 지원한다.
     파일이 없으면 {}."""
@@ -273,8 +280,10 @@ base를 갱신하지 않아도 나머지 서버는 푸시 직후 L==R이라 케�
 
 - 위치: `~/.claude/.sync-state/base/mcp-servers.json`. 레포 상대경로 기준이므로
   `sync_state.write_base`/`read_base`를 그대로 재사용한다.
-- 저장 내용: 레포 파일 바이트. 비교 시 `load_backup`으로 파싱해 servers 매핑을 얻는다
+- 저장 내용: 레포 파일 바이트. 비교 시 **`parse_base`**로 파싱해 servers 매핑을 얻는다
   (들여쓰기 등 포맷 차이에 영향받지 않는다).
+  `load_backup`이 아니라 `parse_base`를 쓰는 이유는 9장에 있다 — 손상된 base를 `{}`로 읽으면
+  "이력이 비어 있었다"로 오인되어, `None`이었다면 조용히 넘어갔을 상황이 불필요한 충돌이 된다.
 - 갱신 시점:
   - backup — 커밋·푸시 **성공 이후에만**, 그리고 **`conflicts`와 `local_stale`이 모두 비어 있을 때만**
     갱신한다 (기존 `update_base.py`의 "푸시 성공 시에만" 계약에 7.3·7.5의 게이트를 더한 것이다).
@@ -360,6 +369,7 @@ local_stale:  "다른 기기에서 삭제된 서버가 로컬에 남아 있습�
 | `~/.claude.json` 없음 / JSON 파싱 실패 | `LocalConfigUnavailable` 예외 → **MCP 단계 전체를 건너뜀.** 삭제 판정을 하지 않음 |
 | 레포 `mcp-servers.json` 없음 | `{}` — 첫 백업으로 간주 |
 | base 없음 | 삭제 없이 합집합 degrade |
+| **base 블롭 손상(파싱 실패)** | `parse_base`가 `None` 반환 → base 없음과 동일하게 합집합 degrade. `{}`로 읽어 "이력이 비어 있었다"로 오인하지 않는다 |
 | `add-json` 실패 | 해당 서버만 실패로 기록하고 나머지를 계속 진행 |
 
 MCP 단계 실패가 backup·restore 전체를 실패시키지 않는다. 파일 동기화는 그대로 진행한다.

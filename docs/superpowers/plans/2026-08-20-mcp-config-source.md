@@ -1019,8 +1019,7 @@ def collect(repo_path, claude_json_path=None, base_dir=ss.BASE_DIR):
 
     repo_file = os.path.join(repo_path, mc.BACKUP_RELPATH)
     repo = mc.load_backup(repo_file)
-    base_bytes = ss.read_base(mc.BACKUP_RELPATH, base_dir=base_dir)
-    base = mc.parse_backup(base_bytes) if base_bytes is not None else None
+    base = mc.parse_base(ss.read_base(mc.BACKUP_RELPATH, base_dir=base_dir))
 
     result = mc.merge(local, repo, base)
     mc.dump_backup(result["servers"], repo_file)
@@ -1264,8 +1263,7 @@ def build(repo_path, claude_json_path=None, base_dir=ss.BASE_DIR):
         return {"unavailable": str(e)}
 
     backed = mc.load_backup(os.path.join(repo_path, mc.BACKUP_RELPATH))
-    base_bytes = ss.read_base(mc.BACKUP_RELPATH, base_dir=base_dir)
-    base = mc.parse_backup(base_bytes) if base_bytes is not None else None
+    base = mc.parse_base(ss.read_base(mc.BACKUP_RELPATH, base_dir=base_dir))
 
     plan = mc.restore_plan(local, backed, base)
     targets = plan["add"] + plan["needs_secret"]
