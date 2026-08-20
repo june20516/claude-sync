@@ -486,3 +486,10 @@ def test_merge_reports_repo_ahead_for_cases_2_and_8():
     assert changed["repo_ahead"] == ["y"]
     conflicted = mc.merge({"x": SERVER_A}, {"x": SERVER_B}, {"x": SERVER_ORIG})
     assert conflicted["repo_ahead"] == [] and conflicted["conflicts"] == ["x"]
+
+
+def test_next_base_does_not_share_objects_with_servers():
+    """servers를 가공해도 next_base가 오염되지 않는다 — 둘은 독립된 출력이다."""
+    result = mc.merge({"x": {"command": "a", "args": ["1"]}}, {}, {})
+    result["servers"]["x"]["args"].append("MUTATED")
+    assert result["next_base"]["x"]["args"] == ["1"]

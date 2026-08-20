@@ -196,22 +196,26 @@ def diff(local, backed):
     }
 
 
-def _next_base(local, base, servers):
+def next_base(local, base, servers):
     """다음 base 매핑. base[name]은 로컬이 그 값에 동의할 때만 전진한다.
 
     로컬이 동의하지 않은 값(타 기기가 추가·변경한 서버, 충돌 중인 서버)을 base에 기록하면
     다음 백업이 그 차이를 "로컬이 바뀌었다"로 오독해, 타 기기의 서버를 삭제하거나
     타 기기의 변경을 되돌린다. update_base.py가 파일 단위로 지키는 불변식과 같다.
+    merge가 내부에서 쓰고 결과에 담아 반환하지만, restore도 같은 규칙으로 base를 갱신해야
+    하므로 공개 함수다.
+    반환값은 local·base·servers의 어떤 nested 객체도 공유하지 않는다(deepcopy) — 호출부가
+    반환된 servers를 가공한 뒤 base에 써도 next_base가 조용히 오염되지 않는다.
     """
     old = base or {}
     out = {}
     for name in sorted(set(old) | set(servers)):
         if name in servers and name in local and same(servers[name], local[name]):
-            out[name] = servers[name]   # 로컬이 동의 → 전진 (케이스 1·6·7)
+            out[name] = copy.deepcopy(servers[name])  # 로컬이 동의 → 전진 (케이스 1·6·7)
         elif name not in servers and name not in local:
             continue                    # 양쪽에서 사라짐 → base에서 제거 (케이스 3·10)
         elif name in old:
-            out[name] = old[name]       # 로컬이 동의 안 함 → 이전 base 유지 (케이스 2·4·5·8·9)
+            out[name] = copy.deepcopy(old[name])       # 로컬이 동의 안 함 → 이전 base 유지 (케이스 2·4·5·8·9)
     return out
 
 
@@ -224,7 +228,7 @@ def merge(local, repo, base):
     "내 삭제"를 구별할 수 없기 때문이다.
     반환하는 next_base는 이름 단위로 전진한다: 로컬이 동의한 이름만 base에 기록하고,
     동의하지 않은 이름(타 기기가 추가·변경했거나 충돌·잔존 중인 이름)은 이전 base를 유지한다
-    (_next_base 참고). 그래서 호출부가 conflicts/local_stale 유무로 base 갱신을 전역으로
+    (next_base 함수 참고). 그래서 호출부가 conflicts/local_stale 유무로 base 갱신을 전역으로
     게이트할 필요가 없다 — 서버 하나가 충돌 중이어도 나머지 서버의 base는 계속 전진한다.
     conflicts에는 케이스 5(로컬 수정 vs 리모트 삭제)와 케이스 9(양쪽 변경)가 함께 들어가는데
     결과가 다르다 — 9는 servers에 레포 값이 남고 5는 servers에서 아예 빠진다.
@@ -272,5 +276,5 @@ def merge(local, repo, base):
         "deleted": deleted,
         "local_stale": local_stale,
         "repo_ahead": repo_ahead,
-        "next_base": _next_base(local, base, servers),
+        "next_base": next_base(local, base, servers),
     }
