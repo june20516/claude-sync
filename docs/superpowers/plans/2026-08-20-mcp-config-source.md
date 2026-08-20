@@ -1552,7 +1552,7 @@ git commit -m "docs(skills): MCP 절차를 파일 소스·add-json·base 게이�
 ```
 바꾸기:
 ```
-- `mcp-servers.json` — MCP server configs from the user scope of `~/.claude.json`. Secret values in `headers`/`env` are stored as `<REDACTED>`; `/sync-restore` asks you for them. Account-level `claude.ai` connectors and plugin-provided servers are intentionally excluded — they cannot be restored with `claude mcp add-json`.
+- `mcp-servers.json` — MCP server configs from the user scope of `~/.claude.json`. Secret values in `headers`/`env` are stored as `<REDACTED>`; `/sync-restore` asks you for them. Account-level `claude.ai` connectors and plugin-provided servers are intentionally excluded — they cannot be restored with `claude mcp add-json`. **Note: only `headers` and `env` are masked.** If a server passes its API key through `args` (`--api-key=...`) or a `url` query string, that value is backed up in cleartext — keep the backup repo private.
 ```
 
 `backup-readme.ko.md`에서 찾기:
@@ -1561,7 +1561,7 @@ git commit -m "docs(skills): MCP 절차를 파일 소스·add-json·base 게이�
 ```
 바꾸기:
 ```
-- `mcp-servers.json` — `~/.claude.json`의 user 스코프 MCP 서버 설정. `headers`/`env`의 비밀 값은 `<REDACTED>`로 저장되며 `/sync-restore`가 값을 물어봅니다. 계정 레벨 `claude.ai` 커넥터와 플러그인 제공 서버는 `claude mcp add-json`으로 복원할 수 없으므로 의도적으로 제외합니다.
+- `mcp-servers.json` — `~/.claude.json`의 user 스코프 MCP 서버 설정. `headers`/`env`의 비밀 값은 `<REDACTED>`로 저장되며 `/sync-restore`가 값을 물어봅니다. 계정 레벨 `claude.ai` 커넥터와 플러그인 제공 서버는 `claude mcp add-json`으로 복원할 수 없으므로 의도적으로 제외합니다. **주의: 마스킹 대상은 `headers`와 `env`뿐입니다.** API 키를 `args`(`--api-key=...`)나 `url` 쿼리스트링으로 전달하는 서버가 있다면 그 값은 평문으로 백업되므로, 백업 레포는 private으로 두세요.
 ```
 
 - [ ] **Step 5: Commit**
