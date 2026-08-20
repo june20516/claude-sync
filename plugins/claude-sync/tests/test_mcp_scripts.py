@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 import mcp_config as mc  # noqa: E402
 import collect_mcp  # noqa: E402
 import compare_mcp  # noqa: E402
+import plan_mcp  # noqa: E402
 
 A = {"command": "a"}
 B = {"command": "b"}
@@ -190,3 +191,69 @@ def test_compare_cli_exits_zero_on_skip(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["status"] == "skipped"
+
+
+def test_plan_emits_buckets_and_configs(tmp_path):
+    """SKILL.md가 레포 파일을 직접 파싱하지 않도록 등록용 config를 함께 낸다."""
+    repo_cfg = {"type": "http", "url": "u", "headers": {"K": mc.SENTINEL}}
+    local = write_local(tmp_path, {})
+    repo = write_repo(tmp_path, {"c7": repo_cfg, "pw": {"command": "npx"}})
+    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
+                              claude_json_path=local,
+                              base_dir=write_base_blob(tmp_path, None))
+    assert out["status"] == "ok"
+    assert out["add"] == ["pw"] and out["needs_secret"] == ["c7"]
+    assert out["configs"]["pw"] == {"command": "npx"}
+    assert out["secret_keys"]["c7"] == [("headers", "K")]   # JSON으로 나가면 배열이 된다
+
+
+def test_plan_config_values_are_masked(tmp_path):
+    """configs는 레포 값(마스킹됨)이다 — 계획 출력에 비밀이 실리지 않는다."""
+    local = write_local(tmp_path, {})
+    repo = write_repo(tmp_path, {"c7": {"type": "http", "url": "u", "headers": {"K": "sk-real"}}})
+    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
+                              claude_json_path=local,
+                              base_dir=write_base_blob(tmp_path, None))
+    assert out["configs"]["c7"]["headers"]["K"] == mc.SENTINEL
+
+
+def test_plan_omits_configs_for_unrestorable(tmp_path):
+    """등록을 시도하지 않는 항목에는 등록용 config를 주지 않는다."""
+    local = write_local(tmp_path, {})
+    repo = write_repo(tmp_path, {"claude.ai Notion": {"url": "u", "type": "stdio"}})
+    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
+                              claude_json_path=local,
+                              base_dir=write_base_blob(tmp_path, None))
+    assert out["unrestorable"] == ["claude.ai Notion"]
+    assert out["configs"] == {}
+
+
+def test_plan_uses_base_to_split_cases_7_8_9(tmp_path):
+    local = write_local(tmp_path, {"seven": A, "eight": ORIG, "nine": A})
+    repo = write_repo(tmp_path, {"seven": ORIG, "eight": B, "nine": B})
+    base_dir = write_base_blob(tmp_path, {"seven": ORIG, "eight": ORIG, "nine": ORIG})
+    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
+                              claude_json_path=local, base_dir=base_dir)
+    assert out["local_ahead"] == ["seven"]
+    assert out["repo_ahead"] == ["eight"]
+    assert out["both_changed"] == ["nine"]
+
+
+def test_plan_cli_exits_zero_on_skip(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    repo = write_repo(tmp_path, {"z": B})
+    script = os.path.join(SCRIPTS_DIR, "sync-restore", "scripts", "plan_mcp.py")
+    proc = subprocess.run(
+        [sys.executable, os.path.abspath(script), "plan", os.path.join(repo, mc.BACKUP_RELPATH)],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "skipped"
+
+
+def test_plan_cli_rejects_unknown_mode():
+    script = os.path.join(SCRIPTS_DIR, "sync-restore", "scripts", "plan_mcp.py")
+    proc = subprocess.run([sys.executable, os.path.abspath(script), "bogus"],
+                          capture_output=True, text=True)
+    assert proc.returncode == 1
