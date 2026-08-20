@@ -1,3 +1,16 @@
+> **⚠️ 이 plan은 폐기되었습니다 (2026-08-20).**
+>
+> Task 1~5는 이 문서대로 완료되었으나, 그 과정에서 spec이 여섯 차례 개정되며
+> 설계가 바뀌었습니다. 특히 **전역 base 게이트가 이름 단위 전진 규칙(`next_base`)으로
+> 대체**되었고 **케이스 8에 3선택지 UX가 신설**되어, 이 문서의 Task 6·7·8·10·11은
+> 더 이상 유효하지 않습니다. 그대로 구현하면 사용자 데이터가 깨집니다.
+>
+> - 현행 설계: `docs/superpowers/specs/2026-08-20-mcp-config-source-design.md`
+> - 남은 작업: `docs/superpowers/plans/2026-08-20-mcp-integration.md`
+> - 이 문서는 Task 1~5가 어떻게 만들어졌는지의 기록으로만 남깁니다.
+
+---
+
 # MCP 서버 백업 데이터 소스 재설계 Implementation Plan
 
 > **agentic worker에게:** REQUIRED SUB-SKILL: 이 plan을 task 단위로 구현하려면
