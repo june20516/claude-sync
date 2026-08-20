@@ -163,8 +163,11 @@ def parse_backup(data) -> dict[str, dict]
     """바이트/문자열에서 servers 매핑을 읽는다. 깨진 입력은 {}로 degrade한다."""
 
 def parse_base(data) -> dict[str, dict] | None
-    """base 블롭 전용. data가 None이거나 파싱 불가면 None(이력 없음)을 반환한다.
-    "이력이 비어 있었다"({})와 "이력을 읽을 수 없다"(None)를 반드시 구별한다 — 9장."""
+    """base 블롭 전용. 이력을 신뢰할 수 없으면 None(이력 없음)을 반환한다.
+    "이력이 비어 있었다"({})와 "이력을 읽을 수 없다"(None)를 반드시 구별한다 — 9장.
+    백업 문서로 알아볼 수 있는 형태(v1 배열, 또는 servers가 dict인 v2 객체)일 때만
+    매핑을 돌려준다. data가 None, JSON 파싱 실패, 그리고 구문은 유효하지만 스키마가 아닌
+    JSON(null·문자열·숫자·servers가 없거나 dict가 아닌 객체)은 모두 None이다."""
 
 def load_backup(path) -> dict[str, dict]
     """mcp-servers.json을 읽어 servers 매핑을 반환한다. v2 객체와 v1 배열을 모두 지원한다.
@@ -369,7 +372,7 @@ local_stale:  "다른 기기에서 삭제된 서버가 로컬에 남아 있습�
 | `~/.claude.json` 없음 / JSON 파싱 실패 | `LocalConfigUnavailable` 예외 → **MCP 단계 전체를 건너뜀.** 삭제 판정을 하지 않음 |
 | 레포 `mcp-servers.json` 없음 | `{}` — 첫 백업으로 간주 |
 | base 없음 | 삭제 없이 합집합 degrade |
-| **base 블롭 손상(파싱 실패)** | `parse_base`가 `None` 반환 → base 없음과 동일하게 합집합 degrade. `{}`로 읽어 "이력이 비어 있었다"로 오인하지 않는다 |
+| **base 블롭을 신뢰할 수 없음** | `parse_base`가 `None` 반환 → base 없음과 동일하게 합집합 degrade. JSON 파싱 실패뿐 아니라 **구문은 유효하지만 백업 문서가 아닌 경우**(`null`, 문자열, 숫자, `servers`가 없거나 dict가 아닌 객체)도 포함한다. `{}`로 읽어 "이력이 비어 있었다"로 오인하지 않는다 |
 | `add-json` 실패 | 해당 서버만 실패로 기록하고 나머지를 계속 진행 |
 
 MCP 단계 실패가 backup·restore 전체를 실패시키지 않는다. 파일 동기화는 그대로 진행한다.
