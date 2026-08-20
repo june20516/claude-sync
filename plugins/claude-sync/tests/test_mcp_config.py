@@ -294,3 +294,25 @@ def test_diff_ignores_secret_value_change():
     local = {"c7": {"headers": {"K": "new-key"}}}
     backed = {"c7": {"headers": {"K": mc.SENTINEL}}}
     assert mc.diff(local, backed)["changed"] == []
+
+
+def test_diff_detects_header_key_renamed():
+    """비밀 값은 가려도 키 이름 변경은 보여야 한다 — 마스킹이 진짜 변경을 묻지 않는다."""
+    local = {"c7": {"headers": {"A_KEY": "x"}}}
+    backed = {"c7": {"headers": {"B_KEY": "x"}}}
+    assert mc.diff(local, backed)["changed"] == ["c7"]
+
+
+def test_diff_detects_secret_field_added_or_removed():
+    """headers 필드가 통째로 생기거나 사라지는 것도 변경이다."""
+    without = {"c7": {"url": "u"}}
+    with_headers = {"c7": {"url": "u", "headers": {"K": "v"}}}
+    assert mc.diff(with_headers, without)["changed"] == ["c7"]
+    assert mc.diff(without, with_headers)["changed"] == ["c7"]
+
+
+def test_diff_detects_env_emptied():
+    """env가 빈 dict가 된 것도 변경이다 — 키가 사라졌으므로."""
+    local = {"n": {"command": "npx", "env": {}}}
+    backed = {"n": {"command": "npx", "env": {"TOKEN": "x"}}}
+    assert mc.diff(local, backed)["changed"] == ["n"]

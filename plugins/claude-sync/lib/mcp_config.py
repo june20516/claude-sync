@@ -166,6 +166,11 @@ def dump_backup(servers, path):
 
 
 def _fingerprint(cfg):
+    """cfg를 키 정렬된 JSON 문자열로 만들어 비교 가능한 형태로 바꾼다.
+
+    dump_backup과 같은 직렬화 옵션(sort_keys, ensure_ascii=False)을 쓴다 —
+    디스크 표현이 같으면 same()도 같다고 판정하도록 맞춘 것이다.
+    """
     return json.dumps(cfg, sort_keys=True, ensure_ascii=False)
 
 
@@ -180,9 +185,12 @@ def diff(local, backed):
     비밀 값은 로컬에 평문, 레포에 SENTINEL로 저장되므로 원본끼리 비교하면
     비밀을 가진 서버가 영구히 "변경됨"으로 보고된다(Bug #2와 같은 미수렴).
     """
-    L, R = redact(local), redact(backed)
+    local_masked, repo_masked = redact(local), redact(backed)
     return {
-        "only_local": sorted(set(L) - set(R)),
-        "only_repo": sorted(set(R) - set(L)),
-        "changed": sorted(n for n in set(L) & set(R) if not same(L[n], R[n])),
+        "only_local": sorted(set(local_masked) - set(repo_masked)),
+        "only_repo": sorted(set(repo_masked) - set(local_masked)),
+        "changed": sorted(
+            name for name in set(local_masked) & set(repo_masked)
+            if not same(local_masked[name], repo_masked[name])
+        ),
     }
