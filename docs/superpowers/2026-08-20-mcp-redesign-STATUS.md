@@ -46,9 +46,27 @@ uv run --with pytest pytest plugins/claude-sync/tests -q
 
 ## 4. 남은 것
 
-`restore_plan` 함수, 스크립트 3개(`collect_mcp.py`·`compare_mcp.py` 재작성·`plan_mcp.py`),
-SKILL.md 3개의 실행 절차, 사용자 문서 4개, 버전 3.0.0.
-자세한 내용은 `2026-08-20-mcp-integration.md`.
+`2026-08-20-mcp-integration.md`에 13개 task / 73개 step으로 정리되어 있다.
+
+1. `next_base`에 redact 내부 적용
+2. `restore_plan` 신설
+3. backup 반복 적용 고정점 검증
+4. `collect_mcp.py` 신설
+5. sync-backup SKILL.md 재작성 + `parse_mcp.py` 삭제
+6. `compare_mcp.py` 재작성 + sync-status SKILL.md
+7. `plan_mcp.py plan`
+8. `plan_mcp.py apply-base`
+9. 스크립트 경유 backup↔restore 교대 검증
+10. sync-restore SKILL.md 재작성
+11. 사용자 문서 4개
+12. 버전 3.0.0
+13. 실환경 스모크
+
+**Task 5·6·10이 끝나야 비로소 사용자의 버그가 실제로 고쳐진다** — 그전까지는
+스킬이 여전히 옛 파서를 호출한다.
+
+plan 작성자가 plan의 코드를 실제로 추출해 실행 검증했다(159 passed).
+plan에 적힌 테스트·구현 코드는 그대로 붙여 넣어도 동작하는 것들이다.
 
 ## 5. 설계에서 반드시 알아야 할 것
 
