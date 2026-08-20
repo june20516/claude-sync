@@ -226,12 +226,21 @@ def restore_plan(local: dict, backed: dict, base: dict | None) -> dict
     """복원 계획. diff·merge와 마찬가지로 비교 직전 양쪽에 redact를 적용한다.
     {"add": [...], "needs_secret": [...], "unrestorable": [...], "in_sync": [...],
      "local_ahead": [...], "repo_ahead": [...], "both_changed": [...],
-     "local_stale": [...], "local_only": [...]}
+     "local_stale": [...], "local_only": [...],
+     "configs": {name: cfg}, "secret_keys": {name: [[field, key], ...]}}
+
+    configs·secret_keys는 등록에 필요한 재료다. 이것이 없으면 SKILL.md가 레포 파일을 직접
+    파싱해야 하고, 그러면 이 재설계가 없애려던 "파서 두 벌"이 되살아난다.
+    configs의 값은 redact를 거친 레포 값이므로 비밀이 실리지 않는다 —
+    needs_secret 항목은 SENTINEL 자리를 사용자 입력으로 채운 뒤 등록한다(8.3).
 
     R에만 있는 이름(로컬 미설치) — 셋으로 가른다:
       unrestorable  add-json으로 재현할 수 없는 항목. 둘 중 하나면 여기다 —
                     (a) 이름이 CLI 규칙 `^[A-Za-z0-9_-]+$`(영숫자·하이픈·언더스코어)을 어김,
-                    (b) config에 command도 없고 url+type(http/sse)도 없음.
+                    (b) config에 command도 없고 url+type도 없음. type은 **소문자
+                        `"http"`/`"sse"`만 인정한다** — v1이 저장하던 `"HTTP"`(대문자)를
+                        허용하면 add-json이 스키마 불일치로 실패하므로, v1 승격 항목이
+                        전부 unrestorable로 빠지는 것이 10장의 의도와 맞다.
                     v1 배열에서 승격된 항목이 정확히 이 형태다(10장).
       needs_secret  복원 가능하지만 secret_keys(cfg)가 비어 있지 않음 → 값을 물어야 한다.
       add           그 밖 — 그대로 등록한다.
@@ -726,7 +735,7 @@ SKILL.md는 `status` 필드 하나만 보고 분기하면 된다. 파일 동기�
 | `plugins/claude-sync/skills/sync-restore/scripts/plan_mcp.py` | **신설** — `plan`(계획 JSON)과 `apply-base`(override 적용 후 스테이징 기록) 두 모드 (8.3) |
 | `plugins/claude-sync/skills/sync-backup/SKILL.md` | 6단계 재작성, 동기화 대상 표 정정(12장), 10·11단계에 MCP base 스테이징 → `update_base.py` 호출 추가. **"커밋할 변경 없음" 경로에도 호출이 있어야 하므로** 현재의 `git commit && git push` 성공 블록 안에만 넣으면 안 된다(7.5) |
 | `plugins/claude-sync/skills/sync-status/SKILL.md` | `claude mcp list` 파이프 제거, 상태 어휘 설명 정정(8.2, 12장) |
-| `plugins/claude-sync/skills/sync-restore/SKILL.md` | 6단계를 `add-json` 기반으로 재작성. 7.4·7.7의 세 선택지 대화, 비밀 입력, `remove`→`add-json` 2단계와 실패 경고, `apply-base` + `update_base.py` 호출 |
+| `plugins/claude-sync/skills/sync-restore/SKILL.md` | 6단계를 `add-json` 기반으로 재작성. 7.4·7.7의 세 선택지 대화, 비밀 입력, `remove`→`add-json` 2단계와 실패 경고, `apply-base` + `update_base.py` 호출. **`update_base.py`는 `sync-backup/scripts`에 있는데 이 스킬의 `$SYNC_SCRIPTS`는 `sync-restore/scripts`를 가리키므로, `SYNC_BACKUP_SCRIPTS`를 별도로 탐색해야 한다** |
 | `plugins/claude-sync/skills/sync-backup/scripts/backup-readme.md` / `.ko.md` | `mcp-servers.json` 설명 갱신 (12장) |
 | `plugins/claude-sync/tests/test_mcp_config.py` | 현재 99개 통과. `restore_plan` 버킷 9개와 `next_base`의 redact 계약 회귀를 추가한다 |
 | `README.md` / `README.ko.md` | 12장 |
@@ -823,7 +832,7 @@ backup만 반복해서는 드러나지 않는다. 실제로 **8.3의 base overri
 | 케이스 9 → 세 선택지 각각 → backup | 채택 → in_sync / 로컬 유지 → 케이스 7 → push / 나중에 → 케이스 9 유지 |
 | 케이스 7 상태에서 restore | 로컬이 바뀌지 않는다. 선택지가 제시되지 않고 `local_ahead`로만 보고된다 |
 | 비밀 있는 서버의 케이스 8에서 "채택" 중 입력 건너뜀 | 로컬 불변, base 불변. `<REDACTED>`가 로컬 `headers`/`env`에 기록되지 않는다 |
-| backup→restore→backup→restore **2주기**(무선택) | 2주기째의 레포·base·보고가 1주기째와 완전히 같다 |
+| backup→restore→backup→restore **3주기**(무선택) | **3주기째가 2주기째와 같다.** 1주기째 restore는 케이스 2의 서버를 실제로 설치하므로 2주기 보고가 1주기와 다른 것이 정상이다(`add` → `in_sync`) — 고정점은 2주기 대 3주기로 판정한다 |
 | 기기 A·B 교대 2주기 (A가 삭제, B가 "유지") | X가 레포로 복귀한 뒤 안정. 이후 주기에서 부활·소멸이 반복되지 않는다 |
 | **마이그레이션(v1 레포) 후 첫 restore** | v1 승격 항목이 `unrestorable`로 **한 번만** 안내되고 `add-json` 실패가 0건이다 |
 | 커밋할 변경이 없는 backup | base가 기록된다(부트스트랩). 그 뒤 로컬에서 서버를 지우면 다음 backup이 `deleted`로 전파한다 |
