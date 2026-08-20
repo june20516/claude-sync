@@ -93,3 +93,42 @@ def secret_keys(cfg):
         if isinstance(value, dict):
             found.extend((field, k) for k in sorted(value))
     return found
+
+
+def parse_backup(data):
+    """JSON 바이트/문자열에서 servers 매핑을 읽는다.
+
+    v2 객체({"version":2, "servers":{...}})와 v1 배열([{name,url,type}, ...])을 모두 지원한다.
+    깨진 입력은 {}로 degrade한다 — 레포 파일이 깨졌다고 백업 전체를 막지 않는다.
+    """
+    try:
+        obj = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    if isinstance(obj, list):
+        out = {}
+        for item in obj:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                out[item["name"]] = {k: v for k, v in item.items() if k != "name"}
+        return out
+    if isinstance(obj, dict):
+        servers = obj.get("servers")
+        return dict(servers) if isinstance(servers, dict) else {}
+    return {}
+
+
+def load_backup(path):
+    """mcp-servers.json을 읽어 servers 매핑을 반환한다. 파일이 없으면 {}."""
+    try:
+        with open(path, "rb") as f:
+            return parse_backup(f.read())
+    except FileNotFoundError:
+        return {}
+
+
+def dump_backup(servers, path):
+    """v2 형식으로 저장한다. sort_keys로 git diff를 안정화한다."""
+    payload = {"version": SCHEMA_VERSION, "scope": "user", "servers": servers}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True, ensure_ascii=False)
+        f.write("\n")

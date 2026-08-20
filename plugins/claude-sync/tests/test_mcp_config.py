@@ -145,3 +145,46 @@ def test_redact_passes_through_non_dict_server_config():
 
 def test_secret_keys_empty_for_non_dict_config():
     assert mc.secret_keys("oops") == []
+
+
+def test_dump_and_load_roundtrip(tmp_path):
+    servers = {"playwright": {"command": "npx", "args": ["@playwright/mcp@latest"]}}
+    path = str(tmp_path / "mcp-servers.json")
+    mc.dump_backup(servers, path)
+    assert mc.load_backup(path) == servers
+
+
+def test_dump_writes_v2_envelope(tmp_path):
+    path = str(tmp_path / "mcp-servers.json")
+    mc.dump_backup({"a": {"command": "x"}}, path)
+    payload = json.loads(open(path, encoding="utf-8").read())
+    assert payload["version"] == 2
+    assert payload["scope"] == "user"
+    assert payload["servers"] == {"a": {"command": "x"}}
+
+
+def test_dump_is_byte_stable_regardless_of_key_order(tmp_path):
+    p1, p2 = str(tmp_path / "a.json"), str(tmp_path / "b.json")
+    mc.dump_backup({"b": {"y": 1, "x": 2}, "a": {"command": "c"}}, p1)
+    mc.dump_backup({"a": {"command": "c"}, "b": {"x": 2, "y": 1}}, p2)
+    assert open(p1, "rb").read() == open(p2, "rb").read()
+
+
+def test_load_backup_missing_file_is_empty(tmp_path):
+    assert mc.load_backup(str(tmp_path / "nope.json")) == {}
+
+
+def test_load_backup_reads_v1_array(tmp_path):
+    """구버전 배열 포맷을 이름 → 나머지 필드 매핑으로 승격한다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps([
+        {"name": "context7", "url": "https://mcp.context7.com/mcp", "type": "HTTP"},
+        {"name": "claude.ai Notion", "url": "https://mcp.notion.com/mcp", "type": "stdio"},
+    ]), encoding="utf-8")
+    loaded = mc.load_backup(str(path))
+    assert set(loaded) == {"context7", "claude.ai Notion"}
+    assert loaded["context7"] == {"url": "https://mcp.context7.com/mcp", "type": "HTTP"}
+
+
+def test_parse_backup_garbage_is_empty():
+    assert mc.parse_backup(b"{not json") == {}
