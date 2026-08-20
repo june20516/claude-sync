@@ -194,3 +194,51 @@ def diff(local, backed):
             if not same(local_masked[name], repo_masked[name])
         ),
     }
+
+
+def merge(local, repo, base):
+    """서버 이름 키 단위 3-way 병합 (spec 7.2 판정표).
+
+    local은 redact가 적용된 상태여야 한다(호출부 책임).
+    base가 None이면 삭제 없이 합집합으로 degrade한다 — "타 기기 추가"와
+    "내 삭제"를 구별할 수 없기 때문이다.
+    conflicts 또는 local_stale이 비어 있지 않으면 호출부는 base를 갱신해서는 안 된다.
+    """
+    servers, conflicts, deleted, local_stale = {}, [], [], []
+    for name in sorted(set(local) | set(repo) | set(base or {})):
+        in_l, in_r = name in local, name in repo
+        if base is None:
+            if in_l:
+                servers[name] = local[name]
+            elif in_r:
+                servers[name] = repo[name]
+            continue
+        in_s = name in base
+        if in_l and not in_r and not in_s:                  # 1 로컬 신규
+            servers[name] = local[name]
+        elif not in_l and in_r and not in_s:                # 2 타 기기 추가
+            servers[name] = repo[name]
+        elif not in_l and in_r and in_s:                    # 3 로컬에서 삭제
+            deleted.append(name)
+        elif in_l and not in_r and in_s:
+            if same(local[name], base[name]):               # 4 타 기기 삭제, 로컬 잔존
+                local_stale.append(name)
+            else:                                           # 5 로컬 수정 vs 리모트 삭제
+                conflicts.append(name)
+        elif in_l and in_r:
+            if same(local[name], repo[name]):               # 6 in_sync
+                servers[name] = local[name]
+            elif in_s and same(repo[name], base[name]):     # 7 로컬만 변경
+                servers[name] = local[name]
+            elif in_s and same(local[name], base[name]):    # 8 타 기기 변경
+                servers[name] = repo[name]
+            else:                                           # 9 충돌
+                conflicts.append(name)
+                servers[name] = repo[name]
+        # 10 L·R 모두 없고 base에만 존재 → no-op
+    return {
+        "servers": servers,
+        "conflicts": conflicts,
+        "deleted": deleted,
+        "local_stale": local_stale,
+    }

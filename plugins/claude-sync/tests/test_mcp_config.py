@@ -316,3 +316,83 @@ def test_diff_detects_env_emptied():
     local = {"n": {"command": "npx", "env": {}}}
     backed = {"n": {"command": "npx", "env": {"TOKEN": "x"}}}
     assert mc.diff(local, backed)["changed"] == ["n"]
+
+
+A = {"command": "a"}
+B = {"command": "b"}
+O = {"command": "o"}
+
+
+def test_merge_case1_local_new():
+    r = mc.merge({"x": A}, {}, {})
+    assert r["servers"] == {"x": A}
+    assert r["conflicts"] == [] and r["local_stale"] == [] and r["deleted"] == []
+
+
+def test_merge_case2_remote_added_is_preserved():
+    r = mc.merge({}, {"x": A}, {})
+    assert r["servers"] == {"x": A}
+
+
+def test_merge_case3_local_deleted_removes_from_repo():
+    r = mc.merge({}, {"x": A}, {"x": A})
+    assert r["servers"] == {}
+    assert r["deleted"] == ["x"]
+
+
+def test_merge_case4_remote_deleted_local_kept_is_stale():
+    r = mc.merge({"x": A}, {}, {"x": A})
+    assert r["servers"] == {}
+    assert r["local_stale"] == ["x"]
+    assert r["conflicts"] == []
+
+
+def test_merge_case5_local_modified_vs_remote_deleted_is_conflict():
+    r = mc.merge({"x": B}, {}, {"x": O})
+    assert r["conflicts"] == ["x"]
+    assert "x" not in r["servers"]
+
+
+def test_merge_case6_in_sync():
+    r = mc.merge({"x": A}, {"x": A}, {"x": O})
+    assert r["servers"] == {"x": A}
+    assert r["conflicts"] == []
+
+
+def test_merge_case7_local_only_changed_pushes():
+    r = mc.merge({"x": B}, {"x": O}, {"x": O})
+    assert r["servers"] == {"x": B}
+
+
+def test_merge_case8_remote_only_changed_keeps_repo():
+    r = mc.merge({"x": O}, {"x": B}, {"x": O})
+    assert r["servers"] == {"x": B}
+
+
+def test_merge_case9_both_changed_is_conflict():
+    r = mc.merge({"x": A}, {"x": B}, {"x": O})
+    assert r["conflicts"] == ["x"]
+    assert r["servers"] == {"x": B}
+
+
+def test_merge_case9_without_base_entry_is_conflict():
+    r = mc.merge({"x": A}, {"x": B}, {})
+    assert r["conflicts"] == ["x"]
+    assert r["servers"] == {"x": B}
+
+
+def test_merge_case10_base_only_is_noop():
+    r = mc.merge({}, {}, {"x": A})
+    assert r["servers"] == {}
+    assert r["deleted"] == [] and r["conflicts"] == [] and r["local_stale"] == []
+
+
+def test_merge_without_base_is_union_no_delete():
+    r = mc.merge({"a": A}, {"b": B}, None)
+    assert r["servers"] == {"a": A, "b": B}
+    assert r["deleted"] == []
+
+
+def test_merge_without_base_prefers_local():
+    r = mc.merge({"x": A}, {"x": B}, None)
+    assert r["servers"] == {"x": A}
