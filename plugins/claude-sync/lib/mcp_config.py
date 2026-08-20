@@ -8,12 +8,14 @@ backup/status/restore는 이 모듈만 통해 MCP를 다룬다(파서 드리프�
 import copy
 import json
 import os
+import re
 
 SENTINEL = "<REDACTED>"
 SECRET_FIELDS = ("headers", "env")
 SCHEMA_VERSION = 2
 BACKUP_RELPATH = "mcp-servers.json"
 DEFAULT_CLAUDE_JSON = os.path.expanduser("~/.claude.json")
+VALID_NAME = re.compile(r"^[A-Za-z0-9_-]+$")   # claude mcp add-json의 실측 제약
 
 
 class LocalConfigUnavailable(Exception):
@@ -285,3 +287,64 @@ def merge(local, repo, base):
         "repo_ahead": repo_ahead,
         "next_base": next_base(local, base, servers),
     }
+
+
+def restorable(name, cfg):
+    """claude mcp add-json으로 재현할 수 있는 항목인가.
+
+    둘 중 하나만 어겨도 거짓이다 —
+    (a) 이름이 CLI 규칙(영숫자·하이픈·언더스코어)을 어김,
+    (b) config에 command도 없고 url+type(http/sse)도 없음.
+    v1 배열에서 승격된 항목이 정확히 (b)의 형태다(10장). type은 소문자만 인정한다 —
+    v1이 저장하던 "HTTP"는 add-json 스키마와 맞지 않는다.
+    """
+    if not VALID_NAME.match(name):
+        return False
+    if not isinstance(cfg, dict):
+        return False
+    if isinstance(cfg.get("command"), str) and cfg["command"]:
+        return True
+    return isinstance(cfg.get("url"), str) and cfg.get("type") in ("http", "sse")
+
+
+def restore_plan(local, backed, base):
+    """복원 계획. diff·merge와 마찬가지로 비교 직전 양쪽에 redact를 적용한다.
+
+    버킷 9개: add / needs_secret / unrestorable / in_sync / local_ahead /
+    repo_ahead / both_changed / local_stale / local_only.
+    케이스 7·8·9를 한 버킷으로 뭉치지 않는 이유는 7.7에 있다 — 처방이 서로 다르고,
+    특히 케이스 7에 "레포 값 채택"을 제시하면 아직 백업되지 않은 로컬 변경이 파괴된다.
+    조건식은 merge가 7.2 판정표의 7·8·9행에서 쓰는 것과 같다.
+    local_stale은 케이스 4와 5를 모두 담는다(merge.local_stale ⊆ restore_plan.local_stale) —
+    담지 않으면 케이스 5가 탈출구 없는 상태가 된다.
+    """
+    local, backed = redact(local), redact(backed)
+    known = redact(base) if base else {}
+    plan = {key: [] for key in (
+        "add", "needs_secret", "unrestorable", "in_sync", "local_ahead",
+        "repo_ahead", "both_changed", "local_stale", "local_only",
+    )}
+    for name in sorted(set(local) | set(backed)):
+        in_local, in_repo = name in local, name in backed
+        if in_repo and not in_local:
+            cfg = backed[name]
+            if not restorable(name, cfg):
+                plan["unrestorable"].append(name)
+            elif secret_keys(cfg):
+                plan["needs_secret"].append(name)
+            else:
+                plan["add"].append(name)
+        elif in_local and in_repo:
+            if same(local[name], backed[name]):                          # 6
+                plan["in_sync"].append(name)
+            elif name in known and same(backed[name], known[name]):      # 7
+                plan["local_ahead"].append(name)
+            elif name in known and same(local[name], known[name]):       # 8
+                plan["repo_ahead"].append(name)
+            else:                                                        # 9
+                plan["both_changed"].append(name)
+        elif name in known:                                              # 4·5
+            plan["local_stale"].append(name)
+        else:                                                            # 1
+            plan["local_only"].append(name)
+    return plan

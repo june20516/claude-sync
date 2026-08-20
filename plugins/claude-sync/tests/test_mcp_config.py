@@ -512,3 +512,91 @@ def test_next_base_never_writes_plaintext_secret():
     local = {"context7": {"type": "http", "url": "u", "headers": {"K": "sk-real"}}}
     out = mc.next_base(local, None, local)
     assert out["context7"]["headers"]["K"] == mc.SENTINEL
+
+
+REPO_HTTP = {
+    "type": "http",
+    "url": "https://mcp.context7.com/mcp",
+    "headers": {"CONTEXT7_API_KEY": mc.SENTINEL},
+}
+
+
+def test_restore_plan_add_for_plain_repo_only_server():
+    plan = mc.restore_plan({}, {"playwright": {"command": "npx", "args": ["@playwright/mcp@latest"]}}, None)
+    assert plan["add"] == ["playwright"]
+    assert plan["needs_secret"] == [] and plan["unrestorable"] == []
+
+
+def test_restore_plan_needs_secret_when_repo_has_masked_headers():
+    plan = mc.restore_plan({}, {"context7": REPO_HTTP}, None)
+    assert plan["needs_secret"] == ["context7"]
+    assert plan["add"] == []
+
+
+def test_restore_plan_accepts_sse_server():
+    plan = mc.restore_plan({}, {"sse-one": {"type": "sse", "url": "https://x/sse"}}, None)
+    assert plan["add"] == ["sse-one"]
+
+
+def test_restore_plan_unrestorable_for_invalid_name():
+    """이름 규칙(^[A-Za-z0-9_-]+$) 위반은 add-json이 exit 1이다 — 시도하지 않는다."""
+    plan = mc.restore_plan({}, {"claude.ai Notion": {"command": "npx"}}, None)
+    assert plan["unrestorable"] == ["claude.ai Notion"]
+    assert plan["add"] == []
+
+
+def test_restore_plan_unrestorable_for_v1_promoted_entry():
+    """v1 승격 항목은 command도 url+type(http/sse)도 아니다 — 10장."""
+    v1 = {"legacy": {"url": "npx @playwright/mcp@latest", "type": "stdio"}}
+    plan = mc.restore_plan({}, v1, None)
+    assert plan["unrestorable"] == ["legacy"]
+    assert plan["add"] == [] and plan["needs_secret"] == []
+
+
+def test_restore_plan_unrestorable_for_non_dict_config():
+    """4장: config가 객체가 아닌 항목은 보존하되 복원은 하지 않는다."""
+    plan = mc.restore_plan({}, {"broken": None}, None)
+    assert plan["unrestorable"] == ["broken"]
+
+
+def test_restore_plan_in_sync_when_local_secret_is_plaintext():
+    """로컬 평문 vs 레포 SENTINEL이 in_sync로 수렴한다 — 영구 미수렴 회귀."""
+    local = {"context7": dict(REPO_HTTP, headers={"CONTEXT7_API_KEY": "sk-real"})}
+    plan = mc.restore_plan(local, {"context7": REPO_HTTP}, None)
+    assert plan["in_sync"] == ["context7"]
+    assert plan["both_changed"] == []
+
+
+def test_restore_plan_splits_cases_7_8_9():
+    """7·8·9를 한 버킷으로 뭉치면 케이스 7에 '레포 값 채택'이 제시되어 미백업 변경이 파괴된다."""
+    local = {"seven": SERVER_A, "eight": SERVER_ORIG, "nine": SERVER_A}
+    repo = {"seven": SERVER_ORIG, "eight": SERVER_B, "nine": SERVER_B}
+    base = {"seven": SERVER_ORIG, "eight": SERVER_ORIG, "nine": SERVER_ORIG}
+    plan = mc.restore_plan(local, repo, base)
+    assert plan["local_ahead"] == ["seven"]
+    assert plan["repo_ahead"] == ["eight"]
+    assert plan["both_changed"] == ["nine"]
+
+
+def test_restore_plan_local_stale_covers_case4_and_case5():
+    """merge.local_stale(케이스 4만)보다 넓다 — 케이스 5에 탈출구를 주기 위해서다."""
+    local = {"four": SERVER_A, "five": SERVER_B}
+    base = {"four": SERVER_A, "five": SERVER_ORIG}
+    plan = mc.restore_plan(local, {}, base)
+    assert plan["local_stale"] == ["five", "four"]
+    assert plan["local_only"] == []
+
+
+def test_restore_plan_local_only_when_name_absent_from_base():
+    """케이스 1(로컬 신규). restore는 아무것도 하지 않는다."""
+    plan = mc.restore_plan({"fresh": SERVER_A}, {}, {"other": SERVER_B})
+    assert plan["local_only"] == ["fresh"]
+    assert plan["local_stale"] == []
+
+
+def test_restore_plan_without_base_degrades_to_both_changed_and_local_only():
+    """base가 None이면 케이스를 확정할 수 없다 — 삭제도 local_ahead도 단정하지 않는다."""
+    plan = mc.restore_plan({"x": SERVER_A, "solo": SERVER_A}, {"x": SERVER_B}, None)
+    assert plan["both_changed"] == ["x"]
+    assert plan["local_only"] == ["solo"]
+    assert plan["local_stale"] == []
