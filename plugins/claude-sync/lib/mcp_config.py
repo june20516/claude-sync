@@ -163,3 +163,26 @@ def dump_backup(servers, path):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=True, ensure_ascii=False)
         f.write("\n")
+
+
+def _fingerprint(cfg):
+    return json.dumps(cfg, sort_keys=True, ensure_ascii=False)
+
+
+def same(a, b):
+    """설정 동등 비교. 키 순서에 무관하다."""
+    return _fingerprint(a) == _fingerprint(b)
+
+
+def diff(local, backed):
+    """상태 비교. 비교 직전 양쪽에 redact를 적용한다.
+
+    비밀 값은 로컬에 평문, 레포에 SENTINEL로 저장되므로 원본끼리 비교하면
+    비밀을 가진 서버가 영구히 "변경됨"으로 보고된다(Bug #2와 같은 미수렴).
+    """
+    L, R = redact(local), redact(backed)
+    return {
+        "only_local": sorted(set(L) - set(R)),
+        "only_repo": sorted(set(R) - set(L)),
+        "changed": sorted(n for n in set(L) & set(R) if not same(L[n], R[n])),
+    }

@@ -257,3 +257,40 @@ def test_parse_backup_stays_lenient_where_parse_base_rejects():
     data = b'{"version": 2}'
     assert mc.parse_backup(data) == {}
     assert mc.parse_base(data) is None
+
+
+def test_same_ignores_key_order():
+    assert mc.same({"a": 1, "b": 2}, {"b": 2, "a": 1})
+    assert not mc.same({"a": 1}, {"a": 2})
+
+
+def test_diff_all_equal():
+    servers = {"playwright": {"command": "npx", "args": ["@playwright/mcp@latest"]}}
+    result = mc.diff(servers, servers)
+    assert result == {"only_local": [], "only_repo": [], "changed": []}
+
+
+def test_diff_converges_when_repo_is_redacted():
+    """로컬 평문 vs 레포 마스킹이 in_sync로 수렴한다 — Bug #2 및 마스킹 함정 회귀."""
+    local = {"context7": {"type": "http", "headers": {"CONTEXT7_API_KEY": "sk-real"}}}
+    backed = mc.redact(local)
+    assert mc.diff(local, backed)["changed"] == []
+
+
+def test_diff_detects_changed_command():
+    local = {"playwright": {"command": "npx", "args": ["@playwright/mcp@2.0"]}}
+    backed = {"playwright": {"command": "npx", "args": ["@playwright/mcp@latest"]}}
+    assert mc.diff(local, backed)["changed"] == ["playwright"]
+
+
+def test_diff_reports_only_local_and_only_repo():
+    result = mc.diff({"a": {"command": "x"}}, {"b": {"command": "y"}})
+    assert result["only_local"] == ["a"]
+    assert result["only_repo"] == ["b"]
+
+
+def test_diff_ignores_secret_value_change():
+    """비밀 값만 바뀐 변경은 동기화되지 않는다 (spec 6장)."""
+    local = {"c7": {"headers": {"K": "new-key"}}}
+    backed = {"c7": {"headers": {"K": mc.SENTINEL}}}
+    assert mc.diff(local, backed)["changed"] == []
