@@ -179,7 +179,8 @@ def merge(local: dict, repo: dict, base: dict | None) -> dict
 def restore_plan(local: dict, backed: dict, base: dict | None) -> dict
     """{"add": [...], "needs_secret": [...], "in_sync": [...],
         "differs": [...], "local_stale": [...]}.
-    local_stale은 로컬에 있고 레포에 없으며 base에 있는 서버 — 타 기기의 삭제(7.3)."""
+    local_stale은 로컬에 있고 레포에 없으며 base에 있는 서버 — 타 기기의 삭제(7.3).
+    diff와 마찬가지로 비교 직전 양쪽에 redact를 적용한다."""
 ```
 
 `diff()`가 **비교 직전 양쪽에 `redact()`를 적용**하는 것이 핵심이다.
@@ -194,6 +195,12 @@ def restore_plan(local: dict, backed: dict, base: dict | None) -> dict
 - 복원 시 `needs_secret`으로 분류하여 사용자에게 값을 묻는다.
 - **사용자가 입력을 건너뛰면 그 서버는 등록하지 않는다.** 인증이 깨진 서버를 만들지 않는 편이 낫다.
 - 마스킹 대상은 값이 문자열인 경우로 한정하고, 중첩 구조가 오면 통째로 SENTINEL로 치환한다.
+
+**결과로 따라오는 성질**: 마스킹 후 비교하므로 **비밀 값만 바뀐 변경은 동기화되지 않는다.**
+로컬에서 API 키를 교체해도 backup은 변화를 감지하지 않고 status도 차이를 보고하지 않는다.
+비밀은 애초에 동기화 대상이 아니므로 의도된 동작이며, 이 규칙이 없으면 키를 가진 서버가
+영구히 "변경됨"으로 보고된다(Bug #2와 같은 미수렴). 이 성질은 `diff`·`merge`·`restore_plan`에
+일관되게 적용한다.
 
 ## 7. 키 단위 3-way 병합
 
@@ -217,6 +224,10 @@ L = 로컬 user 스코프(redact 적용), R = 레포 `servers`, S = base.
 | 7 | 있음 | 있음 | R==S, L≠R | 로컬만 변경 → push |
 | 8 | 있음 | 있음 | L==S, R≠S | 타 기기가 변경 → 레포 값 유지 |
 | 9 | 있음 | 있음 | 양쪽 ≠ S (S 없음 포함), L≠R | 충돌 → 해당 서버만 건너뜀 |
+| 10 | 없음 | 없음 | 있음 | 이미 양쪽에서 사라짐 → 결과에서 제외 (no-op) |
+
+구현은 `set(L) | set(R) | set(S)`를 순회한다. 케이스 10은 사용자가 restore를 거치지 않고
+`claude mcp remove`를 직접 실행했을 때 발생하며, base가 다음 갱신에서 자연히 정리된다.
 
 "레포에 있는데 로컬에 없다"(2 vs 3)를 *타 기기 추가* 와 *내 삭제* 로 가르려면 **base가 반드시 필요하다.**
 base가 없으면 판별 불가이므로 삭제 없이 합집합으로 degrade한다(첫 도입 시점, 새 기기가 여기 해당).
@@ -238,9 +249,20 @@ restore는 non-destructive이므로 로컬 서버를 지우지 않는다. 그래
 
 base를 갱신하지 않아도 나머지 서버는 푸시 직후 L==R이라 케이스 6(in_sync)으로 떨어지므로 부작용이 없다.
 
-수렴은 restore에서 일어난다. 사용자가 로컬 제거를 선택하면(8.3) L에서 X가 사라져
-케이스 3이 되고, base가 `{Y}`로 갱신되며 완결된다. 사용자가 거부하면 케이스 4가 유지되는데,
-이는 "이 기기는 이 서버를 계속 쓴다"는 선택이므로 안정 상태로 남는 것이 옳다.
+수렴은 restore에서 일어난다. 이때 **"제거하지 않음"에는 서로 다른 두 의미가 있으므로 한 동작으로 뭉치면 안 된다.**
+"이 기기는 X를 계속 쓴다"(→ 레포에 되돌려야 한다)와 "지금은 판단을 미룬다"(→ 아무것도 바뀌면 안 된다)는
+정반대의 결과를 요구한다. 그래서 8.3은 선택지를 셋으로 나누며, 이는 파일 쪽 충돌 해소 UX
+(백업 채택 / 로컬 유지 / 나중에)와 같은 구조다.
+
+| 선택 | 동작 | 다음 backup | 도달 상태 |
+|---|---|---|---|
+| **제거** | `claude mcp remove X -s user`, base ← 레포 | 케이스 3 이후 in_sync | 레포·로컬 모두 X 없음 |
+| **유지** | 로컬 그대로, base ← 레포 | 케이스 1 → X를 레포에 push | 레포·로컬 모두 X 있음 (A의 삭제 취소) |
+| **나중에** | 아무것도 하지 않음, **base 미갱신** | 케이스 4 반복 | 변화 없음, 다시 보고 |
+
+세 경로 모두 고정점에 도달하므로 재실행해도 결과가 달라지지 않는다(13장 검증).
+핵심은 **"나중에"가 base를 갱신하지 않는다**는 점이다. 갱신하면 S에서 X가 사라져
+다음 backup이 케이스 1로 판정하고, 사용자가 미루기만 했는데 X가 레포에 되살아난다.
 
 ### 7.4 base 관리
 
@@ -251,7 +273,8 @@ base를 갱신하지 않아도 나머지 서버는 푸시 직후 L==R이라 케�
 - 갱신 시점:
   - backup — 커밋·푸시 **성공 이후에만**, 그리고 **`local_stale`이 비어 있을 때만** 갱신한다
     (기존 `update_base.py`의 "푸시 성공 시에만" 계약에 7.3의 게이트를 더한 것이다).
-  - restore — MCP 단계 이후 레포 내용으로 갱신한다.
+  - restore — MCP 단계 이후 레포 내용으로 갱신하되, **"나중에"로 미룬 `local_stale`이 남아 있으면
+    갱신하지 않는다**(7.3). backup 쪽 게이트와 같은 이유다.
   - status — 읽기 전용이므로 갱신하지 않는다.
 
 ### 7.5 충돌 처리
@@ -293,20 +316,26 @@ diff(L, R) → only_local / only_repo / changed 출력
 ### 8.3 restore
 
 ```
-load_backup(레포) → R,  read_local_servers → L,  base → S
+load_backup(레포) → R,  read_local_servers → redact → L,  base → S
 restore_plan(L, R, S) → add / needs_secret / differs / in_sync / local_stale
 add:          claude mcp add-json <name> '<json>' --scope user
 needs_secret: 사용자에게 값을 물어 채운 뒤 add-json, 건너뛰면 미등록
 differs:      건드리지 않고 안내만
-local_stale:  "다른 기기에서 삭제된 서버가 로컬에 남아 있습니다. 제거할까요?"
-              예 → claude mcp remove <name> -s user
-              아니오 → 유지 (다음 backup에서 케이스 4로 남는다)
-이후 base ← 레포 내용
+local_stale:  "다른 기기에서 삭제된 서버가 로컬에 남아 있습니다."
+              제거   → claude mcp remove <name> -s user
+              유지   → 그대로 두고 다음 backup에서 레포로 되돌림
+              나중에 → 아무것도 하지 않음
+미해소 local_stale("나중에") 없음 → base ← 레포 내용
 ```
 
 `local_stale`은 L에 있고 R에 없으며 S에 있는 서버다(7.2 케이스 4).
 이 확인 절차가 삭제를 수렴시키는 유일한 지점이므로 생략할 수 없다.
+세 선택지의 의미와 도달 상태는 7.3의 표를 따른다.
 제거 명령은 `claude mcp get`이 안내하는 형식(`claude mcp remove <name> -s user`)을 그대로 쓴다.
+
+**L에 `redact`를 적용한 뒤 비교하는 것이 필수다.** 로컬에는 실제 API 키가, 레포에는
+`"<REDACTED>"`가 들어 있으므로 원본끼리 비교하면 비밀을 가진 서버가 **매번 `differs`로 보고된다**
+— Bug #2와 같은 종류의 영구 미수렴이다. `diff()`와 동일한 규칙을 `restore_plan()`에도 적용한다.
 
 `claude mcp add-json <name> <json> --scope user`를 쓴다. stdio·http를 모두 받고
 `command`/`args`/`env`/`headers`를 그대로 전달하며, 공백이 든 이름도 인용만 하면 안전하다.
@@ -374,12 +403,24 @@ pytest가 현재 환경에 설치되어 있지 않아 기존 `tests/`도 실행 
 - http 서버의 `type`/`url`/`headers`가 보존되고, 값은 마스킹되며 키 이름은 남는다 — Bug #3·#4 회귀.
 - `diff`: 로컬 평문과 레포 마스킹이 `in_sync`로 수렴한다 — Bug #2 및 마스킹 함정 회귀.
 - `diff`: `command` 변경이 `changed`로 잡힌다.
-- `merge`: 7.2 판정표 9줄 각각.
+- `merge`: 7.2 판정표 10줄 각각.
 - `merge`: base가 없으면 삭제하지 않고 합집합이 된다.
 - `merge`: 케이스 4에서 서버가 레포에 재추가되지 않고 `local_stale`로 보고된다.
 - **순환 정합성**: 케이스 4 상태에서 base를 갱신하지 않은 채 `merge`를 두 번 연속 적용해도
   서버가 되살아나지 않고 같은 판정에 머문다 — 7.3 회귀.
-- `restore_plan`: `local_stale` 분류, 그리고 로컬 제거 후 `merge`가 케이스 3으로 넘어가 수렴한다.
+- `restore_plan`: `local_stale` 분류.
+- `restore_plan`: 로컬에 실제 비밀이 있고 레포가 `<REDACTED>`일 때 `differs`가 아니라 `in_sync`다
+  — 영구 미수렴 회귀.
+
+**멱등성 / 수렴 (7.3 세 경로)** — `merge`를 반복 적용해 고정점을 확인한다.
+각 경로마다 backup을 3회 연속 적용했을 때 2회차부터 레포 내용과 보고가 변하지 않아야 한다.
+
+| 시나리오 | 기대 |
+|---|---|
+| 정리 없이 backup 반복 | 매회 `local_stale=[X]`, 레포 불변, base 미갱신 |
+| restore "제거" 후 backup | `local_stale` 비고 레포·로컬 모두 X 없음, 이후 불변 |
+| restore "유지" 후 backup | 1회차에 X가 레포로 복귀, 이후 불변 |
+| restore "나중에" 후 backup | 케이스 4 유지, 레포 불변, 되살아나지 않음 |
 - `read_local_servers`: `mcpServers` 없음 → `{}`, 파일 없음/깨짐 → 예외.
 - **안전장치**: `LocalConfigUnavailable` 발생 시 레포 servers가 보존된다.
 - `load_backup`: v1 배열 하위호환.
