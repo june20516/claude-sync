@@ -127,7 +127,10 @@ def parse_base(data):
 
     "이력이 비어 있었다"({})와 "이력을 읽을 수 없다"(None)를 반드시 구별해야 한다.
     전자는 삭제·충돌 판정의 근거가 되지만, 후자는 근거가 될 수 없다.
-    데이터가 없거나(None) JSON 파싱에 실패하면 None을 돌려 merge가 합집합으로 degrade하게 한다.
+
+    백업 문서로 알아볼 수 있는 형태 — v1 배열, 또는 servers가 dict인 v2 객체 — 일 때만
+    매핑을 돌려준다. 구문은 유효하지만 스키마가 아닌 JSON(null, 문자열, 숫자,
+    servers가 없거나 dict가 아닌 객체)은 신뢰할 수 없는 이력이므로 None이다.
     """
     if data is None:
         return None
@@ -135,7 +138,11 @@ def parse_base(data):
         obj = json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
-    return _servers_from_obj(obj)
+    if isinstance(obj, list):
+        return _servers_from_obj(obj)
+    if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
+        return _servers_from_obj(obj)
+    return None
 
 
 def load_backup(path):

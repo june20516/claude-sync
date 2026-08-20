@@ -233,3 +233,27 @@ def test_dump_load_roundtrip_preserves_unicode_and_special_names(tmp_path):
     path = str(tmp_path / "mcp-servers.json")
     mc.dump_backup(servers, path)
     assert mc.load_backup(path) == servers
+
+
+def test_parse_base_valid_json_but_not_a_backup_is_none():
+    """구문은 유효하지만 백업 문서가 아닌 JSON은 신뢰할 수 없는 이력이다."""
+    for data in (
+        b"null",
+        b'"just a string"',
+        b"42",
+        b'{"version": 2}',
+        b'{"version": 2, "servers": null}',
+    ):
+        assert mc.parse_base(data) is None, data
+
+
+def test_parse_base_empty_v1_array_is_empty_dict():
+    """v1 배열이 비어 있던 것은 정상적으로 비어 있던 이력이다 — None이 아니다."""
+    assert mc.parse_base(b"[]") == {}
+
+
+def test_parse_backup_stays_lenient_where_parse_base_rejects():
+    """두 함수의 계약이 다르다: parse_backup은 관대하게 {}, parse_base는 None."""
+    data = b'{"version": 2}'
+    assert mc.parse_backup(data) == {}
+    assert mc.parse_base(data) is None
