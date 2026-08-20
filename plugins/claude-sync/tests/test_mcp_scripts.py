@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 
 import mcp_config as mc  # noqa: E402
 import collect_mcp  # noqa: E402
+import compare_mcp  # noqa: E402
 
 A = {"command": "a"}
 B = {"command": "b"}
@@ -137,3 +138,55 @@ def test_collect_cli_rejects_wrong_argument_count():
     script = os.path.join(SCRIPTS_DIR, "sync-backup", "scripts", "collect_mcp.py")
     proc = subprocess.run([sys.executable, os.path.abspath(script)], capture_output=True, text=True)
     assert proc.returncode == 1
+
+
+def test_compare_converges_when_local_secret_is_plaintext(tmp_path):
+    """백업 직후 '동일'로 수렴한다 — Bug #2(영구 미수렴) 회귀."""
+    repo_cfg = {"type": "http", "url": "u", "headers": {"K": mc.SENTINEL}}
+    local = write_local(tmp_path, {"c7": dict(repo_cfg, headers={"K": "sk-real"})})
+    repo = write_repo(tmp_path, {"c7": repo_cfg})
+    out = compare_mcp.compare(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local)
+    assert out == {"status": "ok", "only_local": [], "only_repo": [], "changed": []}
+
+
+def test_compare_reports_three_buckets(tmp_path):
+    local = write_local(tmp_path, {"mine": A, "both": A})
+    repo = write_repo(tmp_path, {"theirs": B, "both": B})
+    out = compare_mcp.compare(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local)
+    assert out["only_local"] == ["mine"]
+    assert out["only_repo"] == ["theirs"]
+    assert out["changed"] == ["both"]
+
+
+def test_compare_preserves_command_with_spaces(tmp_path):
+    """공백이 든 command도 온전히 비교된다 — Bug #1 회귀."""
+    cfg = {"command": "/Applications/Safari Technology Preview.app/Contents/MacOS/safaridriver",
+           "args": ["--mcp"]}
+    local = write_local(tmp_path, {"safari-mcp-stp": cfg})
+    repo = write_repo(tmp_path, {"safari-mcp-stp": cfg})
+    out = compare_mcp.compare(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local)
+    assert out["only_local"] == [] and out["changed"] == []
+
+
+def test_compare_raises_instead_of_reporting_everything_as_only_repo(tmp_path):
+    """읽기 실패를 '서버 0개'로 오인하면 레포의 서버가 전부 only_repo가 된다.
+
+    main()이 이 예외를 잡아 skipped로 바꾼다 — 아래 CLI 테스트에서 확인한다.
+    """
+    repo = write_repo(tmp_path, {"z": B})
+    with pytest.raises(mc.LocalConfigUnavailable):
+        compare_mcp.compare(os.path.join(repo, mc.BACKUP_RELPATH),
+                            claude_json_path=str(tmp_path / "missing.json"))
+
+
+def test_compare_cli_exits_zero_on_skip(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    repo = write_repo(tmp_path, {"z": B})
+    script = os.path.join(SCRIPTS_DIR, "sync-status", "scripts", "compare_mcp.py")
+    proc = subprocess.run(
+        [sys.executable, os.path.abspath(script), os.path.join(repo, mc.BACKUP_RELPATH)],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "skipped"
