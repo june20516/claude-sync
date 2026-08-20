@@ -48,3 +48,40 @@ def read_local_servers(claude_json_path=None):
     if not isinstance(servers, dict):
         raise LocalConfigUnavailable("mcpServers가 객체가 아님")
     return dict(servers)
+
+
+def _redact_field(value):
+    """headers/env 한 필드의 값을 마스킹한다. 중첩 구조는 통째로 SENTINEL이 된다."""
+    if isinstance(value, dict):
+        return {k: SENTINEL for k in value}
+    return SENTINEL
+
+
+def redact(servers):
+    """headers/env의 값만 SENTINEL로 치환한다. 키 이름과 나머지 필드는 보존한다.
+
+    입력은 변경하지 않는다.
+    """
+    out = {}
+    for name, cfg in servers.items():
+        if not isinstance(cfg, dict):
+            out[name] = cfg
+            continue
+        new = dict(cfg)
+        for field in SECRET_FIELDS:
+            if field in new:
+                new[field] = _redact_field(new[field])
+        out[name] = new
+    return out
+
+
+def secret_keys(cfg):
+    """복원 시 사용자에게 값을 물어야 하는 (field, key) 목록."""
+    found = []
+    if not isinstance(cfg, dict):
+        return found
+    for field in SECRET_FIELDS:
+        value = cfg.get(field)
+        if isinstance(value, dict):
+            found.extend((field, k) for k in sorted(value))
+    return found

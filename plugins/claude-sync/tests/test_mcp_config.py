@@ -70,3 +70,49 @@ def test_read_local_servers_null_mcp_servers_raises(tmp_path):
     path = write_claude_json(tmp_path, {"mcpServers": None})
     with pytest.raises(mc.LocalConfigUnavailable):
         mc.read_local_servers(path)
+
+
+def test_redact_masks_header_values_keeps_key_names():
+    servers = {"context7": {
+        "type": "http",
+        "url": "https://mcp.context7.com/mcp",
+        "headers": {"CONTEXT7_API_KEY": "sk-real-secret"},
+    }}
+    out = mc.redact(servers)
+    assert out["context7"]["headers"] == {"CONTEXT7_API_KEY": mc.SENTINEL}
+    assert out["context7"]["url"] == "https://mcp.context7.com/mcp"
+    assert out["context7"]["type"] == "http"
+
+
+def test_redact_masks_env_values():
+    servers = {"notion": {"command": "npx", "env": {"NOTION_TOKEN": "ntn_xxx"}}}
+    out = mc.redact(servers)
+    assert out["notion"]["env"] == {"NOTION_TOKEN": mc.SENTINEL}
+    assert out["notion"]["command"] == "npx"
+
+
+def test_redact_does_not_mutate_input():
+    servers = {"c7": {"headers": {"K": "secret"}}}
+    mc.redact(servers)
+    assert servers["c7"]["headers"]["K"] == "secret"
+
+
+def test_redact_handles_non_dict_secret_field():
+    servers = {"weird": {"headers": "not-a-dict"}}
+    assert mc.redact(servers)["weird"]["headers"] == mc.SENTINEL
+
+
+def test_redact_preserves_stdio_command_with_spaces():
+    """공백이 든 command가 온전히 보존된다 — Bug #1 회귀."""
+    cmd = "/Applications/Safari Technology Preview.app/Contents/MacOS/safaridriver"
+    servers = {"safari-mcp-stp": {"command": cmd, "args": ["--mcp"]}}
+    assert mc.redact(servers)["safari-mcp-stp"]["command"] == cmd
+
+
+def test_secret_keys_lists_fields_and_keys():
+    cfg = {"headers": {"B_KEY": "x", "A_KEY": "y"}, "env": {"TOKEN": "z"}}
+    assert mc.secret_keys(cfg) == [("headers", "A_KEY"), ("headers", "B_KEY"), ("env", "TOKEN")]
+
+
+def test_secret_keys_empty_when_no_secrets():
+    assert mc.secret_keys({"command": "npx", "args": ["x"]}) == []
