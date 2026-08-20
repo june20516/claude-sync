@@ -196,15 +196,43 @@ def diff(local, backed):
     }
 
 
+def _next_base(local, base, servers):
+    """다음 base 매핑. base[name]은 로컬이 그 값에 동의할 때만 전진한다.
+
+    로컬이 동의하지 않은 값(타 기기가 추가·변경한 서버, 충돌 중인 서버)을 base에 기록하면
+    다음 백업이 그 차이를 "로컬이 바뀌었다"로 오독해, 타 기기의 서버를 삭제하거나
+    타 기기의 변경을 되돌린다. update_base.py가 파일 단위로 지키는 불변식과 같다.
+    """
+    old = base or {}
+    out = {}
+    for name in sorted(set(old) | set(servers)):
+        if name in servers and name in local and same(servers[name], local[name]):
+            out[name] = servers[name]   # 로컬이 동의 → 전진 (케이스 1·6·7)
+        elif name not in servers and name not in local:
+            continue                    # 양쪽에서 사라짐 → base에서 제거 (케이스 3·10)
+        elif name in old:
+            out[name] = old[name]       # 로컬이 동의 안 함 → 이전 base 유지 (케이스 2·4·5·8·9)
+    return out
+
+
 def merge(local, repo, base):
     """서버 이름 키 단위 3-way 병합 (spec 7.2 판정표).
 
-    local은 redact가 적용된 상태여야 한다(호출부 책임).
+    입력에 redact를 내부에서 적용한다 — diff와 같은 계약이다. 호출부가 원본(비밀 평문)을
+    그대로 넘겨도 결과에는 비밀이 실리지 않는다.
     base가 None이면 삭제 없이 합집합으로 degrade한다 — "타 기기 추가"와
     "내 삭제"를 구별할 수 없기 때문이다.
-    conflicts 또는 local_stale이 비어 있지 않으면 호출부는 base를 갱신해서는 안 된다.
+    반환하는 next_base는 이름 단위로 전진한다: 로컬이 동의한 이름만 base에 기록하고,
+    동의하지 않은 이름(타 기기가 추가·변경했거나 충돌·잔존 중인 이름)은 이전 base를 유지한다
+    (_next_base 참고). 그래서 호출부가 conflicts/local_stale 유무로 base 갱신을 전역으로
+    게이트할 필요가 없다 — 서버 하나가 충돌 중이어도 나머지 서버의 base는 계속 전진한다.
+    conflicts에는 케이스 5(로컬 수정 vs 리모트 삭제)와 케이스 9(양쪽 변경)가 함께 들어가는데
+    결과가 다르다 — 9는 servers에 레포 값이 남고 5는 servers에서 아예 빠진다.
+    "name in result['servers']"로 둘을 구분할 수 있다.
     """
-    servers, conflicts, deleted, local_stale = {}, [], [], []
+    local, repo = redact(local), redact(repo)
+    base = None if base is None else redact(base)
+    servers, conflicts, deleted, local_stale, repo_ahead = {}, [], [], [], []
     for name in sorted(set(local) | set(repo) | set(base or {})):
         in_l, in_r = name in local, name in repo
         if base is None:
@@ -218,9 +246,10 @@ def merge(local, repo, base):
             servers[name] = local[name]
         elif not in_l and in_r and not in_s:                # 2 타 기기 추가
             servers[name] = repo[name]
+            repo_ahead.append(name)
         elif not in_l and in_r and in_s:                    # 3 로컬에서 삭제
             deleted.append(name)
-        elif in_l and not in_r and in_s:
+        elif in_l and not in_r and in_s:                    # 4·5 로컬만 있고 base에도 있음
             if same(local[name], base[name]):               # 4 타 기기 삭제, 로컬 잔존
                 local_stale.append(name)
             else:                                           # 5 로컬 수정 vs 리모트 삭제
@@ -232,13 +261,16 @@ def merge(local, repo, base):
                 servers[name] = local[name]
             elif in_s and same(local[name], base[name]):    # 8 타 기기 변경
                 servers[name] = repo[name]
+                repo_ahead.append(name)
             else:                                           # 9 충돌
                 conflicts.append(name)
                 servers[name] = repo[name]
-        # 10 L·R 모두 없고 base에만 존재 → no-op
+        # (암묵) L·R 모두 없음(base에만 존재, 케이스 10) → 아무 리스트에도 넣지 않는다
     return {
         "servers": servers,
         "conflicts": conflicts,
         "deleted": deleted,
         "local_stale": local_stale,
+        "repo_ahead": repo_ahead,
+        "next_base": _next_base(local, base, servers),
     }

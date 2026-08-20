@@ -4,6 +4,10 @@ import pytest
 
 import mcp_config as mc
 
+SERVER_A = {"command": "a"}
+SERVER_B = {"command": "b"}
+SERVER_ORIG = {"command": "o"}
+
 
 def write_claude_json(tmp_path, payload):
     p = tmp_path / ".claude.json"
@@ -318,81 +322,167 @@ def test_diff_detects_env_emptied():
     assert mc.diff(local, backed)["changed"] == ["n"]
 
 
-A = {"command": "a"}
-B = {"command": "b"}
-O = {"command": "o"}
-
-
 def test_merge_case1_local_new():
-    r = mc.merge({"x": A}, {}, {})
-    assert r["servers"] == {"x": A}
+    r = mc.merge({"x": SERVER_A}, {}, {})
+    assert r["servers"] == {"x": SERVER_A}
     assert r["conflicts"] == [] and r["local_stale"] == [] and r["deleted"] == []
 
 
 def test_merge_case2_remote_added_is_preserved():
-    r = mc.merge({}, {"x": A}, {})
-    assert r["servers"] == {"x": A}
+    r = mc.merge({}, {"x": SERVER_A}, {})
+    assert r["servers"] == {"x": SERVER_A}
 
 
 def test_merge_case3_local_deleted_removes_from_repo():
-    r = mc.merge({}, {"x": A}, {"x": A})
+    r = mc.merge({}, {"x": SERVER_A}, {"x": SERVER_A})
     assert r["servers"] == {}
     assert r["deleted"] == ["x"]
 
 
 def test_merge_case4_remote_deleted_local_kept_is_stale():
-    r = mc.merge({"x": A}, {}, {"x": A})
+    r = mc.merge({"x": SERVER_A}, {}, {"x": SERVER_A})
     assert r["servers"] == {}
     assert r["local_stale"] == ["x"]
     assert r["conflicts"] == []
 
 
 def test_merge_case5_local_modified_vs_remote_deleted_is_conflict():
-    r = mc.merge({"x": B}, {}, {"x": O})
+    r = mc.merge({"x": SERVER_B}, {}, {"x": SERVER_ORIG})
     assert r["conflicts"] == ["x"]
     assert "x" not in r["servers"]
 
 
 def test_merge_case6_in_sync():
-    r = mc.merge({"x": A}, {"x": A}, {"x": O})
-    assert r["servers"] == {"x": A}
+    r = mc.merge({"x": SERVER_A}, {"x": SERVER_A}, {"x": SERVER_ORIG})
+    assert r["servers"] == {"x": SERVER_A}
     assert r["conflicts"] == []
 
 
 def test_merge_case7_local_only_changed_pushes():
-    r = mc.merge({"x": B}, {"x": O}, {"x": O})
-    assert r["servers"] == {"x": B}
+    r = mc.merge({"x": SERVER_B}, {"x": SERVER_ORIG}, {"x": SERVER_ORIG})
+    assert r["servers"] == {"x": SERVER_B}
 
 
 def test_merge_case8_remote_only_changed_keeps_repo():
-    r = mc.merge({"x": O}, {"x": B}, {"x": O})
-    assert r["servers"] == {"x": B}
+    r = mc.merge({"x": SERVER_ORIG}, {"x": SERVER_B}, {"x": SERVER_ORIG})
+    assert r["servers"] == {"x": SERVER_B}
 
 
 def test_merge_case9_both_changed_is_conflict():
-    r = mc.merge({"x": A}, {"x": B}, {"x": O})
+    r = mc.merge({"x": SERVER_A}, {"x": SERVER_B}, {"x": SERVER_ORIG})
     assert r["conflicts"] == ["x"]
-    assert r["servers"] == {"x": B}
+    assert r["servers"] == {"x": SERVER_B}
 
 
 def test_merge_case9_without_base_entry_is_conflict():
-    r = mc.merge({"x": A}, {"x": B}, {})
+    r = mc.merge({"x": SERVER_A}, {"x": SERVER_B}, {})
     assert r["conflicts"] == ["x"]
-    assert r["servers"] == {"x": B}
+    assert r["servers"] == {"x": SERVER_B}
 
 
 def test_merge_case10_base_only_is_noop():
-    r = mc.merge({}, {}, {"x": A})
+    r = mc.merge({}, {}, {"x": SERVER_A})
     assert r["servers"] == {}
     assert r["deleted"] == [] and r["conflicts"] == [] and r["local_stale"] == []
 
 
 def test_merge_without_base_is_union_no_delete():
-    r = mc.merge({"a": A}, {"b": B}, None)
-    assert r["servers"] == {"a": A, "b": B}
+    r = mc.merge({"a": SERVER_A}, {"b": SERVER_B}, None)
+    assert r["servers"] == {"a": SERVER_A, "b": SERVER_B}
     assert r["deleted"] == []
 
 
 def test_merge_without_base_prefers_local():
-    r = mc.merge({"x": A}, {"x": B}, None)
-    assert r["servers"] == {"x": A}
+    r = mc.merge({"x": SERVER_A}, {"x": SERVER_B}, None)
+    assert r["servers"] == {"x": SERVER_A}
+
+
+def apply_round(local, repo, base):
+    """백업 1회분: merge → 레포 반영 → base ← next_base."""
+    result = mc.merge(local, repo, base)
+    return dict(result["servers"]), dict(result["next_base"]), result
+
+
+def test_next_base_keeps_remote_added_server_across_rounds():
+    """케이스 2: 타 기기가 추가한 서버가 두 번째 백업에서 삭제되지 않는다 — Critical 1 회귀."""
+    local = {"x": SERVER_A}
+    repo, base = {"x": SERVER_A, "z": SERVER_B}, {"x": SERVER_A}
+    for _ in range(3):
+        repo, base, result = apply_round(local, repo, base)
+        assert set(repo) == {"x", "z"}
+        assert result["deleted"] == []
+
+
+def test_next_base_keeps_remote_change_across_rounds():
+    """케이스 8: 타 기기의 변경이 두 번째 백업에서 되돌려지지 않는다 — Critical 1 회귀."""
+    local = {"y": SERVER_ORIG}
+    repo, base = {"y": SERVER_B}, {"y": SERVER_ORIG}
+    for _ in range(3):
+        repo, base, _ = apply_round(local, repo, base)
+        assert repo == {"y": SERVER_B}
+
+
+def test_next_base_new_machine_does_not_wipe_others():
+    """base=None인 새 기기가 두 번째 백업에서 남의 서버를 전멸시키지 않는다 — Critical 1 회귀."""
+    local = {"x": SERVER_A}
+    repo, base = {"x": SERVER_A, "z": SERVER_B}, None
+    for _ in range(3):
+        repo, base, result = apply_round(local, repo, base)
+        assert set(repo) == {"x", "z"}
+        assert result["deleted"] == []
+
+
+def test_next_base_advances_when_local_agrees():
+    """케이스 7: 로컬이 동의한 값은 base가 전진해 다음 라운드에 in_sync가 된다."""
+    local = {"x": SERVER_B}
+    repo, base, _ = apply_round(local, {"x": SERVER_ORIG}, {"x": SERVER_ORIG})
+    assert repo == {"x": SERVER_B}
+    assert base == {"x": SERVER_B}
+    repo2, _, result2 = apply_round(local, repo, base)
+    assert repo2 == {"x": SERVER_B}
+    assert result2["conflicts"] == [] and result2["deleted"] == []
+
+
+def test_next_base_drops_name_deleted_on_both_sides():
+    """케이스 3: 로컬에서 지운 서버는 base에서도 빠져 다음 라운드가 no-op이 된다."""
+    local = {}
+    repo, base, result = apply_round(local, {"x": SERVER_A}, {"x": SERVER_A})
+    assert result["deleted"] == ["x"]
+    assert repo == {} and base == {}
+    repo2, _, result2 = apply_round(local, repo, base)
+    assert repo2 == {} and result2["deleted"] == []
+
+
+def test_next_base_holds_old_value_while_stale_or_conflicted():
+    """케이스 4·9: 로컬이 동의하지 않은 이름은 base가 이전 값을 유지해 판정이 고정된다."""
+    stale_base = mc.merge({"x": SERVER_A}, {}, {"x": SERVER_A})["next_base"]
+    assert stale_base == {"x": SERVER_A}
+    conflict_base = mc.merge({"x": SERVER_A}, {"x": SERVER_B}, {"x": SERVER_ORIG})["next_base"]
+    assert conflict_base == {"x": SERVER_ORIG}
+
+
+def test_merge_redacts_input_internally():
+    """호출부가 원본을 넘겨도 비밀이 결과에 실려 나가지 않는다 — Important 1 회귀."""
+    raw = {"c7": {"url": "u", "headers": {"K": "sk-REAL-SECRET"}}}
+    masked = mc.redact(raw)
+    result = mc.merge(raw, masked, masked)
+    assert "sk-REAL-SECRET" not in json.dumps(result["servers"])
+    assert result["conflicts"] == []
+
+
+def test_merge_result_does_not_share_objects_with_input():
+    """반환된 config를 변형해도 입력이 오염되지 않는다."""
+    local = {"x": {"command": "a", "args": ["1"]}}
+    result = mc.merge(local, {}, {})
+    result["servers"]["x"]["args"].append("MUTATED")
+    assert local["x"]["args"] == ["1"]
+
+
+def test_merge_reports_repo_ahead_for_cases_2_and_8():
+    """타 기기가 추가·변경한 서버를 사용자에게 알릴 수 있어야 한다 — Important 2."""
+    added = mc.merge({}, {"z": SERVER_B}, {})
+    assert added["repo_ahead"] == ["z"]
+    changed = mc.merge({"y": SERVER_ORIG}, {"y": SERVER_B}, {"y": SERVER_ORIG})
+    assert changed["repo_ahead"] == ["y"]
+    conflicted = mc.merge({"x": SERVER_A}, {"x": SERVER_B}, {"x": SERVER_ORIG})
+    assert conflicted["repo_ahead"] == [] and conflicted["conflicts"] == ["x"]
