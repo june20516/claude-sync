@@ -173,7 +173,7 @@ def diff(local: dict, backed: dict) -> dict
 def merge(local: dict, repo: dict, base: dict | None) -> dict
     """키 단위 3-way 병합.
     {"servers": {...}, "conflicts": [...], "deleted": [...], "local_stale": [...]}.
-    local_stale이 비어 있지 않으면 호출부는 base를 갱신하지 않는다(7.3).
+    conflicts 또는 local_stale이 비어 있지 않으면 호출부는 base를 갱신하지 않는다(7.3·7.5).
     base가 None이면 삭제 없이 합집합으로 degrade한다."""
 
 def restore_plan(local: dict, backed: dict, base: dict | None) -> dict
@@ -271,8 +271,8 @@ base를 갱신하지 않아도 나머지 서버는 푸시 직후 L==R이라 케�
 - 저장 내용: 레포 파일 바이트. 비교 시 `load_backup`으로 파싱해 servers 매핑을 얻는다
   (들여쓰기 등 포맷 차이에 영향받지 않는다).
 - 갱신 시점:
-  - backup — 커밋·푸시 **성공 이후에만**, 그리고 **`local_stale`이 비어 있을 때만** 갱신한다
-    (기존 `update_base.py`의 "푸시 성공 시에만" 계약에 7.3의 게이트를 더한 것이다).
+  - backup — 커밋·푸시 **성공 이후에만**, 그리고 **`conflicts`와 `local_stale`이 모두 비어 있을 때만**
+    갱신한다 (기존 `update_base.py`의 "푸시 성공 시에만" 계약에 7.3·7.5의 게이트를 더한 것이다).
   - restore — MCP 단계 이후 레포 내용으로 갱신하되, **"나중에"로 미룬 `local_stale`이 남아 있으면
     갱신하지 않는다**(7.3). backup 쪽 게이트와 같은 이유다.
   - status — 읽기 전용이므로 갱신하지 않는다.
@@ -282,6 +282,9 @@ base를 갱신하지 않아도 나머지 서버는 푸시 직후 L==R이라 케�
 별도 해소 UX를 만들지 않는다. 파일 쪽 `reject`와 같은 철학으로 처리한다.
 
 - backup: 충돌 서버만 건너뛰고 "`/sync-restore` 먼저 실행" 안내. 백업 전체를 막지 않는다.
+  **충돌이 있으면 base를 갱신하지 않는다.** 갱신하면 다음 백업에서 R==S가 되어
+  케이스 7(로컬만 변경)로 판정되고, 사용자가 아무것도 해소하지 않았는데
+  **충돌이 조용히 "로컬 승"으로 자동 해소된다.** 케이스 5도 같은 이유로 되살아난다.
 - restore: additive이므로 이미 등록된 서버는 건드리지 않는다. 차이를 사용자에게 보여준 뒤
   base를 레포 내용으로 갱신한다.
 - 그 결과 다음 backup에서 R==S가 되어 로컬이 push된다.
@@ -296,7 +299,7 @@ base를 갱신하지 않아도 나머지 서버는 푸시 직후 L==R이라 케�
 레포 mcp-servers.json → load_backup → R
 base → load_backup → S
 merge(L, R, S) → dump_backup → 레포
-푸시 성공 && local_stale 없음 → write_base("mcp-servers.json", 레포 파일 바이트)
+푸시 성공 && conflicts 없음 && local_stale 없음 → write_base("mcp-servers.json", 레포 파일 바이트)
 ```
 
 `conflicts`와 `local_stale`은 결과 보고에 포함하고 각각 다음 행동을 안내한다
@@ -421,6 +424,11 @@ pytest가 현재 환경에 설치되어 있지 않아 기존 `tests/`도 실행 
 | restore "제거" 후 backup | `local_stale` 비고 레포·로컬 모두 X 없음, 이후 불변 |
 | restore "유지" 후 backup | 1회차에 X가 레포로 복귀, 이후 불변 |
 | restore "나중에" 후 backup | 케이스 4 유지, 레포 불변, 되살아나지 않음 |
+| 케이스 9 충돌 상태로 backup 반복 | 매회 `conflicts=[Z]`, 레포는 R 유지, base 미갱신 |
+| 케이스 5 충돌 상태로 backup 반복 | 매회 `conflicts=[X]`, 레포에 X 없음, base 미갱신 |
+
+충돌을 게이트에 넣지 않으면 2회차에서 케이스 7로 판정되어 **충돌이 조용히 "로컬 승"으로
+자동 해소된다.** 위 두 줄이 그 회귀를 막는다.
 - `read_local_servers`: `mcpServers` 없음 → `{}`, 파일 없음/깨짐 → 예외.
 - **안전장치**: `LocalConfigUnavailable` 발생 시 레포 servers가 보존된다.
 - `load_backup`: v1 배열 하위호환.
