@@ -3,6 +3,7 @@
 - 갱신: 2026-08-20
 - 브랜치: `fix/mcp-config-source` (푸시 안 됨, 로컬 전용)
 - 기준 커밋: `c99d5a4` (작업 시작 직전)
+- **상태: plan의 13개 task 전부 완료. 남은 것은 사용자 승인이 필요한 배포뿐이다(7장).**
 
 이 문서만 읽으면 새 세션에서 이어받을 수 있도록 쓴다.
 
@@ -23,50 +24,49 @@ backup·status·restore가 `lib/mcp_config.py` 단일 모듈만 통해 MCP를 �
 | 문서 | 상태 |
 |---|---|
 | `docs/superpowers/specs/2026-08-20-mcp-config-source-design.md` | **현행 설계. 유일한 근거 문서.** |
-| `docs/superpowers/plans/2026-08-20-mcp-integration.md` | 남은 작업 계획 |
+| `docs/superpowers/plans/2026-08-20-mcp-integration.md` | **완료됨.** 13개 task 전부 구현·커밋 |
 | `docs/superpowers/plans/2026-08-20-mcp-config-source.md` | **폐기됨.** Task 1~5의 기록으로만 |
 | `~/.claude/suberpowers/reviews/2026-08-20-claude-sync-*.md` | 리뷰·감사 보고서 (14일 후 자동 삭제) |
 
 ## 3. 완료된 것
 
-`plugins/claude-sync/lib/mcp_config.py` — 코어 모듈 완성, 테스트 99개 통과.
+**`2026-08-20-mcp-integration.md`의 13개 task를 전부 구현·검증했다. 테스트 159개 통과.**
 
-공개 API: `SENTINEL` `SECRET_FIELDS` `SCHEMA_VERSION` `BACKUP_RELPATH` `DEFAULT_CLAUDE_JSON`
-`LocalConfigUnavailable` `read_local_servers` `redact` `secret_keys` `parse_backup` `parse_base`
-`load_backup` `dump_backup` `same` `diff` `next_base` `merge`
-
-테스트 실행 (pytest 미설치, 반드시 uv로):
 ```bash
-uv run --with pytest pytest plugins/claude-sync/tests -q
+uv run --with pytest pytest plugins/claude-sync/tests -q   # 159 passed
 ```
 
-**중요: 아직 어떤 스킬도 이 모듈을 호출하지 않는다.** 지금 `/sync-backup`을 실행하면
-여전히 옛 정규식 파서(`parse_mcp.py`)가 돌고 보고된 버그가 그대로 재현된다.
-**사용자 관점의 가치는 아직 0이다.**
+| 영역 | 결과 |
+|---|---|
+| `lib/mcp_config.py` | `next_base`에 redact 내부 적용, `restorable`·`restore_plan`(버킷 9개) 신설 |
+| `sync-backup` | `collect_mcp.py` 신설, SKILL.md 재작성, `parse_mcp.py` 삭제 |
+| `sync-status` | `compare_mcp.py`를 `mcp_config.diff` 기반으로 재작성, MCP 어휘 분리 |
+| `sync-restore` | `plan_mcp.py`(`plan`/`apply-base`) 신설, SKILL.md 6단계를 `add-json` 흐름으로 재작성 |
+| 테스트 | `test_mcp_state_machine.py`(반복 적용 10종), `test_mcp_scripts.py`(스크립트 계약 25종), `test_mcp_cycle.py`(backup↔restore 교대 12종) |
+| 문서·버전 | README 4종 정정, 2.0.0 → **3.0.0** (스키마 v2는 역호환 없음) |
+
+**세 스킬이 모두 `lib/mcp_config.py`만 통해 MCP를 다룬다.** 옛 정규식 파서는 삭제되었다.
+
+### 실환경 스모크 결과 (Task 13)
+
+이 기기의 실제 `~/.claude.json`(사본)으로 확인했다:
+
+- user 스코프 서버 3개(`context7`·`playwright`·`safari-mcp-stp`)가 **전부 복원 가능한 형태로 기록**되었다.
+  이슈 보고 당시 0개였다. 공백이 든 `command`(Safari)가 보존되고, `headers` 값은 `<REDACTED>`,
+  키 이름(`CONTEXT7_API_KEY`)은 남는다.
+- 백업 직후 `compare_mcp.py`가 `only_local/only_repo/changed` 전부 빈 배열 — **Bug #2(영구 미수렴) 해소.**
+- local 스코프 서버(`atlassian`)가 있는 프로젝트 디렉토리에서 실행해도 출력이 동일 — **Bug #5(cwd 의존) 해소.**
+- `claude mcp add-json ... --scope user`로 임시 서버 등록·제거가 정상 동작했다(`unrestorable` 0건).
+  실제 설정은 스모크 전후가 동일하다.
 
 ## 4. 남은 것
 
-`2026-08-20-mcp-integration.md`에 13개 task / 73개 step으로 정리되어 있다.
+**코드 작업은 없다.** 남은 것은 배포이며 **사용자 승인이 필요하다**(spec 14장):
 
-1. `next_base`에 redact 내부 적용
-2. `restore_plan` 신설
-3. backup 반복 적용 고정점 검증
-4. `collect_mcp.py` 신설
-5. sync-backup SKILL.md 재작성 + `parse_mcp.py` 삭제
-6. `compare_mcp.py` 재작성 + sync-status SKILL.md
-7. `plan_mcp.py plan`
-8. `plan_mcp.py apply-base`
-9. 스크립트 경유 backup↔restore 교대 검증
-10. sync-restore SKILL.md 재작성
-11. 사용자 문서 4개
-12. 버전 3.0.0
-13. 실환경 스모크
-
-**Task 5·6·10이 끝나야 비로소 사용자의 버그가 실제로 고쳐진다** — 그전까지는
-스킬이 여전히 옛 파서를 호출한다.
-
-plan 작성자가 plan의 코드를 실제로 추출해 실행 검증했다(159 passed).
-plan에 적힌 테스트·구현 코드는 그대로 붙여 넣어도 동작하는 것들이다.
+1. `origin`에 푸시 (외부 동작 — 승인 없이 실행하지 않는다)
+2. `claude plugin marketplace update claude-sync`
+3. `claude plugin update claude-sync`
+4. 캐시 디렉토리가 3.0.0 신코드로 교체됐는지 확인
 
 ## 5. 설계에서 반드시 알아야 할 것
 
@@ -116,6 +116,6 @@ plan에 적힌 테스트·구현 코드는 그대로 붙여 넣어도 동작하�
 ```bash
 cd /Users/bran/personal/claude-sync
 git checkout fix/mcp-config-source
-uv run --with pytest pytest plugins/claude-sync/tests -q   # 99 passed 확인
+uv run --with pytest pytest plugins/claude-sync/tests -q   # 159 passed 확인
 ```
-그다음 spec과 `2026-08-20-mcp-integration.md`를 읽고 남은 작업을 이어간다.
+구현은 끝났다. 이어받을 것은 4장의 배포 절차뿐이며, 푸시는 사용자 승인을 받고 실행한다.
