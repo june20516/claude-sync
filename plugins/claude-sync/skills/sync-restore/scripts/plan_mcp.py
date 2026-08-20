@@ -5,6 +5,10 @@
   plan_mcp.py plan <레포의 mcp-servers.json 경로>
     복원 계획 JSON을 stdout에 낸다 (버킷 9개 + configs + secret_keys).
 
+  plan_mcp.py apply-base <레포의 mcp-servers.json 경로> <스테이징 디렉토리> <선택 결과 JSON 경로>
+    복원 후 로컬을 다시 읽어 next_base를 계산하고, 선택 override 두 개를 적용해
+    스테이징 디렉토리에 기록한다. base 블롭 기록은 update_base.py가 한다(7.5).
+
 CLI 실행과 비밀 값 입력은 SKILL.md의 대화 흐름이 맡는다(8.3) — 비밀이 스크립트
 인자에 남지 않게 하려는 것과, 7.4·7.7의 세 선택지가 대화형 확인이어야 하는 것이
 같은 이유다.
@@ -41,12 +45,60 @@ def build_plan(backup_path, claude_json_path=None, base_dir=ss.BASE_DIR):
     return out
 
 
+def apply_base(backup_path, staging_dir, choices, claude_json_path=None, base_dir=ss.BASE_DIR):
+    """복원 후 로컬 기준으로 다음 base를 계산하고 override 두 개를 적용해 스테이징에 쓴다.
+
+    ① next_base(복원 후 로컬, 이전 base, 레포)  — 입력의 redact는 next_base가 한다
+    ② keep_stale(케이스 4·5의 "유지")   → base에서 이름 삭제  (그 이력은 잊는다)
+    ③ keep_local(케이스 8·9의 "로컬 유지") → base[x] ← 레포 값 (그 이력은 잊는다)
+
+    override가 없으면 두 종류의 "유지"가 "나중에"와 구별되지 않아 고정점에 도달하지
+    못한다(7.4·7.7). 반대로 "레포 값 채택"과 "제거"에는 override가 없다 —
+    next_base가 이미 하는 일을 중복하지 않는 것이 규칙이다.
+    """
+    local = mc.read_local_servers(claude_json_path)
+    repo = mc.load_backup(backup_path)
+    base = mc.parse_base(ss.read_base(mc.BACKUP_RELPATH, base_dir=base_dir))
+    nb = mc.next_base(local, base, repo)
+    keep_stale = [n for n in choices.get("keep_stale", []) if isinstance(n, str)]
+    keep_local = [n for n in choices.get("keep_local", []) if isinstance(n, str)]
+    for name in keep_stale:
+        nb.pop(name, None)
+    masked = mc.redact(repo)
+    kept_local = []
+    for name in keep_local:
+        if name in masked:
+            nb[name] = masked[name]
+            kept_local.append(name)
+    os.makedirs(staging_dir, exist_ok=True)
+    mc.dump_backup(nb, os.path.join(staging_dir, mc.BACKUP_RELPATH))
+    return {
+        "status": "ok",
+        "kept_stale": keep_stale,
+        "kept_local": kept_local,
+        "base_names": sorted(nb),
+    }
+
+
+def read_choices(path):
+    """{"keep_stale": [...], "keep_local": [...]} — 이름과 선택만 담긴다. 비밀은 없다."""
+    with open(path, "rb") as f:
+        data = json.loads(f.read())
+    if not isinstance(data, dict):
+        raise ValueError("선택 결과 JSON의 최상위가 객체가 아님: %s" % path)
+    return data
+
+
 def main():
     args = sys.argv[1:]
     if len(args) == 2 and args[0] == "plan":
         runner = lambda: build_plan(args[1])  # noqa: E731
+    elif len(args) == 4 and args[0] == "apply-base":
+        runner = lambda: apply_base(args[1], args[2], read_choices(args[3]))  # noqa: E731
     else:
         print("사용: plan_mcp.py plan <레포의 mcp-servers.json 경로>", file=sys.stderr)
+        print("      plan_mcp.py apply-base <레포의 mcp-servers.json 경로>"
+              " <스테이징 디렉토리> <선택 결과 JSON 경로>", file=sys.stderr)
         sys.exit(1)
     try:
         out = runner()

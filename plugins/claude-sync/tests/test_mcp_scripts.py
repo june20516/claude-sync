@@ -257,3 +257,109 @@ def test_plan_cli_rejects_unknown_mode():
     proc = subprocess.run([sys.executable, os.path.abspath(script), "bogus"],
                           capture_output=True, text=True)
     assert proc.returncode == 1
+
+
+def write_choices(tmp_path, payload):
+    path = tmp_path / "choices.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return str(path)
+
+
+def test_apply_base_advances_where_local_agrees(tmp_path):
+    """① 기본 전진 — 로컬이 동의한 이름만 base로 간다."""
+    local = write_local(tmp_path, {"x": A, "mine": A})
+    repo = write_repo(tmp_path, {"x": A, "theirs": B})
+    staging = str(tmp_path / "staging")
+    out = plan_mcp.apply_base(os.path.join(repo, mc.BACKUP_RELPATH), staging,
+                              {"keep_stale": [], "keep_local": []},
+                              claude_json_path=local,
+                              base_dir=write_base_blob(tmp_path, None))
+    assert out["status"] == "ok"
+    staged = staged_servers(staging)
+    assert staged == {"x": A}          # theirs는 로컬이 동의하지 않았고 이전 base에도 없다
+
+
+def test_apply_base_keep_stale_forgets_the_name(tmp_path):
+    """② 케이스 4 '유지' — base에서 이름을 지워 다음 backup이 push하게 만든다."""
+    local = write_local(tmp_path, {"X": A, "y": A})
+    repo = write_repo(tmp_path, {"y": A})
+    staging = str(tmp_path / "staging")
+    plan_mcp.apply_base(os.path.join(repo, mc.BACKUP_RELPATH), staging,
+                        {"keep_stale": ["X"]},
+                        claude_json_path=local,
+                        base_dir=write_base_blob(tmp_path, {"X": A, "y": A}))
+    assert "X" not in staged_servers(staging)
+
+
+def test_apply_base_keep_local_moves_base_to_repo_value(tmp_path):
+    """③ 케이스 8 '로컬 유지' — base ← 레포 값. 없으면 '나중에'와 구별되지 않는다."""
+    local = write_local(tmp_path, {"x": ORIG})
+    repo = write_repo(tmp_path, {"x": B})
+    staging = str(tmp_path / "staging")
+    plan_mcp.apply_base(os.path.join(repo, mc.BACKUP_RELPATH), staging,
+                        {"keep_local": ["x"]},
+                        claude_json_path=local,
+                        base_dir=write_base_blob(tmp_path, {"x": ORIG}))
+    assert staged_servers(staging)["x"] == B
+
+
+def test_apply_base_without_choices_is_defer(tmp_path):
+    """'나중에' — override 없음. 케이스 8의 base가 이전 값(로컬 값)에 머문다."""
+    local = write_local(tmp_path, {"x": ORIG})
+    repo = write_repo(tmp_path, {"x": B})
+    staging = str(tmp_path / "staging")
+    plan_mcp.apply_base(os.path.join(repo, mc.BACKUP_RELPATH), staging, {},
+                        claude_json_path=local,
+                        base_dir=write_base_blob(tmp_path, {"x": ORIG}))
+    assert staged_servers(staging)["x"] == ORIG
+
+
+def test_apply_base_never_writes_plaintext_secret(tmp_path):
+    """복원 후 로컬은 평문이지만 base에는 SENTINEL만 들어간다 — next_base의 redact 계약."""
+    cfg_plain = {"type": "http", "url": "u", "headers": {"K": "sk-real"}}
+    cfg_masked = {"type": "http", "url": "u", "headers": {"K": mc.SENTINEL}}
+    local = write_local(tmp_path, {"c7": cfg_plain})
+    repo = write_repo(tmp_path, {"c7": cfg_masked})
+    staging = str(tmp_path / "staging")
+    plan_mcp.apply_base(os.path.join(repo, mc.BACKUP_RELPATH), staging, {},
+                        claude_json_path=local,
+                        base_dir=write_base_blob(tmp_path, None))
+    raw = open(os.path.join(staging, mc.BACKUP_RELPATH), encoding="utf-8").read()
+    assert "sk-real" not in raw
+    assert staged_servers(staging)["c7"] == cfg_masked   # base가 전진했다
+
+
+def test_apply_base_cli_writes_staging_file(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"x": A}}), encoding="utf-8")
+    repo = write_repo(tmp_path, {"x": A})
+    staging = str(tmp_path / "staging")
+    script = os.path.join(SCRIPTS_DIR, "sync-restore", "scripts", "plan_mcp.py")
+    proc = subprocess.run(
+        [sys.executable, os.path.abspath(script), "apply-base",
+         os.path.join(repo, mc.BACKUP_RELPATH), staging,
+         write_choices(tmp_path, {"keep_stale": [], "keep_local": []})],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "ok"
+    assert staged_servers(staging) == {"x": A}
+
+
+def test_apply_base_cli_skips_on_broken_choices(tmp_path):
+    """선택 결과 JSON이 깨져도 restore 전체를 중단시키지 않는다 — 종료 코드 0."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    repo = write_repo(tmp_path, {"x": A})
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    script = os.path.join(SCRIPTS_DIR, "sync-restore", "scripts", "plan_mcp.py")
+    proc = subprocess.run(
+        [sys.executable, os.path.abspath(script), "apply-base",
+         os.path.join(repo, mc.BACKUP_RELPATH), str(tmp_path / "staging"), str(bad)],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "skipped"
