@@ -188,3 +188,48 @@ def test_load_backup_reads_v1_array(tmp_path):
 
 def test_parse_backup_garbage_is_empty():
     assert mc.parse_backup(b"{not json") == {}
+
+
+def test_parse_base_none_input_is_none():
+    assert mc.parse_base(None) is None
+
+
+def test_parse_base_broken_json_is_none():
+    """손상된 base는 '비어 있던 이력'이 아니라 '이력 없음'이어야 한다."""
+    assert mc.parse_base(b"{not json") is None
+
+
+def test_parse_base_empty_servers_is_empty_dict():
+    """정상적으로 비어 있던 이력은 {}이며 None이 아니다 — 삭제 판정의 근거가 된다."""
+    assert mc.parse_base(b'{"version": 2, "servers": {}}') == {}
+
+
+def test_parse_base_reads_v2_servers():
+    data = b'{"version": 2, "servers": {"a": {"command": "x"}}}'
+    assert mc.parse_base(data) == {"a": {"command": "x"}}
+
+
+def test_dump_load_dump_is_fixed_point(tmp_path):
+    """load 후 재 dump해도 바이트가 같다 — 매 백업마다 diff가 생기지 않는다."""
+    servers = {"b": {"command": "x", "args": ["2", "1"]}, "a": {"url": "u"}}
+    p1, p2 = str(tmp_path / "1.json"), str(tmp_path / "2.json")
+    mc.dump_backup(servers, p1)
+    mc.dump_backup(mc.load_backup(p1), p2)
+    assert open(p1, "rb").read() == open(p2, "rb").read()
+
+
+def test_parse_backup_v2_null_servers_is_empty():
+    assert mc.parse_backup(b'{"version": 2, "servers": null}') == {}
+    assert mc.parse_backup(b'{"version": 2}') == {}
+
+
+def test_dump_load_roundtrip_preserves_unicode_and_special_names(tmp_path):
+    """공백·점·한글이 든 이름과 중첩 값이 손실 없이 왕복된다."""
+    servers = {
+        "claude.ai Notion": {"type": "http", "url": "https://mcp.notion.com/mcp"},
+        "한글 서버": {"command": "/Applications/My App/bin", "args": ["--mcp", "-v"]},
+        "nested": {"a": {"b": [1, True, None, "x"]}},
+    }
+    path = str(tmp_path / "mcp-servers.json")
+    mc.dump_backup(servers, path)
+    assert mc.load_backup(path) == servers

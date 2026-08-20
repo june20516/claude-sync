@@ -95,16 +95,8 @@ def secret_keys(cfg):
     return found
 
 
-def parse_backup(data):
-    """JSON 바이트/문자열에서 servers 매핑을 읽는다.
-
-    v2 객체({"version":2, "servers":{...}})와 v1 배열([{name,url,type}, ...])을 모두 지원한다.
-    깨진 입력은 {}로 degrade한다 — 레포 파일이 깨졌다고 백업 전체를 막지 않는다.
-    """
-    try:
-        obj = json.loads(data)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}
+def _servers_from_obj(obj):
+    """이미 디코딩된 JSON 객체에서 servers 매핑을 뽑는다. v2 객체와 v1 배열을 지원한다."""
     if isinstance(obj, list):
         out = {}
         for item in obj:
@@ -117,8 +109,40 @@ def parse_backup(data):
     return {}
 
 
+def parse_backup(data):
+    """JSON 바이트/문자열에서 servers 매핑을 읽는다.
+
+    v2 객체({"version":2, "servers":{...}})와 v1 배열([{name,url,type}, ...])을 모두 지원한다.
+    깨진 입력은 {}로 degrade한다 — 레포 파일이 깨졌다고 백업 전체를 막지 않는다.
+    """
+    try:
+        obj = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return _servers_from_obj(obj)
+
+
+def parse_base(data):
+    """base 블롭 전용 파싱. 이력을 신뢰할 수 없으면 None을 반환한다.
+
+    "이력이 비어 있었다"({})와 "이력을 읽을 수 없다"(None)를 반드시 구별해야 한다.
+    전자는 삭제·충돌 판정의 근거가 되지만, 후자는 근거가 될 수 없다.
+    데이터가 없거나(None) JSON 파싱에 실패하면 None을 돌려 merge가 합집합으로 degrade하게 한다.
+    """
+    if data is None:
+        return None
+    try:
+        obj = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return _servers_from_obj(obj)
+
+
 def load_backup(path):
-    """mcp-servers.json을 읽어 servers 매핑을 반환한다. 파일이 없으면 {}."""
+    """mcp-servers.json을 읽어 servers 매핑을 반환한다. 파일이 없으면 {}.
+
+    (PermissionError 등 그 외 OSError는 전파한다.)
+    """
     try:
         with open(path, "rb") as f:
             return parse_backup(f.read())
