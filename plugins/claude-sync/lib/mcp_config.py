@@ -5,6 +5,7 @@
 `claude mcp list`의 텍스트 출력은 쓰지 않는다 — 손실 압축이고 cwd에 의존한다.
 backup/status/restore는 이 모듈만 통해 MCP를 다룬다(파서 드리프트 차단).
 """
+import copy
 import json
 import os
 
@@ -51,7 +52,11 @@ def read_local_servers(claude_json_path=None):
 
 
 def _redact_field(value):
-    """headers/env 한 필드의 값을 마스킹한다. 중첩 구조는 통째로 SENTINEL이 된다."""
+    """headers/env 한 필드의 값을 마스킹한다. 중첩 구조는 통째로 SENTINEL이 된다.
+
+    값이 dict가 아니면(None 포함) 필드 전체가 dict가 아닌 문자열 SENTINEL로 바뀐다 —
+    타입이 dict에서 str로 바뀌므로 secret_keys는 이 필드에 대해 키를 하나도 묻지 않는다.
+    """
     if isinstance(value, dict):
         return {k: SENTINEL for k in value}
     return SENTINEL
@@ -60,14 +65,17 @@ def _redact_field(value):
 def redact(servers):
     """headers/env의 값만 SENTINEL로 치환한다. 키 이름과 나머지 필드는 보존한다.
 
-    입력은 변경하지 않는다.
+    입력은 변경하지 않으며, 반환값은 입력과 어떤 중첩 객체도 공유하지 않는다
+    (deepcopy) — 후속 가공이 반환값을 다듬어도 원본 로컬 설정이 오염되지 않는다.
+    이미 마스킹된 입력에 다시 적용해도 결과가 같다(멱등) — diff/merge가 로컬(평문)과
+    레포(마스킹됨) 양쪽에 이 함수를 적용해 수렴시키는 전제다.
     """
     out = {}
     for name, cfg in servers.items():
         if not isinstance(cfg, dict):
             out[name] = cfg
             continue
-        new = dict(cfg)
+        new = copy.deepcopy(cfg)
         for field in SECRET_FIELDS:
             if field in new:
                 new[field] = _redact_field(new[field])

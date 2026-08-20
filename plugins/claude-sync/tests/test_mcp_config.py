@@ -116,3 +116,32 @@ def test_secret_keys_lists_fields_and_keys():
 
 def test_secret_keys_empty_when_no_secrets():
     assert mc.secret_keys({"command": "npx", "args": ["x"]}) == []
+
+
+def test_redact_result_does_not_share_nested_objects():
+    """반환값은 원본과 구조를 공유하지 않는다 — 결과를 변형해도 원본이 오염되지 않는다."""
+    servers = {"c7": {"args": ["--flag"], "headers": {"K": "secret"}}}
+    out = mc.redact(servers)
+    out["c7"]["args"].append("MUTATED")
+    assert servers["c7"]["args"] == ["--flag"]
+
+
+def test_redact_is_idempotent():
+    """이미 마스킹된 입력에 다시 적용해도 결과가 같다 — diff/merge 수렴의 전제."""
+    servers = {
+        "a": {"headers": {"K": "secret"}},
+        "b": {"headers": "not-a-dict"},
+        "c": {"env": {}},
+        "d": {"command": "npx", "args": ["x"]},
+    }
+    once = mc.redact(servers)
+    assert mc.redact(once) == once
+
+
+def test_redact_passes_through_non_dict_server_config():
+    servers = {"broken": "oops"}
+    assert mc.redact(servers) == {"broken": "oops"}
+
+
+def test_secret_keys_empty_for_non_dict_config():
+    assert mc.secret_keys("oops") == []
