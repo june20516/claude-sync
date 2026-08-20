@@ -493,3 +493,22 @@ def test_next_base_does_not_share_objects_with_servers():
     result = mc.merge({"x": {"command": "a", "args": ["1"]}}, {}, {})
     result["servers"]["x"]["args"].append("MUTATED")
     assert result["next_base"]["x"]["args"] == ["1"]
+
+
+def test_next_base_redacts_input_so_secret_server_advances():
+    """로컬 평문과 레포 SENTINEL이 동등으로 판정되어 base가 전진한다 — 5장 계약 회귀.
+
+    이 계약이 없으면 비밀을 가진 서버의 base가 영영 전진하지 않는다(7.3 불변식이 깨진다).
+    """
+    local = {"context7": {"type": "http", "url": "u", "headers": {"K": "sk-real"}}}
+    servers = {"context7": {"type": "http", "url": "u", "headers": {"K": mc.SENTINEL}}}
+    base = {"context7": {"type": "http", "url": "old", "headers": {"K": mc.SENTINEL}}}
+    out = mc.next_base(local, base, servers)
+    assert out["context7"]["url"] == "u"
+
+
+def test_next_base_never_writes_plaintext_secret():
+    """base 블롭에 평문 비밀이 새 사본으로 기록되면 안 된다."""
+    local = {"context7": {"type": "http", "url": "u", "headers": {"K": "sk-real"}}}
+    out = mc.next_base(local, None, local)
+    assert out["context7"]["headers"]["K"] == mc.SENTINEL

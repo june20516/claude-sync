@@ -206,8 +206,15 @@ def next_base(local, base, servers):
     하므로 공개 함수다.
     반환값은 local·base·servers의 어떤 nested 객체도 공유하지 않는다(deepcopy) — 호출부가
     반환된 servers를 가공한 뒤 base에 써도 next_base가 조용히 오염되지 않는다.
+
+    입력에 redact를 내부 적용한다 — merge·diff와 같은 계약이다. restore는
+    read_local_servers()의 원본(비밀 평문)을 넘기게 되는데, 내부 적용이 없으면
+    same(레포의 <REDACTED>, 로컬 평문)이 거짓이 되어 비밀을 가진 서버의 base가
+    전진하지 않고, 평문 키가 base 블롭에 새 사본으로 기록된다.
+    redact는 멱등이므로 이미 마스킹된 merge 경로에는 영향이 없다.
     """
-    old = base or {}
+    local, servers = redact(local), redact(servers)
+    old = redact(base) if base else {}
     out = {}
     for name in sorted(set(old) | set(servers)):
         if name in servers and name in local and same(servers[name], local[name]):
