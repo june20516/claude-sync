@@ -48,3 +48,25 @@ def test_read_local_servers_broken_json_raises(tmp_path):
     p.write_text("{not json", encoding="utf-8")
     with pytest.raises(mc.LocalConfigUnavailable):
         mc.read_local_servers(str(p))
+
+
+def test_read_local_servers_top_level_not_dict_raises(tmp_path):
+    """최상위가 객체가 아니면 '서버 0개'가 아니라 읽기 실패다."""
+    p = tmp_path / ".claude.json"
+    p.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    with pytest.raises(mc.LocalConfigUnavailable):
+        mc.read_local_servers(str(p))
+
+
+def test_read_local_servers_mcp_servers_not_dict_raises(tmp_path):
+    """mcpServers가 객체가 아니면 읽기 실패로 취급해 삭제 판정을 막는다."""
+    path = write_claude_json(tmp_path, {"mcpServers": "nope"})
+    with pytest.raises(mc.LocalConfigUnavailable):
+        mc.read_local_servers(path)
+
+
+def test_read_local_servers_null_mcp_servers_raises(tmp_path):
+    """키가 있는데 값이 null이면 '서버 0개'가 아니라 읽기 실패다 — 잘못된 삭제 판정 방지."""
+    path = write_claude_json(tmp_path, {"mcpServers": None})
+    with pytest.raises(mc.LocalConfigUnavailable):
+        mc.read_local_servers(path)
