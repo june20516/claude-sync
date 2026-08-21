@@ -237,6 +237,36 @@ def _block_reason(meta, raw_min, my_version):
     return None                              # 6 통과
 
 
+def shape_of(data):
+    """백업 문서의 형태. 'absent' | 'broken' | 'v1_array' | 'v2_object' | 'unknown'
+
+    다운그레이드 판정에 필요하다. mcp_config는 파싱해서 매핑만 주므로 원본 형태가 사라진다.
+    version 값은 보지 않는다 — 여기서 답하는 질문은 "v1이냐 v2냐"이지
+    "읽어도 되느냐"가 아니다. 후자는 mcp_config의 게이트가 답한다.
+    """
+    if data is None:
+        return "absent"
+    try:
+        obj = json.loads(data)
+    except (TypeError, ValueError):
+        return "broken"
+    if isinstance(obj, list):
+        return "v1_array"
+    if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
+        return "v2_object"
+    return "unknown"
+
+
+def downgrade_suspected(repo_shape, base_shape):
+    """레포는 v1 배열인데 내 base는 v2 객체였다 -> 옛 버전 기기가 덮어썼다.
+
+    레포가 v1인 것만으로는 부족하다 — 정말 오래된 레포일 수 있다. base가 v2였다는 것은
+    이 기기가 v2를 본 적이 있다는 뜻이고, 그 뒤 v1이 되었다면 누군가 되돌린 것이다.
+    base를 못 읽으면 판정하지 않는다 — 신뢰할 수 없는 이력은 근거가 될 수 없다(불변식 2).
+    """
+    return repo_shape == "v1_array" and base_shape == "v2_object"
+
+
 def check(repo_dir, plugin_json_path=None):
     """레포 디렉토리를 읽어 판정한다. **어떤 파일도 쓰지 않는다.**
 

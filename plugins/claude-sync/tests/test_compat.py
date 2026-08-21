@@ -418,3 +418,45 @@ def test_check_still_passes_on_real_repo_without_metadata(tmp_path):
     plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
     v = compat.check(repo, plugin_json_path=plugin_json)
     assert v["blocked"] is False
+
+
+# --- 다운그레이드 판정 (spec 9.1) ---
+
+@pytest.mark.parametrize("data,expected", [
+    (None, "absent"),
+    (b"{ not json", "broken"),
+    (b"[]", "v1_array"),
+    (b'[{"name":"a","command":"a"}]', "v1_array"),
+    (b'{"version":2,"servers":{}}', "v2_object"),
+    (b'{"servers":{"a":{}}}', "v2_object"),
+    (b'{"version":3,"servers":{}}', "v2_object"),
+    (b"null", "unknown"),
+    (b'"x"', "unknown"),
+    (b'{"servers":[]}', "unknown"),
+    (b"3", "unknown"),
+])
+def test_shape_of(data, expected):
+    assert compat.shape_of(data) == expected
+
+
+def test_shape_of_accepts_str():
+    assert compat.shape_of('{"version":2,"servers":{}}') == "v2_object"
+
+
+def test_downgrade_suspected_when_repo_v1_and_base_v2():
+    """레포는 v1인데 내 base는 v2였다 = 옛 기기가 덮어썼다."""
+    assert compat.downgrade_suspected("v1_array", "v2_object") is True
+
+
+@pytest.mark.parametrize("repo,base", [
+    ("v1_array", "v1_array"),    # 정말 오래된 레포
+    ("v1_array", "absent"),      # 이력 없음 — 근거가 될 수 없다
+    ("v1_array", "broken"),      # 신뢰할 수 없는 이력 (불변식 2)
+    ("v1_array", "unknown"),
+    ("v2_object", "v2_object"),  # 정상
+    ("v2_object", "v1_array"),   # 오히려 전진
+    ("absent", "v2_object"),     # 파일이 사라진 것은 다른 문제다
+    ("broken", "v2_object"),
+])
+def test_downgrade_not_suspected(repo, base):
+    assert compat.downgrade_suspected(repo, base) is False
