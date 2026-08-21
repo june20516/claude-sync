@@ -561,7 +561,12 @@ def _upgrade_message(reason, repo_min_reader, my_version):
 def evaluate(meta, my_version):
     """호환성 판정. spec 6.4의 표 전수이며 이 표 밖의 경우는 없다.
 
-    meta는 load_metadata의 반환(dict 또는 None), my_version은 read_plugin_version의 반환.
+    meta는 load_metadata의 반환(dict, None, 또는 UNREADABLE), my_version은
+    read_plugin_version의 반환.
+
+    **UNREADABLE을 반드시 먼저 걸러야 한다.** 그것은 dict가 아니므로
+    isinstance(meta, dict) 검사만 하면 조용히 "표식 없음"으로 접혀 통과하고,
+    상위 버전이 쓴 레포를 파괴한다. 이 판정을 단순화하려는 시도를 경계할 것.
     """
     raw_min = meta.get("min_reader_version") if isinstance(meta, dict) else None
     raw_written = meta.get("written_by_version") if isinstance(meta, dict) else None
