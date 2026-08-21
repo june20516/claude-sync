@@ -151,11 +151,17 @@ def _upgrade_message(reason, repo_min_reader, my_version):
             "이 백업이 요구하는 최소 버전을 알아볼 수 없습니다 "
             "— 상위 버전이 쓴 백업일 수 있습니다 (이 기기: %s)." % mine
         )
-    else:
+    elif reason in ("my_version_unknown", "older_than_min_reader"):
+        # 여기 도달했다는 것은 parse_version(raw_min)이 성공했다는 뜻이므로
+        # repo_min_reader는 항상 비지 않은 문자열이다. or로 감싸지 않는다 —
+        # 감싸면 미래의 새 reason이 흘러들어와도 사람이 쓴 문장처럼 보인다.
         head = (
             "이 백업은 claude-sync %s 이상이 필요합니다 (이 기기: %s)."
-            % (repo_min_reader or "알 수 없음", mine)
+            % (repo_min_reader, mine)
         )
+    else:
+        # 판정표에 행을 더했으면 문구도 더해라. 조용히 틀린 문장을 만들지 않는다.
+        raise ValueError("문구가 없는 reason: %r" % reason)
     body = "%s\n이 버전이 백업을 쓰면 레포가 손상될 수 있습니다.\n\n%s\n\n%s" % (
         head,
         _UPGRADE_COMMANDS,
@@ -179,11 +185,15 @@ def evaluate(meta, my_version):
     **UNREADABLE을 반드시 먼저 걸러야 한다.** 그것은 dict가 아니므로
     isinstance(meta, dict) 검사만 하면 조용히 "표식 없음"으로 접혀 통과하고,
     상위 버전이 쓴 레포를 파괴한다. 이 판정을 단순화하려는 시도를 경계할 것.
+
+    **`blocked`는 "차단"이라는 뜻이고 그 이상이 아니다.** "업그레이드하면 풀린다"는
+    뜻이 아니다 — metadata_unreadable은 차단이지만 업그레이드로 풀리지 않는다.
+    이 값을 소비하는 쪽이 문장을 덧붙일 때는 blocked가 아니라 reason으로 분기해야 한다.
     """
     raw_min = meta.get("min_reader_version") if isinstance(meta, dict) else None
     raw_written = meta.get("written_by_version") if isinstance(meta, dict) else None
     verdict = {
-        "needs_upgrade": False,
+        "blocked": False,
         "reason": _block_reason(meta, raw_min, my_version),
         "my_version": my_version,
         "repo_min_reader": raw_min if isinstance(raw_min, str) else None,
@@ -191,7 +201,7 @@ def evaluate(meta, my_version):
         "message": "",
     }
     if verdict["reason"] is not None:
-        verdict["needs_upgrade"] = True
+        verdict["blocked"] = True
         verdict["message"] = _upgrade_message(
             verdict["reason"], verdict["repo_min_reader"], my_version
         )

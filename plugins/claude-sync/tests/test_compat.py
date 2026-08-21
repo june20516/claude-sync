@@ -169,7 +169,7 @@ def test_read_plugin_version_defaults_to_real_plugin_json():
 def test_evaluate_0_unreadable_metadata_blocks():
     """못 읽음은 없음이 아니다 — 상위 버전이 쓴 레포를 통과시키면 안 된다."""
     v = compat.evaluate(compat.UNREADABLE, "3.0.0")
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
     assert v["reason"] == "metadata_unreadable"
 
 
@@ -184,14 +184,14 @@ def test_message_for_unreadable_metadata_omits_upgrade_commands():
 def test_evaluate_1_no_metadata_passes():
     """표식 없음 = 2.x가 쓴 것 = 우리보다 앞설 수 없다 (결정 4)."""
     v = compat.evaluate(None, "3.0.0")
-    assert v["needs_upgrade"] is False
+    assert v["blocked"] is False
     assert v["reason"] is None
     assert v["message"] == ""
 
 
 def test_evaluate_2_no_min_reader_field_passes():
     v = compat.evaluate({"written_by_version": "3.0.0"}, "3.0.0")
-    assert v["needs_upgrade"] is False
+    assert v["blocked"] is False
     assert v["repo_written_by"] == "3.0.0"
 
 
@@ -199,7 +199,7 @@ def test_evaluate_2_no_min_reader_field_passes():
 def test_evaluate_3_unparsable_min_reader_blocks(bad):
     """필드가 있는데 못 읽는다 = 상위 버전이 모르는 형식으로 썼을 수 있다. 모르면 안 쓴다."""
     v = compat.evaluate({"min_reader_version": bad}, "3.0.0")
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
     assert v["reason"] == "min_reader_unparsable"
 
 
@@ -209,34 +209,34 @@ def test_evaluate_explicit_null_is_treated_as_absent():
     구별하려면 센티널이 필요한데, 여기서는 구별할 실익이 없다. null은 '요구 없음'이다.
     """
     v = compat.evaluate({"min_reader_version": None}, "3.0.0")
-    assert v["needs_upgrade"] is False
+    assert v["blocked"] is False
     assert v["reason"] is None
 
 
 def test_evaluate_4_unknown_my_version_with_requirement_blocks():
     """레포가 최소치를 요구하는데 충족을 증명할 수 없다."""
     v = compat.evaluate({"min_reader_version": "3.0.0"}, None)
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
     assert v["reason"] == "my_version_unknown"
 
 
 def test_evaluate_4b_unknown_my_version_without_requirement_passes():
     """요구가 없으면 증명할 것도 없다."""
     v = compat.evaluate(None, None)
-    assert v["needs_upgrade"] is False
+    assert v["blocked"] is False
 
 
 def test_evaluate_5_older_than_min_reader_blocks():
     v = compat.evaluate({"min_reader_version": "4.0.0"}, "3.0.0")
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
     assert v["reason"] == "older_than_min_reader"
     assert v["repo_min_reader"] == "4.0.0"
     assert v["my_version"] == "3.0.0"
 
 
 def test_evaluate_6_equal_or_newer_passes():
-    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.0.0")["needs_upgrade"] is False
-    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.10.0")["needs_upgrade"] is False
+    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.0.0")["blocked"] is False
+    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.10.0")["blocked"] is False
 
 
 def test_evaluate_uses_numeric_comparison():
@@ -245,7 +245,7 @@ def test_evaluate_uses_numeric_comparison():
     문자열 비교였다면 '3.9.0' > '3.10.0'이 참이 되어 통과해 버린다.
     """
     v = compat.evaluate({"min_reader_version": "3.10.0"}, "3.9.0")
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
 
 
 # --- 안내 문구 ---
@@ -294,3 +294,19 @@ def test_message_for_unparsable_min_reader():
     msg = compat.evaluate({"min_reader_version": "?"}, "3.0.0")["message"]
     assert "알아볼 수 없" in msg
     assert "claude plugin update claude-sync" in msg
+
+
+def test_upgrade_message_rejects_unknown_reason():
+    """판정표에 행을 더하고 문구를 안 더하면 조용히 틀린 문장이 나오면 안 된다."""
+    with pytest.raises(ValueError):
+        compat._upgrade_message("some_future_reason", None, "3.0.0")
+
+
+@pytest.mark.parametrize("reason", [
+    "metadata_unreadable", "min_reader_unparsable",
+    "my_version_unknown", "older_than_min_reader",
+])
+def test_upgrade_message_covers_every_blocking_reason(reason):
+    """_block_reason이 낼 수 있는 모든 차단 사유에 문구가 있어야 한다."""
+    msg = compat._upgrade_message(reason, "4.0.0", "3.0.0")
+    assert msg and "알 수 없음" not in msg
