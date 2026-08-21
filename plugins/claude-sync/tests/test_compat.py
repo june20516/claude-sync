@@ -4,6 +4,7 @@
 """
 import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -310,3 +311,82 @@ def test_upgrade_message_covers_every_blocking_reason(reason):
     """_block_reason이 낼 수 있는 모든 차단 사유에 문구가 있어야 한다."""
     msg = compat._upgrade_message(reason, "4.0.0", "3.0.0")
     assert msg and "알 수 없음" not in msg
+
+
+# --- check() + CLI ---
+
+LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
+COMPAT_CLI = os.path.join(LIB_DIR, "compat.py")
+
+
+def dir_snapshot(path):
+    """디렉토리 안 모든 파일의 (상대경로, 내용) 집합. 쓰기 여부 검증용."""
+    out = {}
+    for root, _, files in os.walk(path):
+        for f in files:
+            full = os.path.join(root, f)
+            with open(full, "rb") as fh:
+                out[os.path.relpath(full, path)] = fh.read()
+    return out
+
+
+def repo_with_metadata(tmp_path, obj=None, **kw):
+    """레포 디렉토리 경로를 반환한다.
+
+    write_metadata는 파일 경로를 주는데 check()는 레포 디렉토리를 받는다.
+    """
+    return os.path.dirname(write_metadata(tmp_path, obj, **kw))
+
+
+def test_check_passes_on_repo_without_metadata(tmp_path):
+    repo = repo_with_metadata(tmp_path, missing=True)
+    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
+    v = compat.check(repo, plugin_json_path=plugin_json)
+    assert v["status"] == "ok"
+    assert v["blocked"] is False
+
+
+def test_check_blocks_on_higher_min_reader(tmp_path):
+    repo = repo_with_metadata(tmp_path, {"min_reader_version": "4.0.0",
+                                         "written_by_version": "4.0.0"})
+    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
+    v = compat.check(repo, plugin_json_path=plugin_json)
+    assert v["blocked"] is True
+    assert v["repo_written_by"] == "4.0.0"
+
+
+def test_check_writes_nothing(tmp_path):
+    """읽기 전용이다. 차단 판정이 나도 레포를 건드리지 않는다."""
+    repo = repo_with_metadata(tmp_path, {"min_reader_version": "4.0.0"})
+    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
+    before = dir_snapshot(repo)
+    compat.check(repo, plugin_json_path=plugin_json)
+    assert dir_snapshot(repo) == before
+
+
+def test_cli_prints_json_and_exits_zero(tmp_path):
+    repo = repo_with_metadata(tmp_path, {"min_reader_version": "3.0.0"})
+    proc = subprocess.run([sys.executable, COMPAT_CLI, repo],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "ok"
+    assert out["blocked"] is False
+    assert out["repo_min_reader"] == "3.0.0"
+
+
+def test_cli_exits_zero_even_when_blocking(tmp_path):
+    """비-0으로 끝내면 SKILL.md의 셸이 set -e로 죽어 안내를 못 보여준다."""
+    repo = repo_with_metadata(tmp_path, {"min_reader_version": "99.0.0"})
+    proc = subprocess.run([sys.executable, COMPAT_CLI, repo],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["blocked"] is True
+    assert "claude plugin update claude-sync" in out["message"]
+
+
+def test_cli_without_argument_fails():
+    proc = subprocess.run([sys.executable, COMPAT_CLI], capture_output=True, text=True)
+    assert proc.returncode == 1
+    assert "사용:" in proc.stderr

@@ -228,3 +228,25 @@ def _block_reason(meta, raw_min, my_version):
     if mine < required:
         return "older_than_min_reader"       # 5
     return None                              # 6 통과
+
+
+def check(repo_dir, plugin_json_path=None):
+    """레포 디렉토리를 읽어 판정한다. **어떤 파일도 쓰지 않는다.**"""
+    meta = load_metadata(os.path.join(repo_dir, METADATA_RELPATH))
+    # or를 쓰지 않는다 — read_plugin_version이 None을 받아 기본 경로를 정한다.
+    # or는 빈 문자열도 falsy로 보아 "기본값 써라"로 오독한다.
+    my_version = read_plugin_version(plugin_json_path)
+    verdict = {"status": "ok"}
+    verdict.update(evaluate(meta, my_version))
+    return verdict
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("사용: compat.py <레포 경로>", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(check(sys.argv[1]), indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
