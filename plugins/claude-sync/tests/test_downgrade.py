@@ -24,9 +24,15 @@ SCRIPT = os.path.join(
 )
 
 
+# 전역·시스템 git 설정을 통째로 끊는다. commit.gpgsign 하나만 끄면 core.hooksPath나
+# init.templateDir로 심긴 훅에 다시 걸린다 — 다른 기기·CI에서 원인 추적이 매우 어렵다.
+GIT_ENV = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+
+
 def git(repo, *args):
     subprocess.run(
-        ["git", "-C", str(repo)] + list(args), check=True, capture_output=True
+        ["git", "-C", str(repo)] + list(args),
+        check=True, capture_output=True, env=GIT_ENV,
     )
 
 
@@ -36,7 +42,6 @@ def make_repo(tmp_path):
     git(repo, "init", "-q")
     git(repo, "config", "user.email", "t@example.com")
     git(repo, "config", "user.name", "t")
-    git(repo, "config", "commit.gpgsign", "false")  # 전역 서명 설정이 켜져 있으면 커밋이 실패한다
     return repo
 
 
@@ -164,9 +169,73 @@ def test_cli_prints_json(tmp_path):
     proc = subprocess.run(
         [sys.executable, SCRIPT, str(repo)],
         capture_output=True, text=True,
-        env=dict(os.environ, HOME=str(tmp_path / "fakehome")),
+        env=dict(GIT_ENV, HOME=str(tmp_path / "fakehome")),
     )
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
     assert out["status"] == "ok"
     assert out["downgrade_suspected"] is False
+
+
+def corrupt_blob(repo, sha):
+    """커밋의 mcp-servers.json blob 오브젝트를 지워 레포를 고장낸다."""
+    out = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "%s:%s" % (sha, mc.BACKUP_RELPATH)],
+        check=True, capture_output=True, text=True, env=GIT_ENV,
+    ).stdout.strip()
+    obj = repo / ".git" / "objects" / out[:2] / out[2:]
+    obj.unlink()
+
+
+def test_corrupt_repo_is_skipped_not_reported_as_no_candidate(tmp_path):
+    """레포 손상을 'v2가 없음'으로 접으면 사실이 아닐 수 있는 결론이 전달된다(불변식 6)."""
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v2({"a": {"command": "a"}}), "backup: v2")
+    sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                         check=True, capture_output=True, text=True,
+                         env=GIT_ENV).stdout.strip()
+    commit_mcp(repo, v1(["a"]), "backup: 되돌림")
+    corrupt_blob(repo, sha)
+    out = dd.detect(str(repo), base_dir=base_dir_with(tmp_path, v2({"a": {"command": "a"}})))
+    assert out["status"] == "skipped"
+    assert "reason" in out
+    # 키 모양이 정상 경로와 같아야 한다 — 없으면 None(falsy)으로 '사고 없음'처럼 읽힌다
+    for key in ("downgrade_suspected", "repo_shape", "base_shape", "candidate",
+                "newer_schema_seen"):
+        assert key in out
+
+
+def test_newer_schema_backup_is_not_reported_as_zero_servers(tmp_path):
+    """상위 버전 문서를 '서버 0개인 정상 백업'으로 제시하면 안 된다(불변식 6)."""
+    repo = make_repo(tmp_path)
+    v3 = json.dumps({"version": 3, "scope": "user",
+                     "servers": {"a": {"command": "a"}, "b": {"command": "b"}}}, indent=2)
+    commit_mcp(repo, v3, "backup: v3 기기가 씀")
+    commit_mcp(repo, v1(["a"]), "backup: 2.x가 되돌림")
+    out = dd.detect(str(repo), base_dir=base_dir_with(tmp_path, v2({"a": {"command": "a"}})))
+    assert out["downgrade_suspected"] is True
+    assert out["candidate"] is None          # 0개짜리 가짜 후보를 만들지 않는다
+    assert out["newer_schema_seen"] is True  # 건너뛴 사실이 드러난다
+
+
+def test_newer_schema_does_not_hide_older_valid_candidate(tmp_path):
+    """상위 버전 문서를 건너뛰되 그 아래의 진짜 v2 후보는 찾아야 한다."""
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v2({"a": {"command": "a"}, "b": {"command": "b"}}), "backup: 진짜 v2")
+    v3 = json.dumps({"version": 3, "scope": "user", "servers": {"a": {"command": "a"}}},
+                    indent=2)
+    commit_mcp(repo, v3, "backup: v3")
+    commit_mcp(repo, v1(["a"]), "backup: 되돌림")
+    out = dd.detect(str(repo), base_dir=base_dir_with(tmp_path, v2({"a": {"command": "a"}})))
+    assert out["candidate"]["subject"] == "backup: 진짜 v2"
+    assert out["candidate"]["server_count"] == 2
+    assert out["newer_schema_seen"] is True
+
+
+def test_normal_path_reports_newer_schema_false(tmp_path):
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v2({"a": {"command": "a"}}), "backup: v2")
+    commit_mcp(repo, v1(["a"]), "backup: 되돌림")
+    out = dd.detect(str(repo), base_dir=base_dir_with(tmp_path, v2({"a": {"command": "a"}})))
+    assert out["newer_schema_seen"] is False
+    assert out["candidate"]["subject"] == "backup: v2"
