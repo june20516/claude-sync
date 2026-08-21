@@ -196,6 +196,35 @@ python3 -c 'import json,sys; print("Version:", json.load(open(sys.argv[1])).get(
 > 그래서 major는 스키마가 실제로 깨질 때만 올린다. **"큰 리팩터링"은 major가 아니다.**
 > major를 올리는 커밋은 무엇이 깨졌는지를 커밋 메시지에 적는다.
 
+#### minor·patch 판정 체크리스트 — "기능 추가면 minor"가 아니다
+
+**같은 major 안에서는 아무도 서로를 차단하지 않는다.** 그래서 minor·patch의 안전 조건은
+하나로 압축된다.
+
+> **같은 major의 옛 기기가 새 데이터를 만나 되쓰기해도 그 데이터가 살아남는가.**
+
+3.0.0 코드로 확인한 판정표다. 새 정보를 **어디에** 넣느냐가 전부를 가른다.
+
+| 변경 | 옛 3.x가 되쓰면 | 판정 |
+|---|---|---|
+| `mcp-servers.json`의 **서버별** 키 추가 | `merge` 케이스 8·9가 `servers[name] = repo[name]`로 레포 값을 유지한다 | **minor 가능** |
+| `mcp-servers.json`의 **최상위** 키 추가 | `dump_backup`이 `{version, scope, servers}`만 쓴다 → **소멸** | **major** |
+| 동기화 대상 추가 (`SYNCED_DIRS`에 새 디렉토리) | `reconcile_backup`은 로컬 목록만 순회하며 레포 파일을 지우지 않는다 | **minor 가능** |
+| `plugins.json`에 무엇이든 추가 | `extract_plugins.py`가 로컬 `settings.json`으로 통째 재생성 → **소멸** | **불가** (아래) |
+| `sync-metadata.json`에 필드 추가 | 매 백업 재생성이라 옛 기기가 지운다 | 파생 정보만 넣는 한 무해 |
+
+**예외 — base가 없으면 서버별 키도 소멸한다.** `merge`는 `base is None`일 때 합집합으로
+degrade하며 `if in_l: servers[name] = local[name]`로 로컬이 통째로 이긴다. 새 기기의 첫
+백업(restore 전)이 이 경우다. "새 기기는 restore 먼저"라는 기존 원칙이 여기서도 근거를 갖는다.
+
+**`plugins.json`은 지금 어떤 버전 조합에서도 안전하지 않다.** 레포를 읽지 않고 재생성하므로
+major·minor·patch와 무관하게 다른 기기가 넣은 것을 파괴한다. 후속 브리프의 첫 task가
+"스키마 설계가 아니라 `extract_plugins.py`가 파괴하지 않게 만드는 것"인 이유다.
+**그 작업 전에는 `plugins.json`에 새 정보를 넣지 않는다.**
+
+실무 규칙으로 줄이면: **새 정보가 서버별 dict 안에 들어가면 minor, 최상위나 `plugins.json`에
+들어가면 major.**
+
 ### 5.3 `schema`에 `plugins.json`을 넣지 않는 이유
 
 `plugins.json`에는 아직 자체 `version` 필드가 없다. 결정 2에 따라 판정은 파일 자체의 필드로
