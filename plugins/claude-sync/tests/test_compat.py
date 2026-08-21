@@ -260,11 +260,28 @@ def test_message_contains_both_commands_and_restart_notice():
     assert "4.0.0" in msg and "3.0.0" in msg
 
 
-def test_message_says_nothing_about_stopping_or_continuing():
-    """행동은 각 SKILL.md가 정한다 — backup은 중단, status는 계속, restore는 질문."""
-    msg = compat.evaluate({"min_reader_version": "4.0.0"}, "3.0.0")["message"]
+@pytest.mark.parametrize("meta,mine", [
+    (compat.UNREADABLE, "3.0.0"),                  # metadata_unreadable
+    ({"min_reader_version": "?"}, "3.0.0"),        # min_reader_unparsable
+    ({"min_reader_version": "4.0.0"}, None),       # my_version_unknown
+    ({"min_reader_version": "4.0.0"}, "3.0.0"),    # older_than_min_reader
+])
+def test_message_says_nothing_about_stopping_or_continuing(meta, mine):
+    """행동은 각 SKILL.md가 정한다 — backup은 중단, status는 계속, restore는 질문.
+
+    네 갈래를 전부 본다. 한 갈래만 보면 나머지에 행동 단어가 새어 들어가도 못 잡는다.
+    """
+    msg = compat.evaluate(meta, mine)["message"]
+    assert msg != ""
     assert "중단" not in msg
     assert "계속" not in msg
+    assert "멈춥니다" not in msg
+
+
+def test_message_for_unknown_my_version_suggests_checking_install():
+    """자기 버전을 못 읽었다면 설치가 깨졌을 수 있다 — update만으로 안 풀린다."""
+    msg = compat.evaluate({"min_reader_version": "4.0.0"}, None)["message"]
+    assert "claude plugin list" in msg
 
 
 def test_message_for_unknown_my_version():
