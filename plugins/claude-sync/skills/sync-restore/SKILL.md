@@ -95,6 +95,26 @@ else
 fi
 ```
 
+### 2.5 호환성 검사 (경고 후 질문)
+
+```bash
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
+```
+
+**검사가 성립하지 않았으면**(비-0 종료, JSON 아님, `blocked` 키 없음) 그것도 `blocked: true`와 같이 다룬다 — 확인하지 못한 것을 문제 없음으로 읽지 않는다.
+
+`blocked`가 `true`면 `message`를 보여주고 다음을 덧붙인 뒤 **계속할지 묻는다.**
+
+> "restore는 레포를 훼손하지 않지만, 이 버전이 알아보지 못하는 항목은 건너뛴 **부분 복원**이 됩니다. 파일 동기화는 스키마와 무관하므로 정상 동작합니다. 계속할까요?"
+
+선택지는 둘이다.
+
+- **계속한다** — 파일은 정상 복원되고, 알아보지 못하는 MCP 항목만 보류된다.
+- **중단하고 업데이트한다** — 5단계의 안내대로 플러그인을 올린 뒤 다시 실행한다.
+
+**restore를 막지 않는 이유**: 버전이 낮아 backup이 막힌 사용자가 업데이트 안내를 받을 수 있는 경로가 restore다. 여기까지 막으면 탈출구가 사라진다.
+
 ### 3. 파일별 reconcile (비대화 적용)
 
 ```bash
@@ -143,6 +163,15 @@ python3 "$SYNC_SCRIPTS/reconcile_restore.py" "$SYNC_REPO" --apply
 모든 해소 방식(나중에 제외)은 base ← 레포 내용으로 갱신한다. `--set-base-from` 호출이 이를 담당한다.
 
 ### 5. 플러그인 복원 (additive)
+
+**2.5단계에서 버전 경고가 있었다면 이 안내를 가장 먼저 보여준다.** 사용자에게 지금 필요한 것은 다른 플러그인 설치가 아니라 claude-sync 자신의 업데이트다.
+
+```bash
+claude plugin marketplace update claude-sync
+claude plugin update claude-sync
+```
+
+그다음 Claude Code를 재시작하거나 `/reload-plugins`를 실행해야 적용된다. 업데이트 후 `/sync-restore`를 다시 실행하면 보류됐던 항목이 복원된다.
 
 레포 `plugins.json`의 `enabledPlugins` 중 로컬 `settings.json`에 없는 것만 설치한다. 기존 플러그인은 제거하지 않는다.
 
@@ -307,6 +336,7 @@ rm -f /tmp/claude-sync-mcp-choices.json
 - **설치한 플러그인** (있으면)
 - **등록한 MCP 서버** (`add` / `needs_secret`에서 값을 받아 등록한 것)
 - **건너뛴 MCP 서버**: 비밀 값 입력을 건너뛴 것, `unrestorable`(옛 형식·이름 규칙 위반 — 실패로 세지 않는다)
+- **버전 때문에 보류한 항목**: 이 기기의 플러그인이 낮아 알아보지 못한 것. **"실패"가 아니라 "보류"로 보고한다** — 데이터는 레포에 그대로 있고 업데이트 후 다시 실행하면 복원된다
 - **해소한 MCP 충돌**: 서버명과 선택(채택 / 로컬 유지 / 유지 / 제거 / 나중에)
 - **`local_ahead` MCP 서버** → "올리려면 `/sync-backup`을 실행하세요"
 - **등록 실패한 MCP 서버**: `add-json`이 실패한 것. "레포 값 채택"의 `remove` **이후** 실패는 서버가 로컬에서 사라진 상태이므로 넣으려던 JSON과 함께 크게 경고한다

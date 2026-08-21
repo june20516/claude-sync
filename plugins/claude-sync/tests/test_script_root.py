@@ -158,3 +158,22 @@ def test_status_warns_but_never_blocks():
 def test_status_puts_version_mismatch_first():
     text = read_skill("sync-status")
     assert "첫 줄" in text
+
+
+def test_restore_asks_before_continuing():
+    text = read_skill("sync-restore")
+    assert "compat.py" in text
+    assert "부분 복원" in text
+    assert "계속할지" in text
+
+
+def test_restore_surfaces_update_guidance_in_plugin_step():
+    """버전이 낮아 막혔다면 필요한 것은 plugin update다. 여기가 탈출구다."""
+    text = read_skill("sync-restore")
+    plugin_step = text[text.index("### 5. 플러그인 복원"):text.index("### 6. MCP 서버 복원")]
+    assert "claude plugin update claude-sync" in plugin_step
+
+
+def test_restore_reports_version_skips_as_pending_not_failure():
+    text = read_skill("sync-restore")
+    assert "보류" in text
