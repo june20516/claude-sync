@@ -2209,7 +2209,7 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 백업 시점의 파일 해시와 **버전 표식**을 기록한다.
 
 ```bash
-python3 $SYNC_SCRIPTS/generate_metadata.py sync-metadata.json
+python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"
 ```
 
 생성되는 파일 예시:
@@ -2239,7 +2239,7 @@ python3 $SYNC_SCRIPTS/generate_metadata.py sync-metadata.json
 ````markdown
 레포에 `sync-metadata.json`을 처음 쓴 경우(직전 커밋에 그 파일의 `min_reader_version`이 없었던 경우) 한 번만 알린다:
 
-> "이 백업은 claude-sync 3.0.0 이상을 요구하도록 기록되었습니다. 더 낮은 버전의 기기에서 `/sync-backup`을 실행하면 차단됩니다. 다른 기기들도 `claude plugin update claude-sync` 후 재시작해 주세요."
+> "이 백업은 claude-sync 3.0.0 이상을 요구하도록 기록되었습니다. **3.0.0 이상 기기는 이 표식을 읽고 스스로 멈춥니다. 그러나 2.x 기기는 멈추지 않습니다** — 2.x에는 이 가드가 없어, `/sync-backup`을 실행하면 레포를 옛 형식으로 되돌리고 명령에 공백이 든 서버를 누락시킵니다. 모든 기기를 3.0.0으로 올리고 재시작하기 전에는 다른 기기에서 `/sync-backup`을 실행하지 마세요."
 ````
 
 - [ ] **Step 4: test를 실행하여 통과를 확인**
@@ -2336,7 +2336,9 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 `### 3. 결과 요약`의 첫 줄 앞에 다음을 삽입한다.
 
 ````markdown
-**버전 불일치가 있으면 요약의 첫 줄에 넣는다.** 예: "이 기기 3.0.0 / 백업 3.1.0 — `/sync-backup`이 차단됩니다."
+**`blocked`가 `true`면 요약의 첫 줄에 넣는다.** `my_version`과 `repo_min_reader`를 그대로 쓴다. 예: "이 기기 3.0.0 / 이 백업이 요구하는 최소 버전 4.0.0 — `/sync-backup`이 차단됩니다."
+
+`blocked`가 `false`인데 `repo_written_by`가 더 높으면 그것은 **차단 사유가 아니다.** 알리더라도 "차단됩니다"라고 쓰지 않는다 — `min_reader_version`은 항상 `{major}.0.0`이므로 같은 major의 상위 버전이 쓴 백업은 막히지 않는다.
 ````
 
 - [ ] **Step 4: test를 실행하여 통과를 확인**
