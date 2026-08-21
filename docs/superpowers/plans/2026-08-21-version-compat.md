@@ -1431,6 +1431,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "skills", "sync-backup", "scripts")
 )
 
+import compat  # noqa: E402
 import mcp_config as mc  # noqa: E402
 import detect_downgrade as dd  # noqa: E402
 
@@ -1540,6 +1541,29 @@ def test_skips_commits_where_file_absent(tmp_path):
     assert out["candidate"]["subject"] == "backup: v2"
 
 
+def test_unreadable_repo_file_is_not_absent(tmp_path):
+    """못 읽음을 absent로 접으면 탐지가 조용히 꺼진다(불변식 6)."""
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v2({"a": {"command": "a"}}), "backup")
+    (repo / mc.BACKUP_RELPATH).chmod(0)
+    try:
+        out = dd.detect(str(repo), base_dir=base_dir_with(tmp_path, v2({"a": {"command": "a"}})))
+    finally:
+        (repo / mc.BACKUP_RELPATH).chmod(0o644)
+    assert out["repo_shape"] == compat.SHAPE_UNREADABLE
+    assert out["downgrade_suspected"] is False
+
+
+def test_shapes_are_always_reported(tmp_path):
+    """탐지하지 못한 이유가 호출부에 드러나야 한다."""
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v1(["a"]), "backup")
+    out = dd.detect(str(repo), base_dir=base_dir_with(tmp_path, None))
+    assert out["repo_shape"] == compat.SHAPE_V1_ARRAY
+    assert out["base_shape"] == compat.SHAPE_ABSENT
+    assert out["downgrade_suspected"] is False
+
+
 def test_not_a_git_repo_is_skipped(tmp_path):
     """탐지 실패가 백업을 막지 않는다."""
     plain = tmp_path / "plain"
@@ -1637,18 +1661,40 @@ def find_last_v2_commit(repo_path):
     return None
 
 
-def _read_repo_file(repo_path):
+def _shape_of_file(path):
+    """파일을 읽어 형태를 판정한다.
+
+    **못 읽음을 absent로 접지 않는다(불변식 6).** absent는 "파일이 없다"는 결론이지만
+    권한·IO 실패는 아무 결론도 아니다. 접으면 다운그레이드 탐지가 조용히 꺼진다.
+    """
     try:
-        with open(os.path.join(repo_path, mc.BACKUP_RELPATH), "rb") as f:
-            return f.read()
+        with open(path, "rb") as f:
+            raw = f.read()
     except FileNotFoundError:
-        return None
+        return compat.SHAPE_ABSENT
+    except OSError:
+        return compat.SHAPE_UNREADABLE
+    return compat.shape_of(raw)
+
+
+def _base_shape(base_dir):
+    """base 블롭의 형태. read_base는 없으면 None, 그 외 OSError는 전파한다."""
+    try:
+        raw = ss.read_base(mc.BACKUP_RELPATH, base_dir=base_dir)
+    except OSError:
+        return compat.SHAPE_UNREADABLE
+    return compat.shape_of(raw)
 
 
 def detect(repo_path, base_dir=ss.BASE_DIR):
-    """{"status", "downgrade_suspected", "repo_shape", "base_shape", "candidate"}"""
-    repo_shape = compat.shape_of(_read_repo_file(repo_path))
-    base_shape = compat.shape_of(ss.read_base(mc.BACKUP_RELPATH, base_dir=base_dir))
+    """{"status", "downgrade_suspected", "repo_shape", "base_shape", "candidate"}
+
+    repo_shape·base_shape를 항상 출력에 싣는다 — 탐지하지 못한 경우에도 왜 못 했는지가
+    호출부에 드러나야 한다(불변식 6). SKILL.md가 "탐지할 수 없었다"와 "사고가 없다"를
+    구별해 보고할 수 있는 근거가 이것이다.
+    """
+    repo_shape = _shape_of_file(os.path.join(repo_path, mc.BACKUP_RELPATH))
+    base_shape = _base_shape(base_dir)
     suspected = compat.downgrade_suspected(repo_shape, base_shape)
     out = {
         "status": "ok",
