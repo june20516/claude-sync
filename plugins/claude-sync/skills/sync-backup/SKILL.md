@@ -312,7 +312,7 @@ cat /tmp/claude-sync-mcp.json
 백업 시점의 파일 해시와 **버전 표식**을 기록한다.
 
 ```bash
-python3 $SYNC_SCRIPTS/generate_metadata.py sync-metadata.json
+python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"
 ```
 
 생성되는 파일 예시:
@@ -415,6 +415,11 @@ fi
 
 백업 완료 후 변경된 파일 목록과 결과를 사용자에게 요약해서 보여준다.
 
-레포에 `sync-metadata.json`을 처음 쓴 경우(직전 커밋에 그 파일의 `min_reader_version`이 없었던 경우) 한 번만 알린다:
+레포에 `sync-metadata.json`을 처음 쓴 경우(직전 커밋에 그 파일의 `min_reader_version`이 없었던 경우) 한 번만 알린다. 아래 명령으로 레포에서 직접 확인한다 — 짐작하지 않는다:
 
-> "이 백업은 claude-sync 3.0.0 이상을 요구하도록 기록되었습니다. 더 낮은 버전의 기기에서 `/sync-backup`을 실행하면 차단됩니다. 다른 기기들도 업데이트한 뒤 재시작해 주세요."
+```bash
+git -C "$SYNC_REPO" show HEAD~1:sync-metadata.json 2>/dev/null \
+  | grep -q min_reader_version || echo "표식을 처음 기록했습니다"
+```
+
+> "이 백업은 claude-sync 3.0.0 이상을 요구하도록 기록되었습니다. **3.0.0 이상 기기는 이 표식을 읽고 스스로 멈춥니다. 그러나 2.x 기기는 멈추지 않습니다** — 2.x에는 이 가드가 없어, `/sync-backup`을 실행하면 레포를 옛 형식으로 되돌리고 명령에 공백이 든 서버를 누락시킵니다. 모든 기기를 3.0.0으로 올리고 재시작하기 전에는 다른 기기에서 `/sync-backup`을 실행하지 마세요."

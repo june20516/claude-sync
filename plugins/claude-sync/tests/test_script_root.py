@@ -121,16 +121,27 @@ def read_skill(name):
 
 
 def test_backup_detects_downgrade_before_mcp_collection():
-    """수집이 레포 파일을 덮어쓰면 v1 배열이라는 증거가 사라진다."""
+    """수집이 레포 파일을 덮어쓰면 v1 배열이라는 증거가 사라진다.
+
+    실행 줄 전체를 앵커로 쓴다 — 파일명만 쓰면 다른 절의 산문에 등장하는
+    같은 파일명이 순서를 우연히 맞춰 통과시킬 수 있다(불변식 7).
+    """
     text = read_skill("sync-backup")
-    assert "detect_downgrade.py" in text
-    assert text.index("detect_downgrade.py") < text.index("collect_mcp.py")
+    assert text.index('detect_downgrade.py" "$SYNC_REPO"') < text.index(
+        'collect_mcp.py" "$SYNC_REPO" "$MCP_STAGING"'
+    )
 
 
 def test_backup_documents_marker_fields():
-    text = read_skill("sync-backup")
+    """세 필드 각각에 대한 설명 문장(백틱 표기)이 있는지 확인한다.
+
+    필드 이름만 찾으면 같은 절 안의 JSON 예시(따옴표 표기)가 항상 걸려
+    설명 문단이 통째로 지워져도 통과한다(불변식 7). 백틱으로 감싼 표기는
+    JSON 예시가 아니라 산문 설명에만 나타난다.
+    """
+    sec = section("sync-backup", "7. sync-metadata.json 생성")
     for field in ("written_by_version", "min_reader_version", "schema"):
-        assert field in text
+        assert "`%s`" % field in sec, field
 
 
 def test_restore_surfaces_update_guidance_in_plugin_step():
@@ -208,8 +219,6 @@ def test_restore_branches_on_reason_for_upgrade_advice():
     """업그레이드로 풀리지 않는 갈래에 '업데이트하세요'를 붙이면 틀린 해법이다."""
     sec = section("sync-restore", "2.5 호환성 검사")
     assert "업데이트를 권하지 않는다" in sec
-    for reason in ("metadata_unreadable", "repo_not_found", "check_failed"):
-        assert reason in sec, reason
 
 
 def test_restore_reports_version_skips_as_pending():
@@ -231,6 +240,20 @@ def test_backup_reason_table_covers_every_compat_reason():
     table = section("sync-backup", "2.5 호환성 검사")
     missing = sorted(r for r in reasons if r not in table)
     assert not missing, "2.5 분기표에 없는 reason: %s" % missing
+
+
+def test_restore_reason_table_covers_every_compat_reason():
+    """손으로 옮겨 적어 비교하면 값이 늘어날 때 따라오지 못한다(불변식 7).
+
+    빠진 reason은 restore의 폴백으로 떨어져 '조용히 멈추는 갈래'가 된다.
+    restore가 멈추면 안 된다는 것이 이 설계의 원칙이므로 놓치는 방향이 위험하다.
+    """
+    with open(os.path.join(LIB_DIR, "compat.py"), encoding="utf-8") as f:
+        reasons = set(REASON_LITERAL.findall(f.read()))
+    assert reasons, "compat.py에서 reason을 못 뽑았다 — 정규식이 낡았다"
+    sec = section("sync-restore", "2.5 호환성 검사")
+    missing = sorted(r for r in reasons if r not in sec)
+    assert not missing, "restore 2.5에 없는 reason: %s" % missing
 
 
 PAIRED = re.compile(
