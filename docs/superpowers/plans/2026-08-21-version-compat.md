@@ -683,8 +683,16 @@ def dir_snapshot(path):
     return out
 
 
+def repo_with_metadata(tmp_path, obj=None, **kw):
+    """레포 디렉토리 경로를 반환한다.
+
+    write_metadata는 파일 경로를 주는데 check()는 레포 디렉토리를 받는다.
+    """
+    return os.path.dirname(write_metadata(tmp_path, obj, **kw))
+
+
 def test_check_passes_on_repo_without_metadata(tmp_path):
-    repo = write_metadata(tmp_path, None)
+    repo = repo_with_metadata(tmp_path, missing=True)
     plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
     v = compat.check(repo, plugin_json_path=plugin_json)
     assert v["status"] == "ok"
@@ -692,8 +700,8 @@ def test_check_passes_on_repo_without_metadata(tmp_path):
 
 
 def test_check_blocks_on_higher_min_reader(tmp_path):
-    repo = write_metadata(tmp_path, {"min_reader_version": "4.0.0",
-                                     "written_by_version": "4.0.0"})
+    repo = repo_with_metadata(tmp_path, {"min_reader_version": "4.0.0",
+                                         "written_by_version": "4.0.0"})
     plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
     v = compat.check(repo, plugin_json_path=plugin_json)
     assert v["blocked"] is True
@@ -702,7 +710,7 @@ def test_check_blocks_on_higher_min_reader(tmp_path):
 
 def test_check_writes_nothing(tmp_path):
     """읽기 전용이다. 차단 판정이 나도 레포를 건드리지 않는다."""
-    repo = write_metadata(tmp_path, {"min_reader_version": "4.0.0"})
+    repo = repo_with_metadata(tmp_path, {"min_reader_version": "4.0.0"})
     plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
     before = dir_snapshot(repo)
     compat.check(repo, plugin_json_path=plugin_json)
@@ -710,7 +718,7 @@ def test_check_writes_nothing(tmp_path):
 
 
 def test_cli_prints_json_and_exits_zero(tmp_path):
-    repo = write_metadata(tmp_path, {"min_reader_version": "3.0.0"})
+    repo = repo_with_metadata(tmp_path, {"min_reader_version": "3.0.0"})
     proc = subprocess.run([sys.executable, COMPAT_CLI, repo],
                           capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
@@ -722,7 +730,7 @@ def test_cli_prints_json_and_exits_zero(tmp_path):
 
 def test_cli_exits_zero_even_when_blocking(tmp_path):
     """비-0으로 끝내면 SKILL.md의 셸이 set -e로 죽어 안내를 못 보여준다."""
-    repo = write_metadata(tmp_path, {"min_reader_version": "99.0.0"})
+    repo = repo_with_metadata(tmp_path, {"min_reader_version": "99.0.0"})
     proc = subprocess.run([sys.executable, COMPAT_CLI, repo],
                           capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
