@@ -3,6 +3,7 @@
 - 작성: 2026-08-20
 - 상태: **착수 전.** spec도 plan도 아직 없다. 이 문서는 "무엇부터 하고 무엇을 조심할지"만 정한다.
 - 선행 작업: `fix/mcp-config-source` 브랜치 (PR #2), MCP 동기화 재설계 3.0.0
+- 관련: `2026-08-21-version-compat-BRIEF.md` (버전 표식·가드 — 같은 결함의 다른 축)
 - 등록 근거: `specs/2026-08-20-mcp-config-source-design.md` 15장 오픈 이슈
   — "`plugins.json`의 동일 결함을 후속 과제로 등록할지"
 
@@ -93,7 +94,7 @@ restore 방향(로컬에서 사라질 일 없음)만 보면 일관된 선택이�
 
 | # | 무엇을 | 어떻게 | 기록할 것 |
 |---|---|---|---|
-| 1 | CLI 표면 | `claude plugin --help`, `claude plugin marketplace --help` | 하위 명령 전수 |
+| ~~1~~ | ~~CLI 표면~~ | **2026-08-21 확인 완료** — 아래 1-a 참조 | — |
 | 2 | install 멱등성 | 이미 설치·활성인 플러그인에 `install` 재실행 | exit code, stderr 문구 |
 | 3 | 마켓플레이스 미등록 상태의 install | 등록 없이 `install foo@bar` | 실패 방식(자동 등록? 에러?) |
 | 4 | 없는 플러그인 install | 오타 이름 | exit code, stderr |
@@ -106,6 +107,26 @@ restore 방향(로컬에서 사라질 일 없음)만 보면 일관된 선택이�
 | 11 | settings.json 반영 시점 | install 직후 파일이 갱신되는가, 세션 재시작이 필요한가 | 복원 직후 다시 읽어도 되는지 |
 | 12 | 동시 쓰기 | 실행 중인 세션이 settings.json을 덮어쓸 수 있는가 | 있으면 읽기-수정-쓰기 경합 대비 필요 |
 | 13 | 목록 ↔ 실체 괴리 | `~/.claude/plugins/` 구조. 목록에 있는데 디렉토리가 없는 경우 / 그 반대 | "로컬 상태"의 정의를 무엇으로 할지 |
+
+### 1-a. CLI 표면 — 확인 완료 (2026-08-21, `claude 2.1.237`)
+
+`claude plugin` 하위 명령: `details` `disable` `enable` `eval` `init` `install` `list`
+`marketplace` `prune|autoremove` `tag` `uninstall|remove` `update` `validate`.
+`claude plugin marketplace`: `add` `list` `remove|rm` `update`.
+
+여기서 곧바로 확정되는 것:
+
+- **`disable`/`enable`이 존재한다** → `enabledPlugins`의 `false` 상태를 CLI로 만들 수 있다.
+  4장 결정표의 "disable CLI 없음" 분기는 **폐기**한다. 3상태(true/false/부재)를 그대로 다룬다.
+- **`uninstall|remove`가 존재한다** → 제거 수단이 있다. 다만 settings.json에서 **키가 사라지는지
+  `false`가 되는지**는 여전히 측정 대상(항목 6)이다.
+- **`marketplace remove`가 존재한다** → 마켓플레이스를 additive only로 고정할 필요가 없다.
+- **`prune|autoremove`가 있다** → *플러그인 간 의존성이 실재한다.* 브리프에 없던 항목이며,
+  삭제 전파 설계에서 "자동 설치된 의존 플러그인"을 어떻게 볼지 결정해야 한다. **(신규 측정 항목)**
+- `install --scope user|project|local`, `install --config <key=value>`(플러그인 `userConfig`) →
+  MCP와 같은 스코프 문제가 여기도 있고, 동기화 대상에 `userConfig`를 넣을지 판단이 필요하다. **(신규 측정 항목)**
+- **버전 제약 개념이 없다.** `install`에 `--version`도 범위 문법도 없고 `update`는 "최신"이다.
+  `plugin list`가 설치 버전을 보여주고 `plugin tag`가 `{name}--v{version}` 태그 규약을 갖는다.
 
 9번은 이미 실제 데이터에서 드러났다 — `enabledPlugins`에 `swift-lsp@claude-plugins-official`이
 있지만 `extraKnownMarketplaces`에는 `claude-plugins-official`이 없다. 의존성 검사에서
@@ -167,6 +188,22 @@ restore 방향(로컬에서 사라질 일 없음)만 보면 일관된 선택이�
 
 **추출하지 않기로 한다면** 그 이유를 spec에 적고, 반복·교대 테스트를 플러그인 쪽에도
 **전부 다시** 쓴다. 둘 중 하나는 반드시 해야 한다.
+
+### 첫 task는 스키마 설계가 아니다
+
+**`extract_plugins.py`가 레포 파일을 읽지 않고 통째로 덮어쓴다.** 이 성질이 남아 있는 한
+스키마를 어떻게 설계하든 미래 버전의 `plugins.json`이 파괴된다 — MCP에서 옛 버전이
+저지른 사고와 정확히 같은 형태다. 스키마 호환성은 부차적이고 진짜 문제는 쓰기 방식이다.
+
+따라서 순서는:
+
+1. **파괴 방지 먼저** — 알아볼 수 없는 `plugins.json`을 만나면 쓰지 않는다.
+   `mcp_config`의 `UnknownBackupSchema`·`_recognized_servers` 패턴을 그대로 옮긴다.
+   결함 (C)의 예외 처리도 여기서 함께 고친다.
+2. **그 다음 병합** — 키 단위 3-way.
+3. **스키마 변경은 마지막.** 필요하다면.
+
+1번만으로도 "다음 변경이 사용자 데이터를 파괴하지 않는다"는 목표는 달성된다.
 
 ### task 분할 기준
 

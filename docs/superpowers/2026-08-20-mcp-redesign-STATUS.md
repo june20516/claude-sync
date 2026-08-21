@@ -28,6 +28,7 @@ backup·status·restore가 `lib/mcp_config.py` 단일 모듈만 통해 MCP를 �
 | `docs/superpowers/plans/2026-08-20-mcp-config-source.md` | **폐기됨.** Task 1~5의 기록으로만 |
 | `~/.claude/suberpowers/reviews/2026-08-20-claude-sync-*.md` | 리뷰·감사 보고서 (14일 후 자동 삭제) |
 | `docs/superpowers/2026-08-20-plugins-sync-followup-BRIEF.md` | **후속 과제.** `plugins.json`의 동일 결함 — 실측·설계 기준·유의사항 |
+| `docs/superpowers/2026-08-21-version-compat-BRIEF.md` | **후속 과제.** 버전 표식·차단·복구, 명령어 3종별 반영 사항 |
 
 ## 3. 완료된 것
 
