@@ -19,6 +19,16 @@
 
 **모든 명령은 레포 루트 `/Users/bran/personal/claude-sync`에서 실행한다.**
 
+**커밋 규약:** 커밋은 반드시 경로를 명시한다(`git commit -m "..." -- <paths>`). 다만
+`git commit -- <경로>`는 **추적되지 않는 새 파일에 실패한다**(`pathspec did not match`).
+새 파일을 만든 task는 먼저 `git add -- <같은 경로들>`을 실행한 뒤 커밋한다.
+
+```bash
+git add -- <paths>
+git commit -m "..." -- <paths>
+```
+
+
 전체 테스트: `uv run --with pytest pytest plugins/claude-sync/tests -q`
 착수 전 기준선: **166 passed**
 
