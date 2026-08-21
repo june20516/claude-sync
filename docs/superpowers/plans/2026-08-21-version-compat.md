@@ -478,11 +478,28 @@ def test_message_contains_both_commands_and_restart_notice():
     assert "4.0.0" in msg and "3.0.0" in msg
 
 
-def test_message_says_nothing_about_stopping_or_continuing():
-    """행동은 각 SKILL.md가 정한다 — backup은 중단, status는 계속, restore는 질문."""
-    msg = compat.evaluate({"min_reader_version": "4.0.0"}, "3.0.0")["message"]
+@pytest.mark.parametrize("meta,mine", [
+    (compat.UNREADABLE, "3.0.0"),                  # metadata_unreadable
+    ({"min_reader_version": "?"}, "3.0.0"),        # min_reader_unparsable
+    ({"min_reader_version": "4.0.0"}, None),       # my_version_unknown
+    ({"min_reader_version": "4.0.0"}, "3.0.0"),    # older_than_min_reader
+])
+def test_message_says_nothing_about_stopping_or_continuing(meta, mine):
+    """행동은 각 SKILL.md가 정한다 — backup은 중단, status는 계속, restore는 질문.
+
+    네 갈래를 전부 본다. 한 갈래만 보면 나머지에 행동 단어가 새어 들어가도 못 잡는다.
+    """
+    msg = compat.evaluate(meta, mine)["message"]
+    assert msg != ""
     assert "중단" not in msg
     assert "계속" not in msg
+    assert "멈춥니다" not in msg
+
+
+def test_message_for_unknown_my_version_suggests_checking_install():
+    """자기 버전을 못 읽었다면 설치가 깨졌을 수 있다 — update만으로 안 풀린다."""
+    msg = compat.evaluate({"min_reader_version": "4.0.0"}, None)["message"]
+    assert "claude plugin list" in msg
 
 
 def test_message_for_unknown_my_version():
@@ -534,10 +551,10 @@ def _upgrade_message(reason, repo_min_reader, my_version):
     mine = my_version if my_version else "버전 미상"
     if reason == "metadata_unreadable":
         # 플러그인을 올려도 해결되지 않는다. 업그레이드 명령을 내밀지 않는다.
+        # "멈춥니다"라고 쓰지 않는다 — backup만 멈추고 status는 계속하며 restore는 묻는다.
         return (
             "백업 레포의 %s을 읽지 못했습니다 (권한 또는 입출력 문제).\n"
-            "표식을 확인할 수 없어 안전을 위해 멈춥니다 — 이 레포가 더 높은 버전을\n"
-            "요구하는지 알 수 없기 때문입니다.\n\n"
+            "표식을 확인할 수 없어, 이 레포가 더 높은 버전을 요구하는지 알 수 없습니다.\n\n"
             "  ls -l <레포>/%s 으로 권한을 확인하거나, 레포를 다시 클론하세요."
             % (METADATA_RELPATH, METADATA_RELPATH)
         )
@@ -551,11 +568,18 @@ def _upgrade_message(reason, repo_min_reader, my_version):
             "이 백업은 claude-sync %s 이상이 필요합니다 (이 기기: %s)."
             % (repo_min_reader or "알 수 없음", mine)
         )
-    return "%s\n이 버전이 백업을 쓰면 레포가 손상될 수 있습니다.\n\n%s\n\n%s" % (
+    body = "%s\n이 버전이 백업을 쓰면 레포가 손상될 수 있습니다.\n\n%s\n\n%s" % (
         head,
         _UPGRADE_COMMANDS,
         _RESTART_NOTICE,
     )
+    if reason == "my_version_unknown":
+        # 자기 버전을 못 읽었다면 설치 자체가 깨졌을 수 있다. update만으로 안 풀린다.
+        body += (
+            "\n\n이 기기의 플러그인 버전을 읽지 못했습니다. 설치 상태도 확인하세요:\n"
+            "  claude plugin list"
+        )
+    return body
 
 
 def evaluate(meta, my_version):
@@ -572,42 +596,40 @@ def evaluate(meta, my_version):
     raw_written = meta.get("written_by_version") if isinstance(meta, dict) else None
     verdict = {
         "needs_upgrade": False,
-        "reason": None,
+        "reason": _block_reason(meta, raw_min, my_version),
         "my_version": my_version,
         "repo_min_reader": raw_min if isinstance(raw_min, str) else None,
         "repo_written_by": raw_written if isinstance(raw_written, str) else None,
         "message": "",
     }
-    if meta is UNREADABLE:
-        verdict["reason"] = "metadata_unreadable"       # 0 못 읽음 → 차단
-    elif raw_min is None:
-        return verdict                                  # 1·2 표식 없음 → 통과
-    else:
-        return _judge_version(verdict, raw_min, my_version)
-    verdict["needs_upgrade"] = True
-    verdict["message"] = _upgrade_message(
-        verdict["reason"], verdict["repo_min_reader"], my_version
-    )
-    return verdict
-
-
-def _judge_version(verdict, raw_min, my_version):
-    """표식이 최소 버전을 요구할 때의 판정 (6.4의 3·4·5·6행)."""
-    required = parse_version(raw_min)
-    if required is None:
-        verdict["reason"] = "min_reader_unparsable"     # 3 있는데 못 읽음 → 차단
-    else:
-        mine = parse_version(my_version)
-        if mine is None:
-            verdict["reason"] = "my_version_unknown"    # 4 내 버전 미상 → 차단
-        elif mine < required:
-            verdict["reason"] = "older_than_min_reader" # 5 낮음 → 차단
     if verdict["reason"] is not None:
         verdict["needs_upgrade"] = True
         verdict["message"] = _upgrade_message(
             verdict["reason"], verdict["repo_min_reader"], my_version
         )
     return verdict
+
+
+def _block_reason(meta, raw_min, my_version):
+    """차단 사유. 통과면 None. **spec 6.4의 표를 위에서 아래로 그대로 읽는다.**
+
+    판정을 한 함수에 모으고 verdict 조립은 evaluate가 한다 — 두 함수가 같은 dict를
+    번갈아 수정하면 "어디서 message가 채워지는가"가 갈리고, 행을 추가할 때 한쪽만
+    고쳐 드리프트한다.
+    """
+    if meta is UNREADABLE:
+        return "metadata_unreadable"        # 0 못 읽음 — 없음이 아니다
+    if raw_min is None:
+        return None                          # 1·2 표식 없음 → 통과
+    required = parse_version(raw_min)
+    if required is None:
+        return "min_reader_unparsable"       # 3 있는데 못 읽음 — 모르면 안 쓴다
+    mine = parse_version(my_version)
+    if mine is None:
+        return "my_version_unknown"          # 4 충족을 증명할 수 없다
+    if mine < required:
+        return "older_than_min_reader"       # 5
+    return None                              # 6 통과
 ```
 
 - [ ] **Step 4: test를 실행하여 통과를 확인**
