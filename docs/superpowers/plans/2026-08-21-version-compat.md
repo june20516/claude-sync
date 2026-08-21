@@ -1441,9 +1441,15 @@ SCRIPT = os.path.join(
 )
 
 
+# 전역·시스템 git 설정을 통째로 끊는다. commit.gpgsign 하나만 끄면 core.hooksPath나
+# init.templateDir로 심긴 훅에 다시 걸린다 — 다른 기기·CI에서 원인 추적이 매우 어렵다.
+GIT_ENV = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+
+
 def git(repo, *args):
     subprocess.run(
-        ["git", "-C", str(repo)] + list(args), check=True, capture_output=True
+        ["git", "-C", str(repo)] + list(args),
+        check=True, capture_output=True, env=GIT_ENV,
     )
 
 
@@ -1453,9 +1459,6 @@ def make_repo(tmp_path):
     git(repo, "init", "-q")
     git(repo, "config", "user.email", "t@example.com")
     git(repo, "config", "user.name", "t")
-    # 전역 commit.gpgsign이 켜져 있으면 서명 키가 없는 픽스처 커밋이 exit 128로 죽는다.
-    # 레포 로컬 설정만 끈다 — 전역 ~/.gitconfig는 건드리지 않는다.
-    git(repo, "config", "commit.gpgsign", "false")
     return repo
 
 
@@ -1583,7 +1586,7 @@ def test_cli_prints_json(tmp_path):
     proc = subprocess.run(
         [sys.executable, SCRIPT, str(repo)],
         capture_output=True, text=True,
-        env=dict(os.environ, HOME=str(tmp_path / "fakehome")),
+        env=dict(GIT_ENV, HOME=str(tmp_path / "fakehome")),
     )
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
@@ -1637,31 +1640,44 @@ def _git(repo_path, args):
 
 
 def find_last_v2_commit(repo_path):
-    """mcp-servers.json이 v2 객체였던 마지막 커밋. 없으면 None."""
+    """v2 객체였던 마지막 커밋과, 상위 스키마 문서를 건너뛰었는지.
+
+    반환: (candidate_dict_or_None, newer_seen)
+
+    --diff-filter=d로 **삭제 커밋을 목록에서 애초에 뺀다.** 그러면 남은 커밋에는 파일이
+    반드시 존재하므로 git show 실패는 곧 "레포가 고장났다"는 뜻이 되어 그대로 전파해도
+    된다. try/except로 감싸 continue하면 레포 손상이 "v2가 없음"으로 접혀, 사용자에게
+    "되돌릴 지점이 없다"는 사실이 아닐 수 있는 결론이 전달된다(불변식 6).
+    """
     out = _git(
         repo_path,
-        ["log", "--format=%H%x09%ad%x09%s", "--date=short", "--", mc.BACKUP_RELPATH],
+        ["log", "--diff-filter=d", "--format=%H%x09%ad%x09%s", "--date=short",
+         "--", mc.BACKUP_RELPATH],
     )
+    newer_seen = False
     for line in out.decode("utf-8", "replace").splitlines():
         parts = line.split("\t", 2)
         if len(parts) != 3:
             continue
         sha, date, subject = parts
-        try:
-            blob = _git(repo_path, ["show", "%s:%s" % (sha, mc.BACKUP_RELPATH)])
-        except RuntimeError:
-            continue          # 그 커밋에는 파일이 없었다. 탐색은 계속한다
-        if compat.shape_of(blob) != "v2_object":
+        blob = _git(repo_path, ["show", "%s:%s" % (sha, mc.BACKUP_RELPATH)])
+        if compat.shape_of(blob) != compat.SHAPE_V2_OBJECT:
             continue
-        servers = mc.parse_backup(blob)
+        # parse_backup이 아니라 parse_base를 쓴다. parse_backup은 알아볼 수 없는 문서를
+        # {}로 degrade하므로 상위 버전 백업이 "서버 0개인 정상 백업"으로 제시된다.
+        # mcp_config가 명시적으로 금지하는 접기다(불변식 6).
+        servers = mc.parse_base(blob)
+        if servers is None:
+            newer_seen = True
+            continue          # 상위 버전이 쓴 문서다. 0개라고 단언하지 않는다
         return {
             "sha": sha,
             "date": date,
             "subject": subject,
             "server_count": len(servers),
             "server_names": sorted(servers),
-        }
-    return None
+        }, newer_seen
+    return None, newer_seen
 
 
 def _shape_of_file(path):
@@ -1705,16 +1721,33 @@ def detect(repo_path, base_dir=ss.BASE_DIR):
         "repo_shape": repo_shape,
         "base_shape": base_shape,
         "candidate": None,
+        # 히스토리에 이 버전이 알아보지 못하는 백업이 있었는가.
+        # "후보 없음"과 "상위 버전 문서라 건너뜀"은 다른 말이다.
+        "newer_schema_seen": False,
     }
     if suspected:
         try:
-            out["candidate"] = find_last_v2_commit(repo_path)
+            out["candidate"], out["newer_schema_seen"] = find_last_v2_commit(repo_path)
         except (RuntimeError, OSError) as e:
-            return {"status": "skipped", "reason": str(e),
-                    "downgrade_suspected": suspected,
-                    "repo_shape": repo_shape, "base_shape": base_shape,
-                    "candidate": None}
+            return _skipped(str(e), suspected, repo_shape, base_shape)
     return out
+
+
+def _skipped(reason, suspected=False, repo_shape=None, base_shape=None):
+    """탐지를 못 한 경우의 보고. **키 모양을 detect의 정상 경로와 같게 유지한다.**
+
+    소비하는 쪽이 out.get("downgrade_suspected")를 볼 때 키가 없으면 None(falsy)이 되어
+    또 한 번 "사고 없음"처럼 읽힌다(불변식 6).
+    """
+    return {
+        "status": "skipped",
+        "reason": reason,
+        "downgrade_suspected": suspected,
+        "repo_shape": repo_shape,
+        "base_shape": base_shape,
+        "candidate": None,
+        "newer_schema_seen": False,
+    }
 
 
 def main():
@@ -1723,8 +1756,10 @@ def main():
         sys.exit(1)
     try:
         out = detect(sys.argv[1])
-    except OSError as e:
-        out = {"status": "skipped", "reason": str(e)}
+    except Exception as e:  # noqa: BLE001 — 마지막 방어선
+        # OSError만 잡으면 downgrade_suspected가 던지는 ValueError를 놓쳐 트레이스백으로
+        # 죽고, "탐지 실패가 백업을 막으면 안 된다"는 이 스크립트의 원칙이 무너진다.
+        out = _skipped("%s: %s" % (type(e).__name__, e))
         print("다운그레이드 탐지 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))
 
