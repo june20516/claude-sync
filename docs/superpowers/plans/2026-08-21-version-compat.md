@@ -387,7 +387,7 @@ spec 6.4의 표 전수를 구현한다. 안내 문구는 **여기서만** 만든
 def test_evaluate_0_unreadable_metadata_blocks():
     """못 읽음은 없음이 아니다 — 상위 버전이 쓴 레포를 통과시키면 안 된다."""
     v = compat.evaluate(compat.UNREADABLE, "3.0.0")
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
     assert v["reason"] == "metadata_unreadable"
 
 
@@ -402,14 +402,14 @@ def test_message_for_unreadable_metadata_omits_upgrade_commands():
 def test_evaluate_1_no_metadata_passes():
     """표식 없음 = 2.x가 쓴 것 = 우리보다 앞설 수 없다 (결정 4)."""
     v = compat.evaluate(None, "3.0.0")
-    assert v["needs_upgrade"] is False
+    assert v["blocked"] is False
     assert v["reason"] is None
     assert v["message"] == ""
 
 
 def test_evaluate_2_no_min_reader_field_passes():
     v = compat.evaluate({"written_by_version": "3.0.0"}, "3.0.0")
-    assert v["needs_upgrade"] is False
+    assert v["blocked"] is False
     assert v["repo_written_by"] == "3.0.0"
 
 
@@ -417,7 +417,7 @@ def test_evaluate_2_no_min_reader_field_passes():
 def test_evaluate_3_unparsable_min_reader_blocks(bad):
     """필드가 있는데 못 읽는다 = 상위 버전이 모르는 형식으로 썼을 수 있다. 모르면 안 쓴다."""
     v = compat.evaluate({"min_reader_version": bad}, "3.0.0")
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
     assert v["reason"] == "min_reader_unparsable"
 
 
@@ -427,34 +427,34 @@ def test_evaluate_explicit_null_is_treated_as_absent():
     구별하려면 센티널이 필요한데, 여기서는 구별할 실익이 없다. null은 '요구 없음'이다.
     """
     v = compat.evaluate({"min_reader_version": None}, "3.0.0")
-    assert v["needs_upgrade"] is False
+    assert v["blocked"] is False
     assert v["reason"] is None
 
 
 def test_evaluate_4_unknown_my_version_with_requirement_blocks():
     """레포가 최소치를 요구하는데 충족을 증명할 수 없다."""
     v = compat.evaluate({"min_reader_version": "3.0.0"}, None)
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
     assert v["reason"] == "my_version_unknown"
 
 
 def test_evaluate_4b_unknown_my_version_without_requirement_passes():
     """요구가 없으면 증명할 것도 없다."""
     v = compat.evaluate(None, None)
-    assert v["needs_upgrade"] is False
+    assert v["blocked"] is False
 
 
 def test_evaluate_5_older_than_min_reader_blocks():
     v = compat.evaluate({"min_reader_version": "4.0.0"}, "3.0.0")
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
     assert v["reason"] == "older_than_min_reader"
     assert v["repo_min_reader"] == "4.0.0"
     assert v["my_version"] == "3.0.0"
 
 
 def test_evaluate_6_equal_or_newer_passes():
-    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.0.0")["needs_upgrade"] is False
-    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.10.0")["needs_upgrade"] is False
+    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.0.0")["blocked"] is False
+    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.10.0")["blocked"] is False
 
 
 def test_evaluate_uses_numeric_comparison():
@@ -463,7 +463,7 @@ def test_evaluate_uses_numeric_comparison():
     문자열 비교였다면 '3.9.0' > '3.10.0'이 참이 되어 통과해 버린다.
     """
     v = compat.evaluate({"min_reader_version": "3.10.0"}, "3.9.0")
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
 
 
 # --- 안내 문구 ---
@@ -595,7 +595,7 @@ def evaluate(meta, my_version):
     raw_min = meta.get("min_reader_version") if isinstance(meta, dict) else None
     raw_written = meta.get("written_by_version") if isinstance(meta, dict) else None
     verdict = {
-        "needs_upgrade": False,
+        "blocked": False,
         "reason": _block_reason(meta, raw_min, my_version),
         "my_version": my_version,
         "repo_min_reader": raw_min if isinstance(raw_min, str) else None,
@@ -603,7 +603,7 @@ def evaluate(meta, my_version):
         "message": "",
     }
     if verdict["reason"] is not None:
-        verdict["needs_upgrade"] = True
+        verdict["blocked"] = True
         verdict["message"] = _upgrade_message(
             verdict["reason"], verdict["repo_min_reader"], my_version
         )
@@ -688,7 +688,7 @@ def test_check_passes_on_repo_without_metadata(tmp_path):
     plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
     v = compat.check(repo, plugin_json_path=plugin_json)
     assert v["status"] == "ok"
-    assert v["needs_upgrade"] is False
+    assert v["blocked"] is False
 
 
 def test_check_blocks_on_higher_min_reader(tmp_path):
@@ -696,7 +696,7 @@ def test_check_blocks_on_higher_min_reader(tmp_path):
                                      "written_by_version": "4.0.0"})
     plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
     v = compat.check(repo, plugin_json_path=plugin_json)
-    assert v["needs_upgrade"] is True
+    assert v["blocked"] is True
     assert v["repo_written_by"] == "4.0.0"
 
 
@@ -716,7 +716,7 @@ def test_cli_prints_json_and_exits_zero(tmp_path):
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
     assert out["status"] == "ok"
-    assert out["needs_upgrade"] is False
+    assert out["blocked"] is False
     assert out["repo_min_reader"] == "3.0.0"
 
 
@@ -727,7 +727,7 @@ def test_cli_exits_zero_even_when_blocking(tmp_path):
                           capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
-    assert out["needs_upgrade"] is True
+    assert out["blocked"] is True
     assert "claude plugin update claude-sync" in out["message"]
 
 
@@ -1864,13 +1864,13 @@ SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 ```
 
-출력 JSON의 `needs_upgrade`가 `true`면 **여기서 중단한다.** 파일 복사(4단계)도 `plugins.json`(5단계)도 MCP 수집(6단계)도 하지 않는다. `message` 필드를 그대로 보여주고 다음 한 문장을 덧붙인다:
+출력 JSON의 `blocked`가 `true`면 **여기서 중단한다.** 파일 복사(4단계)도 `plugins.json`(5단계)도 MCP 수집(6단계)도 하지 않는다. `message` 필드를 그대로 보여주고 다음 한 문장을 덧붙인다:
 
 > "이 기기의 claude-sync가 백업 레포보다 낮아 백업을 중단했습니다. 위 명령으로 업데이트한 뒤 다시 실행하세요."
 
 `pull_only` 가드가 1단계에서 하는 것과 같은 형태다. **차단은 이 명령에만 건다** — status를 막으면 진단 수단이 사라지고 restore를 막으면 업데이트 안내를 받을 경로가 사라진다.
 
-`needs_upgrade`가 `false`면 조용히 다음 단계로 간다.
+`blocked`가 `false`면 조용히 다음 단계로 간다.
 ````
 
 `### 6. mcp-servers.json 생성` **바로 위**에 다음 절을 삽입한다.
@@ -1960,7 +1960,7 @@ uv run --with pytest pytest plugins/claude-sync/tests -q
 ```bash
 git commit -m "feat(backup): 2.5 호환성 차단과 5.5 다운그레이드 탐지
 
-호환성 검사는 레포를 가져온 직후, 아무것도 쓰기 전에 한다. needs_upgrade면
+호환성 검사는 레포를 가져온 직후, 아무것도 쓰기 전에 한다. blocked면
 파일 복사도 plugins.json도 MCP 수집도 하지 않고 중단한다. pull_only 가드와 같은
 형태다. 차단은 이 명령에만 건다.
 
@@ -2023,7 +2023,7 @@ python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 ```
 
-`needs_upgrade`가 `true`면 **분석 결과 맨 위에 크게 경고한다.** `message`를 그대로 보여주고 다음을 덧붙인다:
+`blocked`가 `true`면 **분석 결과 맨 위에 크게 경고한다.** `message`를 그대로 보여주고 다음을 덧붙인다:
 
 > "이 상태에서는 `/sync-backup`이 차단됩니다. 아래 분석은 계속 진행합니다."
 
@@ -2118,7 +2118,7 @@ SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 ```
 
-`needs_upgrade`가 `true`면 `message`를 보여주고 다음을 덧붙인 뒤 **계속할지 묻는다.**
+`blocked`가 `true`면 `message`를 보여주고 다음을 덧붙인 뒤 **계속할지 묻는다.**
 
 > "restore는 레포를 훼손하지 않지만, 이 버전이 알아보지 못하는 항목은 건너뛴 **부분 복원**이 됩니다. 파일 동기화는 스키마와 무관하므로 정상 동작합니다. 계속할까요?"
 
@@ -2274,14 +2274,14 @@ def test_block_then_unblock_leaves_no_state(tmp_path):
 
     meta_path.write_text(json.dumps({"min_reader_version": "4.0.0"}), encoding="utf-8")
     blocked_before = dir_snapshot(str(repo))
-    assert compat.check(str(repo), plugin_json_path=pj)["needs_upgrade"] is True
+    assert compat.check(str(repo), plugin_json_path=pj)["blocked"] is True
     assert dir_snapshot(str(repo)) == blocked_before   # 차단이 레포를 건드리지 않았다
 
     meta_path.write_text(json.dumps({"min_reader_version": "3.0.0"}), encoding="utf-8")
-    assert compat.check(str(repo), plugin_json_path=pj)["needs_upgrade"] is False
+    assert compat.check(str(repo), plugin_json_path=pj)["blocked"] is False
 
     meta_path.write_text(json.dumps({"min_reader_version": "4.0.0"}), encoding="utf-8")
-    assert compat.check(str(repo), plugin_json_path=pj)["needs_upgrade"] is True
+    assert compat.check(str(repo), plugin_json_path=pj)["blocked"] is True
 
 
 def test_check_is_idempotent(tmp_path):
@@ -2305,7 +2305,7 @@ def test_upgrade_then_write_marker_unblocks_older_repo(tmp_path):
     gm.write_metadata(
         str(repo / compat.METADATA_RELPATH), gm.build_metadata(claude_dir, pj)
     )
-    assert compat.check(str(repo), plugin_json_path=pj)["needs_upgrade"] is False
+    assert compat.check(str(repo), plugin_json_path=pj)["blocked"] is False
 ```
 
 - [ ] **Step 2: test를 실행하여 실패 또는 통과를 확인**

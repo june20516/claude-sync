@@ -336,7 +336,7 @@ def downgrade_suspected(repo_shape, base_shape):
 
 ```python
 {
-  "needs_upgrade": False,
+  "blocked": False,               # "차단"이지 "업그레이드하면 풀린다"가 아니다
   "reason": None,                 # 6.4의 reason
   "my_version": "3.0.0",          # 모르면 None
   "repo_min_reader": "3.0.0",     # 없으면 None
@@ -344,6 +344,11 @@ def downgrade_suspected(repo_shape, base_shape):
   "message": "..."                # 사용자에게 보일 문구. 여기서만 만든다
 }
 ```
+
+> **`blocked`는 "차단"이라는 뜻이고 그 이상이 아니다.** `metadata_unreadable`은 차단이지만
+> 업그레이드로 풀리지 않는다. 세 SKILL.md가 문장을 덧붙일 때는 `blocked`가 아니라
+> **`reason`으로 분기한다** — "업데이트하세요"를 모든 차단에 붙이면 권한 문제를 겪는
+> 사용자에게 틀린 해법을 준다. 이전 이름 `needs_upgrade`가 정확히 그 오류를 유도했다.
 
 ### 6.6 안내 문구
 
@@ -390,7 +395,7 @@ python3 "$SYNC_LIB/compat.py" <레포 경로>
 ```json
 {
   "status": "ok",
-  "needs_upgrade": false,
+  "blocked": false,
   "reason": null,
   "my_version": "3.0.0",
   "repo_min_reader": "3.0.0",
@@ -453,7 +458,7 @@ def _recognized_servers(obj):
 |---|---|
 | 0. 스크립트 경로 | **`SYNC_ROOT` 기준으로 교체** (4장) |
 | 2. 레포 준비 (clone/pull) | — |
-| **2.5 호환성 검사 (신설)** | `compat.py` 호출. `needs_upgrade`면 **파일 복사·plugins·MCP 수집 전에 중단**하고 6.6 문구를 보여준다. `pull_only` 가드가 1단계에서 하는 것과 같은 형태다 |
+| **2.5 호환성 검사 (신설)** | `compat.py` 호출. `blocked`면 **파일 복사·plugins·MCP 수집 전에 중단**하고 6.6 문구를 보여준다. `pull_only` 가드가 1단계에서 하는 것과 같은 형태다 |
 | **5.5 다운그레이드 탐지 (신설)** | `downgrade_suspected`면 경고 + 복구 후보 제시 + 계속할지 질문 |
 | 6. MCP 수집 | 변경 없음 (`skipped` + 사유 안내는 이미 반영됨) |
 | 7. `sync-metadata.json` 생성 | `written_by_version`·`min_reader_version`·`schema` 기록 (5장) |
@@ -472,7 +477,7 @@ def _recognized_servers(obj):
 | 단계 | 추가/변경 |
 |---|---|
 | 0. 스크립트 경로 | `SYNC_ROOT` 기준으로 교체 |
-| 1. 레포 준비 직후 | `compat.py` 호출. `needs_upgrade`면 **맨 위에 크게 경고**하되 분석은 계속한다 |
+| 1. 레포 준비 직후 | `compat.py` 호출. `blocked`면 **맨 위에 크게 경고**하되 분석은 계속한다 |
 | 2. MCP 비교 | 변경 없음 |
 | 3. 결과 요약 | 버전 불일치를 **첫 줄에** 넣는다. `downgrade_suspected`면 그것도 보고한다 |
 
@@ -484,7 +489,7 @@ status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 
 | 단계 | 추가/변경 |
 |---|---|
 | 0. 스크립트 경로 | `SYNC_ROOT` 기준으로 교체. `SYNC_BACKUP_SCRIPTS`도 같은 루트에서 유도 |
-| 2. 레포에서 가져오기 직후 | `compat.py` 호출. `needs_upgrade`면 경고하고 **계속할지 묻는다.** pull-only라 레포는 훼손되지 않지만 **모르는 스키마의 항목을 건너뛴 부분 복원**이 된다는 점을 명시한다 |
+| 2. 레포에서 가져오기 직후 | `compat.py` 호출. `blocked`면 경고하고 **계속할지 묻는다.** pull-only라 레포는 훼손되지 않지만 **모르는 스키마의 항목을 건너뛴 부분 복원**이 된다는 점을 명시한다 |
 | 3. 파일 reconcile | 변경 없음. 파일 동기화는 스키마와 무관하다 |
 | 5. 플러그인 복원 | **여기가 탈출구다.** 버전이 낮아 막혔다면 필요한 것은 `plugin update`다. 복원 절차 안에서 6.6의 안내를 우선 노출한다 |
 | 6. MCP 복원 | 변경 없음 |
