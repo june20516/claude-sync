@@ -113,3 +113,36 @@ def test_no_skill_uses_old_pattern(skill):
     with open(os.path.join(SKILLS_DIR, skill, "SKILL.md"), encoding="utf-8") as f:
         text = f.read()
     assert "find ~/.claude -path" not in text
+
+
+def read_skill(name):
+    with open(os.path.join(SKILLS_DIR, name, "SKILL.md"), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_backup_checks_compat_before_writing_anything():
+    text = read_skill("sync-backup")
+    assert "compat.py" in text
+    assert "### 2.5" in text
+    # 호환성 검사가 파일 reconcile(4단계)보다 앞에 있어야 한다
+    assert text.index("compat.py") < text.index("### 4. 파일별 reconcile")
+
+
+def test_backup_detects_downgrade_before_mcp_collection():
+    """수집이 레포 파일을 덮어쓰면 v1 배열이라는 증거가 사라진다."""
+    text = read_skill("sync-backup")
+    assert "detect_downgrade.py" in text
+    assert text.index("detect_downgrade.py") < text.index("collect_mcp.py")
+
+
+def test_backup_documents_marker_fields():
+    text = read_skill("sync-backup")
+    for field in ("written_by_version", "min_reader_version", "schema"):
+        assert field in text
+
+
+def test_backup_branches_on_reason_not_blocked():
+    """metadata_unreadable에 '업데이트하세요'를 붙이면 틀린 해법이다."""
+    text = read_skill("sync-backup")
+    assert "metadata_unreadable" in text
+    assert "reason" in text
