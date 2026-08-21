@@ -392,6 +392,29 @@ def test_cli_without_argument_fails():
     assert "사용:" in proc.stderr
 
 
+def test_main_falls_back_to_check_failed(monkeypatch, capsys):
+    """마지막 방어선. 예외가 트레이스백으로 새어 나가면 안 된다.
+
+    새면 종료 코드가 비-0이 되고 stdout에 JSON이 없다. SKILL.md는 그것을 8.0에 따라
+    "검사가 성립하지 않았다"로 다루므로 차단은 유지되지만, compat.py가 만들어 주는
+    문구 대신 사용자가 트레이스백을 본다. check_failed는 그 경로를 JSON 한 덩이로
+    유지하기 위한 것이다.
+    """
+    def boom(_repo_dir):
+        raise RuntimeError("예상 못 한 고장")
+
+    monkeypatch.setattr(compat, "check", boom)
+    monkeypatch.setattr(sys, "argv", ["compat.py", "/tmp"])
+    compat.main()
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "error"
+    assert out["blocked"] is True
+    assert out["reason"] == "check_failed"
+    assert "RuntimeError" in out["message"]
+    # 업그레이드로 풀리는 갈래가 아니다 — restore SKILL.md가 그 사실에 기대어 분기한다.
+    assert "claude plugin update" not in out["message"]
+
+
 def test_check_blocks_when_metadata_unreadable(tmp_path):
     """load_metadata와 evaluate를 잇는 배선이 UNREADABLE을 접으면 안 된다."""
     repo = tmp_path / "repo"

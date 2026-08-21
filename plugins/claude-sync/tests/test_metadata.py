@@ -4,6 +4,7 @@
 """
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
@@ -98,10 +99,49 @@ def test_schema_map_omits_plugins_json(tmp_path):
 
 
 def test_default_output_name_matches_compat_constant():
-    """쓰는 쪽과 읽는 쪽이 같은 파일을 봐야 한다. 리터럴이 갈리면 무증상 고장이다."""
+    """쓰는 쪽과 읽는 쪽이 같은 파일을 봐야 한다. 리터럴이 갈리면 무증상 고장이다.
+
+    이것만으로는 부족하다 — 실제 쓰기는 argv로 일어나고 그 값은 SKILL.md가 쓴다.
+    아래 두 테스트가 그 경로를 잇는다.
+    """
     src = open(gm.__file__, encoding="utf-8").read()
     assert "compat.METADATA_RELPATH" in src
     assert '"sync-metadata.json"' not in src
+
+
+SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills")
+SKILL_NAMES = ("sync-backup", "sync-status", "sync-restore")
+
+
+def read_skill(name):
+    with open(os.path.join(SKILLS_DIR, name, "SKILL.md"), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_skill_writes_the_filename_compat_reads():
+    """SKILL.md가 argv로 넘기는 파일명이 compat이 읽는 파일명과 같아야 한다.
+
+    generate_metadata.py 안에 리터럴이 없는지만 보면 이 경로가 안 걸린다. 실제 쓰기는
+    argv[1]로 일어나고 그 값은 SKILL.md의 리터럴이다. 이름이 갈리면 표식은 써지는데
+    아무도 읽지 못해, 차단 장치 전체가 켜진 적 없는 채로 모든 기기가 조용히 통과한다.
+    """
+    m = re.search(
+        r'generate_metadata\.py"\s+"\$SYNC_REPO/([^"]+)"', read_skill("sync-backup")
+    )
+    assert m, "sync-backup SKILL.md에서 generate_metadata.py 호출을 찾지 못했다"
+    assert m.group(1) == compat.METADATA_RELPATH
+
+
+def test_skills_mention_only_one_metadata_filename():
+    """세 SKILL.md에 등장하는 표식 파일명이 하나여야 한다.
+
+    호출 밖에서도 이름이 나온다 — 12단계의 `git show HEAD~1:...`가 그렇다.
+    거기만 옛 이름으로 남으면 "표식을 처음 기록했습니다"가 매 백업마다 뜬다.
+    """
+    names = set()
+    for name in SKILL_NAMES:
+        names.update(re.findall(r"sync-[a-z-]*meta[a-z-]*\.json", read_skill(name)))
+    assert names == {compat.METADATA_RELPATH}, names
 
 
 def test_metadata_is_byte_stable_across_runs(tmp_path):

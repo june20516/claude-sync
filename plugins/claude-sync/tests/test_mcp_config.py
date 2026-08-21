@@ -1,4 +1,6 @@
 import json
+import os
+import re
 
 import pytest
 
@@ -645,6 +647,35 @@ def test_parse_base_rejects_higher_schema_version():
 
 def test_parse_backup_degrades_higher_schema_version():
     assert mc.parse_backup(_v3_doc()) == {}
+
+
+PLUGIN_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+PROD_DIRS = (os.path.join(PLUGIN_ROOT, "lib"), os.path.join(PLUGIN_ROOT, "skills"))
+PARSE_BACKUP_CALL = re.compile(r"\b(?:mc|mcp_config)\.parse_backup\s*\(")
+
+
+def test_no_production_code_calls_parse_backup():
+    """읽기 경로에서 parse_backup을 쓰면 상위 버전 백업이 '서버 0개'가 된다.
+
+    레포 파일은 load_backup(UnknownBackupSchema로 막는다), base 블롭은 parse_base(None).
+    parse_backup만 알아볼 수 없는 문서를 {}로 degrade하므로, 게이트가 한 곳에 있어도
+    이 함수를 통과하는 경로만은 fail-open이다. **프로덕션에 호출부가 하나도 없다는
+    사실 자체가 계약이다** — 새 호출부가 생기면 여기서 걸린다.
+    """
+    offenders = []
+    for root_dir in PROD_DIRS:
+        for root, _, files in os.walk(root_dir):
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(root, name)
+                with open(path, encoding="utf-8") as f:
+                    if PARSE_BACKUP_CALL.search(f.read()):
+                        offenders.append(os.path.relpath(path, PLUGIN_ROOT))
+    assert not offenders, (
+        "parse_backup 호출부가 생겼다: %s — 레포는 load_backup, base는 parse_base다"
+        % sorted(offenders)
+    )
 
 
 def test_current_schema_version_still_accepted(tmp_path):
