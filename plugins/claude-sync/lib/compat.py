@@ -113,3 +113,103 @@ def load_metadata(path):
     if obj is UNREADABLE:
         return UNREADABLE
     return obj if isinstance(obj, dict) else None
+
+
+# 안내 문구의 명령은 항상 두 줄이다. 마켓플레이스 갱신 없이 plugin update만 하면
+# 새 버전을 못 본다.
+_UPGRADE_COMMANDS = (
+    "  claude plugin marketplace update claude-sync\n"
+    "  claude plugin update claude-sync"
+)
+
+# 재시작 안내는 반드시 넣는다. plugin update가 "restart required to apply"라고 명시하고,
+# 자동 갱신 경로에서도 "Run /reload-plugins to apply"가 뜬다.
+_RESTART_NOTICE = (
+    "그다음 Claude Code를 재시작하거나 /reload-plugins 를 실행하세요.\n"
+    "업데이트는 재시작 전까지 적용되지 않습니다."
+)
+
+
+def _upgrade_message(reason, repo_min_reader, my_version):
+    """차단 사유를 사용자 문구로 바꾼다. **문구는 여기서만 만든다.**
+
+    사실만 말하고 행동은 말하지 않는다 — backup은 중단하고 status는 계속하고
+    restore는 묻기 때문이다. 행동 문장은 각 SKILL.md가 붙인다.
+    """
+    mine = my_version if my_version else "버전 미상"
+    if reason == "metadata_unreadable":
+        # 플러그인을 올려도 해결되지 않는다. 업그레이드 명령을 내밀지 않는다.
+        return (
+            "백업 레포의 %s을 읽지 못했습니다 (권한 또는 입출력 문제).\n"
+            "표식을 확인할 수 없어 안전을 위해 멈춥니다 — 이 레포가 더 높은 버전을\n"
+            "요구하는지 알 수 없기 때문입니다.\n\n"
+            "  ls -l <레포>/%s 으로 권한을 확인하거나, 레포를 다시 클론하세요."
+            % (METADATA_RELPATH, METADATA_RELPATH)
+        )
+    if reason == "min_reader_unparsable":
+        head = (
+            "이 백업이 요구하는 최소 버전을 알아볼 수 없습니다 "
+            "— 상위 버전이 쓴 백업일 수 있습니다 (이 기기: %s)." % mine
+        )
+    else:
+        head = (
+            "이 백업은 claude-sync %s 이상이 필요합니다 (이 기기: %s)."
+            % (repo_min_reader or "알 수 없음", mine)
+        )
+    return "%s\n이 버전이 백업을 쓰면 레포가 손상될 수 있습니다.\n\n%s\n\n%s" % (
+        head,
+        _UPGRADE_COMMANDS,
+        _RESTART_NOTICE,
+    )
+
+
+def evaluate(meta, my_version):
+    """호환성 판정. spec 6.4의 표 전수이며 이 표 밖의 경우는 없다.
+
+    meta는 load_metadata의 반환(dict, None, 또는 UNREADABLE), my_version은
+    read_plugin_version의 반환.
+
+    **UNREADABLE을 반드시 먼저 걸러야 한다.** 그것은 dict가 아니므로
+    isinstance(meta, dict) 검사만 하면 조용히 "표식 없음"으로 접혀 통과하고,
+    상위 버전이 쓴 레포를 파괴한다. 이 판정을 단순화하려는 시도를 경계할 것.
+    """
+    raw_min = meta.get("min_reader_version") if isinstance(meta, dict) else None
+    raw_written = meta.get("written_by_version") if isinstance(meta, dict) else None
+    verdict = {
+        "needs_upgrade": False,
+        "reason": None,
+        "my_version": my_version,
+        "repo_min_reader": raw_min if isinstance(raw_min, str) else None,
+        "repo_written_by": raw_written if isinstance(raw_written, str) else None,
+        "message": "",
+    }
+    if meta is UNREADABLE:
+        verdict["reason"] = "metadata_unreadable"       # 0 못 읽음 → 차단
+    elif raw_min is None:
+        return verdict                                  # 1·2 표식 없음 → 통과
+    else:
+        return _judge_version(verdict, raw_min, my_version)
+    verdict["needs_upgrade"] = True
+    verdict["message"] = _upgrade_message(
+        verdict["reason"], verdict["repo_min_reader"], my_version
+    )
+    return verdict
+
+
+def _judge_version(verdict, raw_min, my_version):
+    """표식이 최소 버전을 요구할 때의 판정 (6.4의 3·4·5·6행)."""
+    required = parse_version(raw_min)
+    if required is None:
+        verdict["reason"] = "min_reader_unparsable"     # 3 있는데 못 읽음 → 차단
+    else:
+        mine = parse_version(my_version)
+        if mine is None:
+            verdict["reason"] = "my_version_unknown"    # 4 내 버전 미상 → 차단
+        elif mine < required:
+            verdict["reason"] = "older_than_min_reader" # 5 낮음 → 차단
+    if verdict["reason"] is not None:
+        verdict["needs_upgrade"] = True
+        verdict["message"] = _upgrade_message(
+            verdict["reason"], verdict["repo_min_reader"], my_version
+        )
+    return verdict

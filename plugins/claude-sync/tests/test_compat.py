@@ -162,3 +162,118 @@ def test_read_plugin_version_defaults_to_real_plugin_json():
         compat.default_plugin_json_path()
     )
     assert compat.read_plugin_version() is not None
+
+
+# --- spec 6.4 판정표 전수 ---
+
+def test_evaluate_0_unreadable_metadata_blocks():
+    """못 읽음은 없음이 아니다 — 상위 버전이 쓴 레포를 통과시키면 안 된다."""
+    v = compat.evaluate(compat.UNREADABLE, "3.0.0")
+    assert v["needs_upgrade"] is True
+    assert v["reason"] == "metadata_unreadable"
+
+
+def test_message_for_unreadable_metadata_omits_upgrade_commands():
+    """플러그인을 올려도 해결되지 않는다. 잘못된 해법을 내밀면 안 된다."""
+    msg = compat.evaluate(compat.UNREADABLE, "3.0.0")["message"]
+    assert "claude plugin update" not in msg
+    assert "권한" in msg
+    assert compat.METADATA_RELPATH in msg
+
+
+def test_evaluate_1_no_metadata_passes():
+    """표식 없음 = 2.x가 쓴 것 = 우리보다 앞설 수 없다 (결정 4)."""
+    v = compat.evaluate(None, "3.0.0")
+    assert v["needs_upgrade"] is False
+    assert v["reason"] is None
+    assert v["message"] == ""
+
+
+def test_evaluate_2_no_min_reader_field_passes():
+    v = compat.evaluate({"written_by_version": "3.0.0"}, "3.0.0")
+    assert v["needs_upgrade"] is False
+    assert v["repo_written_by"] == "3.0.0"
+
+
+@pytest.mark.parametrize("bad", ["", "unknown", "3.0", 3, ["3.0.0"]])
+def test_evaluate_3_unparsable_min_reader_blocks(bad):
+    """필드가 있는데 못 읽는다 = 상위 버전이 모르는 형식으로 썼을 수 있다. 모르면 안 쓴다."""
+    v = compat.evaluate({"min_reader_version": bad}, "3.0.0")
+    assert v["needs_upgrade"] is True
+    assert v["reason"] == "min_reader_unparsable"
+
+
+def test_evaluate_explicit_null_is_treated_as_absent():
+    """JSON의 null은 필드 없음과 구별되지 않는다 — dict.get이 둘 다 None을 준다.
+
+    구별하려면 센티널이 필요한데, 여기서는 구별할 실익이 없다. null은 '요구 없음'이다.
+    """
+    v = compat.evaluate({"min_reader_version": None}, "3.0.0")
+    assert v["needs_upgrade"] is False
+    assert v["reason"] is None
+
+
+def test_evaluate_4_unknown_my_version_with_requirement_blocks():
+    """레포가 최소치를 요구하는데 충족을 증명할 수 없다."""
+    v = compat.evaluate({"min_reader_version": "3.0.0"}, None)
+    assert v["needs_upgrade"] is True
+    assert v["reason"] == "my_version_unknown"
+
+
+def test_evaluate_4b_unknown_my_version_without_requirement_passes():
+    """요구가 없으면 증명할 것도 없다."""
+    v = compat.evaluate(None, None)
+    assert v["needs_upgrade"] is False
+
+
+def test_evaluate_5_older_than_min_reader_blocks():
+    v = compat.evaluate({"min_reader_version": "4.0.0"}, "3.0.0")
+    assert v["needs_upgrade"] is True
+    assert v["reason"] == "older_than_min_reader"
+    assert v["repo_min_reader"] == "4.0.0"
+    assert v["my_version"] == "3.0.0"
+
+
+def test_evaluate_6_equal_or_newer_passes():
+    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.0.0")["needs_upgrade"] is False
+    assert compat.evaluate({"min_reader_version": "3.0.0"}, "3.10.0")["needs_upgrade"] is False
+
+
+def test_evaluate_uses_numeric_comparison():
+    """3.9.0 기기가 3.10.0을 요구하는 레포를 만나면 막혀야 한다.
+
+    문자열 비교였다면 '3.9.0' > '3.10.0'이 참이 되어 통과해 버린다.
+    """
+    v = compat.evaluate({"min_reader_version": "3.10.0"}, "3.9.0")
+    assert v["needs_upgrade"] is True
+
+
+# --- 안내 문구 ---
+
+def test_message_contains_both_commands_and_restart_notice():
+    v = compat.evaluate({"min_reader_version": "4.0.0"}, "3.0.0")
+    msg = v["message"]
+    assert "claude plugin marketplace update claude-sync" in msg
+    assert "claude plugin update claude-sync" in msg
+    assert "/reload-plugins" in msg
+    assert "재시작" in msg
+    assert "4.0.0" in msg and "3.0.0" in msg
+
+
+def test_message_says_nothing_about_stopping_or_continuing():
+    """행동은 각 SKILL.md가 정한다 — backup은 중단, status는 계속, restore는 질문."""
+    msg = compat.evaluate({"min_reader_version": "4.0.0"}, "3.0.0")["message"]
+    assert "중단" not in msg
+    assert "계속" not in msg
+
+
+def test_message_for_unknown_my_version():
+    msg = compat.evaluate({"min_reader_version": "4.0.0"}, None)["message"]
+    assert "버전 미상" in msg
+    assert "claude plugin update claude-sync" in msg
+
+
+def test_message_for_unparsable_min_reader():
+    msg = compat.evaluate({"min_reader_version": "?"}, "3.0.0")["message"]
+    assert "알아볼 수 없" in msg
+    assert "claude plugin update claude-sync" in msg
