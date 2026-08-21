@@ -1017,9 +1017,14 @@ def fake_claude_dir(tmp_path):
     return str(d)
 
 
-def write_plugin_json(tmp_path, obj):
+def write_plugin_json(tmp_path, obj=None, *, missing=False):
+    """plugin.json 역할의 임시 파일 경로. missing=True면 파일을 만들지 않는다.
+
+    test_compat.py의 같은 이름 헬퍼와 키워드 의미를 맞춘다 — 같은 이름이 파일마다
+    다른 뜻을 가지면 호출부를 읽을 때마다 어느 쪽인지 확인해야 한다.
+    """
     path = tmp_path / "plugin.json"
-    if obj is not None:
+    if not missing:
         path.write_text(json.dumps(obj), encoding="utf-8")
     return str(path)
 
@@ -1068,7 +1073,7 @@ def test_min_reader_minor_and_patch_are_zero():
 def test_written_by_omitted_when_plugin_json_unreadable(tmp_path):
     """자기 버전을 몰라도 min_reader는 정상 기록된다 — 상수를 쓰는 두 번째 이유."""
     meta = gm.build_metadata(
-        fake_claude_dir(tmp_path), str(tmp_path / "does-not-exist.json")
+        fake_claude_dir(tmp_path), write_plugin_json(tmp_path, missing=True)
     )
     assert "written_by_version" not in meta
     assert meta["min_reader_version"] == compat.MIN_READER_VERSION
@@ -1080,6 +1085,13 @@ def test_schema_map_omits_plugins_json(tmp_path):
         fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
     )
     assert "plugins.json" not in meta["schema"]
+
+
+def test_default_output_name_matches_compat_constant():
+    """쓰는 쪽과 읽는 쪽이 같은 파일을 봐야 한다. 리터럴이 갈리면 무증상 고장이다."""
+    src = open(gm.__file__, encoding="utf-8").read()
+    assert "compat.METADATA_RELPATH" in src
+    assert '"sync-metadata.json"' not in src
 
 
 def test_metadata_is_byte_stable_across_runs(tmp_path):
@@ -1176,7 +1188,9 @@ def write_metadata(output_path, metadata):
 
 
 def main():
-    output_path = sys.argv[1] if len(sys.argv) > 1 else "sync-metadata.json"
+    # 파일명을 리터럴로 다시 쓰지 않는다 — 쓰는 쪽과 읽는 쪽이 다른 파일을 보면
+    # 표식이 있는데도 없는 것으로 판정되는 무증상 고장이 된다.
+    output_path = sys.argv[1] if len(sys.argv) > 1 else compat.METADATA_RELPATH
     metadata = build_metadata(
         os.path.expanduser("~/.claude"), compat.default_plugin_json_path()
     )
