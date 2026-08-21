@@ -177,3 +177,17 @@ def test_restore_surfaces_update_guidance_in_plugin_step():
 def test_restore_reports_version_skips_as_pending_not_failure():
     text = read_skill("sync-restore")
     assert "보류" in text
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_upgrade_commands_always_come_in_pairs(skill):
+    """마켓플레이스 갱신 없이 plugin update만 하면 새 버전을 못 본다.
+
+    브리프가 못박은 '명령은 항상 두 줄'을 지키는 가드다.
+    """
+    text = read_skill(skill)
+    lone = text.count("claude plugin update claude-sync")
+    paired = text.count("claude plugin marketplace update claude-sync")
+    assert lone == paired, (
+        "%s: plugin update %d회 vs marketplace update %d회" % (skill, lone, paired)
+    )
