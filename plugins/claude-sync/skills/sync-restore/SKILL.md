@@ -108,10 +108,19 @@ python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 
 > "restore는 레포를 훼손하지 않지만, 이 버전이 알아보지 못하는 항목은 건너뛴 **부분 복원**이 됩니다. 파일 동기화는 스키마와 무관하므로 정상 동작합니다. 계속할까요?"
 
-선택지는 둘이다.
+선택지는 `reason`에 따라 다르다. **`blocked`가 아니라 `reason`으로 분기한다** — `blocked`는 "차단"이라는 뜻일 뿐 "업그레이드하면 풀린다"는 뜻이 아니다.
+
+`reason`이 `older_than_min_reader` / `my_version_unknown` / `min_reader_unparsable`이면:
 
 - **계속한다** — 파일은 정상 복원되고, 알아보지 못하는 MCP 항목만 보류된다.
 - **중단하고 업데이트한다** — 5단계의 안내대로 플러그인을 올린 뒤 다시 실행한다.
+
+`reason`이 `metadata_unreadable` / `repo_not_found` / `check_failed`이면 **업데이트를 권하지 않는다.** 그 갈래의 `message`에 업그레이드 명령이 없는 것이 그래서다.
+
+- **계속한다** — 다만 `repo_not_found`이면 복원할 레포 자체가 없으므로 권하지 않는다.
+- **중단하고 원인을 확인한다** — 레포 경로와 권한, `python3` 설치 상태를 본다.
+
+표에 없는 `reason`이면 중단하고 `message`만 그대로 보여준다 — 정의되지 않은 갈래를 임의로 해석하지 않는다.
 
 **restore를 막지 않는 이유**: 버전이 낮아 backup이 막힌 사용자가 업데이트 안내를 받을 수 있는 경로가 restore다. 여기까지 막으면 탈출구가 사라진다.
 

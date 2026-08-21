@@ -120,14 +120,6 @@ def read_skill(name):
         return f.read()
 
 
-def test_backup_checks_compat_before_writing_anything():
-    text = read_skill("sync-backup")
-    assert "compat.py" in text
-    assert "### 2.5" in text
-    # 호환성 검사가 파일 reconcile(4단계)보다 앞에 있어야 한다
-    assert text.index("compat.py") < text.index("### 4. 파일별 reconcile")
-
-
 def test_backup_detects_downgrade_before_mcp_collection():
     """수집이 레포 파일을 덮어쓰면 v1 배열이라는 증거가 사라진다."""
     text = read_skill("sync-backup")
@@ -141,32 +133,6 @@ def test_backup_documents_marker_fields():
         assert field in text
 
 
-def test_backup_branches_on_reason_not_blocked():
-    """metadata_unreadable에 '업데이트하세요'를 붙이면 틀린 해법이다."""
-    text = read_skill("sync-backup")
-    assert "metadata_unreadable" in text
-    assert "reason" in text
-
-
-def test_status_warns_but_never_blocks():
-    text = read_skill("sync-status")
-    assert "compat.py" in text
-    assert "detect_downgrade.py" in text
-    assert "막지 않는다" in text
-
-
-def test_status_puts_version_mismatch_first():
-    text = read_skill("sync-status")
-    assert "첫 줄" in text
-
-
-def test_restore_asks_before_continuing():
-    text = read_skill("sync-restore")
-    assert "compat.py" in text
-    assert "부분 복원" in text
-    assert "계속할지" in text
-
-
 def test_restore_surfaces_update_guidance_in_plugin_step():
     """버전이 낮아 막혔다면 필요한 것은 plugin update다. 여기가 탈출구다."""
     text = read_skill("sync-restore")
@@ -174,20 +140,113 @@ def test_restore_surfaces_update_guidance_in_plugin_step():
     assert "claude plugin update claude-sync" in plugin_step
 
 
-def test_restore_reports_version_skips_as_pending_not_failure():
-    text = read_skill("sync-restore")
-    assert "보류" in text
+LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
+
+
+def section(skill, heading):
+    """'### <heading>'부터 다음 '### '까지 잘라낸다.
+
+    파일 전체에 대한 존재 검사는 절이 통째로 사라지거나 엉뚱한 곳으로 옮겨져도
+    다른 곳의 한 마디에 가려 통과한다(불변식 7).
+    """
+    text = read_skill(skill)
+    i = text.index("### " + heading)
+    m = re.compile(r"\n### ").search(text, i + 1)
+    return text[i:m.start() if m else len(text)]
+
+
+def test_backup_compat_section_sits_right_after_repo_fetch():
+    """레포를 가져온 직후, 아무것도 쓰기 전이어야 한다. 앞뒤를 둘 다 건다."""
+    text = read_skill("sync-backup")
+    assert (text.index("### 2. 레포 준비")
+            < text.index("### 2.5 호환성 검사")
+            < text.index("### 3. Git User 설정"))
+
+
+def test_backup_runs_compat_before_any_repo_write():
+    """앵커를 산문이 아니라 실행 줄로 잡는다 — 0단계 산문의 'compat.py'가 아니다."""
+    text = read_skill("sync-backup")
+    call = text.index('compat.py" "$SYNC_REPO"')
+    for later in ("### 4. 파일별 reconcile", "extract_plugins.py",
+                  "collect_mcp.py", "generate_metadata.py"):
+        assert call < text.index(later), later
+
+
+def test_backup_blocked_stops_the_run():
+    sec = section("sync-backup", "2.5 호환성 검사")
+    assert "여기서 중단한다" in sec
+    assert "MCP 수집(6단계)도 하지 않는다" in sec
+
+
+def test_status_never_stops_the_analysis():
+    """status는 어떤 갈래에서도 멈추지 않는다 — 진단 수단이 사라지면 안 된다."""
+    sec = section("sync-status", "1.5 호환성 검사")
+    assert "분석은 계속한다" in sec
+    assert "아래 분석은 계속 진행합니다" in sec
+    assert "중단" not in sec
+
+
+def test_status_reports_undetectable_downgrade():
+    """'확인하지 못했다'와 '사고가 없다'는 다른 말이다(불변식 6)."""
+    sec = section("sync-status", "1.5 호환성 검사")
+    assert "확인하지 못했다" in sec
+    assert "newer_schema_seen" in sec
+
+
+def test_status_puts_version_mismatch_first():
+    sec = section("sync-status", "3. 결과 요약")
+    assert "첫 줄" in sec
+
+
+def test_restore_asks_instead_of_deciding():
+    sec = section("sync-restore", "2.5 호환성 검사")
+    assert "계속할지 묻는다" in sec
+    assert "부분 복원" in sec
+
+
+def test_restore_branches_on_reason_for_upgrade_advice():
+    """업그레이드로 풀리지 않는 갈래에 '업데이트하세요'를 붙이면 틀린 해법이다."""
+    sec = section("sync-restore", "2.5 호환성 검사")
+    assert "업데이트를 권하지 않는다" in sec
+    for reason in ("metadata_unreadable", "repo_not_found", "check_failed"):
+        assert reason in sec, reason
+
+
+def test_restore_reports_version_skips_as_pending():
+    sec = section("sync-restore", "7. 결과 보고")
+    assert "보류" in sec
+
+
+REASON_LITERAL = re.compile(r'(?:return|"reason":)\s*"([a-z_]+)"')
+
+
+def test_backup_reason_table_covers_every_compat_reason():
+    """문서의 분기표가 코드의 reason을 전부 덮는지 원본에서 뽑아 대조한다.
+
+    손으로 옮겨 적어 비교하면 값이 늘어날 때 따라오지 못한다(불변식 7).
+    """
+    with open(os.path.join(LIB_DIR, "compat.py"), encoding="utf-8") as f:
+        reasons = set(REASON_LITERAL.findall(f.read()))
+    assert reasons, "compat.py에서 reason을 못 뽑았다 — 정규식이 낡았다"
+    table = section("sync-backup", "2.5 호환성 검사")
+    missing = sorted(r for r in reasons if r not in table)
+    assert not missing, "2.5 분기표에 없는 reason: %s" % missing
+
+
+PAIRED = re.compile(
+    r"claude plugin marketplace update claude-sync[ \n]*(?:&&\s*)?claude plugin update claude-sync")
+LONE = re.compile(r"(?<!marketplace )claude plugin update claude-sync")
 
 
 @pytest.mark.parametrize("skill", SKILLS)
-def test_upgrade_commands_always_come_in_pairs(skill):
-    """마켓플레이스 갱신 없이 plugin update만 하면 새 버전을 못 본다.
+def test_marketplace_update_always_precedes_plugin_update(skill):
+    """마켓플레이스 갱신이 먼저여야 한다 — 갱신 없이 update만 하면 새 버전을 못 본다.
 
-    브리프가 못박은 '명령은 항상 두 줄'을 지키는 가드다.
+    등장 횟수만 세면 순서가 뒤바뀌어도 통과한다(불변식 7).
     """
     text = read_skill(skill)
-    lone = text.count("claude plugin update claude-sync")
-    paired = text.count("claude plugin marketplace update claude-sync")
-    assert lone == paired, (
-        "%s: plugin update %d회 vs marketplace update %d회" % (skill, lone, paired)
+    paired, lone = len(PAIRED.findall(text)), len(LONE.findall(text))
+    assert paired == lone, (
+        "%s: 짝지어진 %d회 vs plugin update %d회 — 순서가 뒤바뀌었거나 떨어져 있다"
+        % (skill, paired, lone)
     )
