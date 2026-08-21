@@ -25,9 +25,18 @@ def test_parse_version_accepts(text, expected):
     assert compat.parse_version(text) == expected
 
 
-@pytest.mark.parametrize("text", ["unknown", "", "3.0", "a.b.c", "v", None, 3, ["3.0.0"]])
+@pytest.mark.parametrize("text", [
+    "unknown", "", "3.0", "a.b.c", "v", None, 3, ["3.0.0"], "3.0.0.5", "1.2.3.4",
+])
 def test_parse_version_rejects(text):
     assert compat.parse_version(text) is None
+
+
+def test_parse_version_still_accepts_non_numeric_suffix():
+    """lookahead가 접미사까지 막아버리면 안 된다 — 막는 것은 4번째 숫자 구성요소뿐이다."""
+    assert compat.parse_version("3.0.0-rc1") == (3, 0, 0)
+    assert compat.parse_version("3.0.0+build.7") == (3, 0, 0)
+    assert compat.parse_version("3.0.0 or later") == (3, 0, 0)
 
 
 def test_parse_version_orders_by_number_not_string():

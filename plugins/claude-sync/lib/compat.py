@@ -22,7 +22,7 @@ MIN_READER_VERSION = "3.0.0"
 
 METADATA_RELPATH = "sync-metadata.json"
 
-_VERSION_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)")
+_VERSION_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)(?![\d.])")
 
 
 def parse_version(text):
@@ -30,6 +30,9 @@ def parse_version(text):
 
     문자열 비교를 쓰면 "3.10.0" > "3.9.0"이 거짓이 된다. 반드시 정수 튜플로 비교한다.
     선행 v('v3.0.0')와 접미사('3.0.0-rc1')는 허용하고 코어 3자리만 읽는다.
+    접미사를 무시하므로 pre-release는 정식 릴리즈와 동등하게 다뤄진다 — semver의
+    "pre-release가 더 낮다"와 다르지만, 이 프로젝트는 pre-release를 배포한 적이 없다.
+    네 번째 숫자 구성요소('3.0.0.5')는 거부한다 — 코어만 읽어 통과시키면 fail-open이 된다.
     'unknown'은 None이다 — claude plugin list가 실제로 내는 값이다.
     """
     if not isinstance(text, str):
