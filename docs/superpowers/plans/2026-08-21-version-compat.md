@@ -1453,6 +1453,9 @@ def make_repo(tmp_path):
     git(repo, "init", "-q")
     git(repo, "config", "user.email", "t@example.com")
     git(repo, "config", "user.name", "t")
+    # 전역 commit.gpgsign이 켜져 있으면 서명 키가 없는 픽스처 커밋이 exit 128로 죽는다.
+    # 레포 로컬 설정만 끈다 — 전역 ~/.gitconfig는 건드리지 않는다.
+    git(repo, "config", "commit.gpgsign", "false")
     return repo
 
 
