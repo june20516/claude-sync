@@ -237,24 +237,48 @@ def _block_reason(meta, raw_min, my_version):
     return None                              # 6 통과
 
 
+# 백업 문서의 형태. 문자열 리터럴을 흩뿌리지 않는다 — 호출부 오타가 AttributeError로
+# 즉시 드러난다(불변식 6).
+SHAPE_ABSENT = "absent"
+SHAPE_BROKEN = "broken"
+SHAPE_UNREADABLE = "unreadable"   # 파일/blob을 읽지 못했다 — absent가 아니다
+SHAPE_V1_ARRAY = "v1_array"
+SHAPE_V2_OBJECT = "v2_object"
+SHAPE_UNKNOWN = "unknown"
+_SHAPES = frozenset({
+    SHAPE_ABSENT, SHAPE_BROKEN, SHAPE_UNREADABLE,
+    SHAPE_V1_ARRAY, SHAPE_V2_OBJECT, SHAPE_UNKNOWN,
+})
+
+
 def shape_of(data):
-    """백업 문서의 형태. 'absent' | 'broken' | 'v1_array' | 'v2_object' | 'unknown'
+    """백업 문서의 형태. absent | broken | v1_array | v2_object | unknown
 
     다운그레이드 판정에 필요하다. mcp_config는 파싱해서 매핑만 주므로 원본 형태가 사라진다.
     version 값은 보지 않는다 — 여기서 답하는 질문은 "v1이냐 v2냐"이지
     "읽어도 되느냐"가 아니다. 후자는 mcp_config의 게이트가 답한다.
+
+    **SHAPE_UNREADABLE은 여기서 나오지 않는다.** 이 함수는 경로가 아니라 원본 바이트를
+    받으므로 읽기 실패를 알 수 없다. 읽는 쪽(detect_downgrade.py)이 그 상태를 만든다.
+
+    파싱된 객체를 넘기는 것은 "깨진 문서"가 아니라 호출자 오류이므로 TypeError로 드러낸다.
+    fail-open 방향의 반환값으로 삼키면 그 실수가 "사고 없음"이라는 결론이 된다(불변식 6).
     """
     if data is None:
-        return "absent"
+        return SHAPE_ABSENT
+    if not isinstance(data, (str, bytes, bytearray)):
+        raise TypeError(
+            "shape_of는 원본 문서(str/bytes)를 받는다: %r" % type(data).__name__
+        )
     try:
         obj = json.loads(data)
-    except (TypeError, ValueError):
-        return "broken"
+    except ValueError:
+        return SHAPE_BROKEN
     if isinstance(obj, list):
-        return "v1_array"
+        return SHAPE_V1_ARRAY
     if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
-        return "v2_object"
-    return "unknown"
+        return SHAPE_V2_OBJECT
+    return SHAPE_UNKNOWN
 
 
 def downgrade_suspected(repo_shape, base_shape):
@@ -263,8 +287,14 @@ def downgrade_suspected(repo_shape, base_shape):
     레포가 v1인 것만으로는 부족하다 — 정말 오래된 레포일 수 있다. base가 v2였다는 것은
     이 기기가 v2를 본 적이 있다는 뜻이고, 그 뒤 v1이 되었다면 누군가 되돌린 것이다.
     base를 못 읽으면 판정하지 않는다 — 신뢰할 수 없는 이력은 근거가 될 수 없다(불변식 2).
+
+    모르는 shape는 조용히 False로 만들지 않는다. 같은 파일의 _upgrade_message가 모르는
+    reason에 예외를 던지는데 여기만 조용하면 관례가 갈리고, 조용한 쪽이 fail-open이다(불변식 6).
     """
-    return repo_shape == "v1_array" and base_shape == "v2_object"
+    for name, value in (("repo_shape", repo_shape), ("base_shape", base_shape)):
+        if value not in _SHAPES:
+            raise ValueError("알 수 없는 %s: %r" % (name, value))
+    return repo_shape == SHAPE_V1_ARRAY and base_shape == SHAPE_V2_OBJECT
 
 
 def check(repo_dir, plugin_json_path=None):

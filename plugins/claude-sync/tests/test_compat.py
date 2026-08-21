@@ -460,3 +460,41 @@ def test_downgrade_suspected_when_repo_v1_and_base_v2():
 ])
 def test_downgrade_not_suspected(repo, base):
     assert compat.downgrade_suspected(repo, base) is False
+
+
+def test_shape_of_rejects_parsed_object():
+    """호출자 오류를 값으로 삼키면 그 실수가 '사고 없음'이라는 결론이 된다(불변식 6)."""
+    with pytest.raises(TypeError):
+        compat.shape_of([{"name": "a", "command": "a"}])
+    with pytest.raises(TypeError):
+        compat.shape_of({"servers": {}})
+    with pytest.raises(TypeError):
+        compat.shape_of(3)
+
+
+@pytest.mark.parametrize("repo,base", [
+    ("v1array", "v2_object"),      # 오타
+    ("v1_array", "v2object"),      # 오타
+    ("V1_ARRAY", "V2_OBJECT"),     # 대소문자
+    (None, None),
+    ("", ""),
+])
+def test_downgrade_suspected_rejects_unknown_shape(repo, base):
+    """모르는 shape를 조용히 False로 만들면 오타가 '사고 없음'이 된다(불변식 6)."""
+    with pytest.raises(ValueError):
+        compat.downgrade_suspected(repo, base)
+
+
+def test_downgrade_suspected_accepts_unreadable_shape():
+    """읽기 실패는 표현 가능한 상태다 — 탐지하지 않되 예외도 아니다."""
+    assert compat.downgrade_suspected(compat.SHAPE_UNREADABLE, compat.SHAPE_V2_OBJECT) is False
+    assert compat.downgrade_suspected(compat.SHAPE_V1_ARRAY, compat.SHAPE_UNREADABLE) is False
+
+
+def test_shape_constants_match_returned_values():
+    """상수와 실제 반환값이 갈리면 호출부가 조용히 어긋난다."""
+    assert compat.shape_of(None) == compat.SHAPE_ABSENT
+    assert compat.shape_of(b"{ nope") == compat.SHAPE_BROKEN
+    assert compat.shape_of(b"[]") == compat.SHAPE_V1_ARRAY
+    assert compat.shape_of(b'{"servers":{}}') == compat.SHAPE_V2_OBJECT
+    assert compat.shape_of(b"null") == compat.SHAPE_UNKNOWN

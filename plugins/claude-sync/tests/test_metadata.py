@@ -113,3 +113,26 @@ def test_metadata_is_byte_stable_across_runs(tmp_path):
     gm.write_metadata(out2, gm.build_metadata(claude_dir, plugin_json))
     with open(out1, "rb") as f1, open(out2, "rb") as f2:
         assert f1.read() == f2.read()
+
+
+def test_metadata_bytes_are_independent_of_key_order(tmp_path):
+    """sort_keys가 없으면 여기서 죽는다 — 같은 런의 두 호출로는 os.walk 순서 차이를 못 만든다."""
+    claude_dir = fake_claude_dir(tmp_path)
+    meta = gm.build_metadata(claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    reversed_meta = {k: meta[k] for k in reversed(list(meta))}
+    reversed_meta["files"] = {k: meta["files"][k] for k in reversed(list(meta["files"]))}
+    out1, out2 = str(tmp_path / "a.json"), str(tmp_path / "b.json")
+    gm.write_metadata(out1, meta)
+    gm.write_metadata(out2, reversed_meta)
+    with open(out1, "rb") as f1, open(out2, "rb") as f2:
+        assert f1.read() == f2.read()
+
+
+def test_dangling_symlink_is_skipped_not_fatal(tmp_path):
+    """표식 생성이 통째로 죽으면 표식 없는 백업이 푸시된다. 파일 하나가 빠지는 게 싸다."""
+    d = fake_claude_dir(tmp_path)
+    os.symlink(os.path.join(d, "nowhere.md"), os.path.join(d, "agents", "dangling.md"))
+    meta = gm.build_metadata(d, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    assert "agents/dangling.md" not in meta["files"]
+    assert "agents/a.md" in meta["files"]
+    assert meta["min_reader_version"] == compat.MIN_READER_VERSION

@@ -20,23 +20,38 @@ import mcp_config as mc  # noqa: E402
 
 
 def file_sha256(path):
+    """파일의 sha256 hex. 파일이 없으면(끊어진 심볼릭 링크 포함) None.
+
+    (PermissionError 등 그 외 OSError는 전파한다 — sync_state.file_hash와 같은 관례.)
+    표식 생성 전체가 죽는 것보다 파일 하나가 빠지는 것이 싸다. 죽으면 표식 없는
+    백업이 푸시된다.
+    """
     h = hashlib.sha256()
-    with open(path, "rb") as f:
-        h.update(f.read())
+    try:
+        with open(path, "rb") as f:
+            h.update(f.read())
+    except FileNotFoundError:
+        return None
     return h.hexdigest()
 
 
 def collect(base, prefix):
     result = {}
     if os.path.isfile(base):
-        result[prefix] = file_sha256(base)
+        digest = file_sha256(base)
+        if digest is not None:
+            result[prefix] = digest
         return result
     if os.path.isdir(base):
         for root, _, files in os.walk(base):
             for f in files:
                 full = os.path.join(root, f)
+                digest = file_sha256(full)
+                if digest is None:
+                    print("건너뜀(읽을 수 없음): %s" % full, file=sys.stderr)
+                    continue
                 rel = os.path.relpath(full, base)
-                result[prefix + "/" + rel] = file_sha256(full)
+                result[prefix + "/" + rel] = digest
     return result
 
 
