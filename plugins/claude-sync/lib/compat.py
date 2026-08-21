@@ -49,27 +49,48 @@ def default_plugin_json_path():
     return os.path.join(here, "..", ".claude-plugin", "plugin.json")
 
 
-def _load_json(path):
-    """JSON 파일을 읽는다. 못 읽거나 깨졌으면 None.
+UNREADABLE = object()   # 파일은 있는데 읽지 못했다 — "없다"와 반드시 구별한다
 
-    metadata도 plugin.json도 "없음"과 "깨짐"의 처리가 같으므로 한 함수로 둔다.
-    PermissionError 등 다른 OSError도 None으로 degrade한다 — 판정을 못 한다고
-    백업을 막으면, 그 파일을 고치는 다음 백업까지 막혀 데드락이 된다.
+
+def _load_json(path):
+    """JSON 파일을 세 상태로 읽는다. 예외를 던지지 않는다.
+
+    - 없음 / JSON 깨짐 -> None
+    - 열지 못함(PermissionError, EIO, IsADirectoryError 등) -> UNREADABLE
+    - 그 외 -> 디코드된 객체
+
+    **"못 읽음"과 "없음"을 같은 값으로 접으면 안 된다.** 접는 판단을 저수준 로더에
+    박아두면 호출부가 되돌릴 수 없고, load_metadata 쪽에서 fail-open이 된다.
+    셋을 그대로 돌려주고 해석은 각 함수가 한다.
+    깨진 JSON만 None으로 degrade한다 — 내용의 문제이고 다음 백업이 되돌린다.
+    (mcp_config._BROKEN이 쓰는 out-of-band 센티널과 같은 이유다.)
     """
     try:
         with open(path, "rb") as f:
-            return json.loads(f.read())
-    except (OSError, ValueError):
+            raw = f.read()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return UNREADABLE
+    try:
+        return json.loads(raw)
+    except ValueError:
         return None
 
 
-def read_plugin_version(plugin_json_path):
+def read_plugin_version(plugin_json_path=None):
     """plugin.json의 version 문자열. 읽지 못하면 None(예외 아님).
 
     '자기 버전을 모른다'는 정상적으로 표현 가능한 상태여야 한다. 예외로 만들면
     호출부마다 try가 생기고 그 처리가 갈린다.
+    기본 경로 결정을 함수 안에 둔다 — mcp_config.read_local_servers와 같은 형태다.
+    호출부마다 `or default_...()`를 복붙하면 한 곳이 빠졌을 때 조용히 깨진다.
+
+    UNREADABLE도 dict가 아니므로 None이 된다. 자기 버전을 못 읽으면 상위 판정이
+    차단으로 접으므로 이쪽은 이미 fail-safe다.
     """
-    obj = _load_json(plugin_json_path)
+    path = default_plugin_json_path() if plugin_json_path is None else plugin_json_path
+    obj = _load_json(path)
     if not isinstance(obj, dict):
         return None
     version = obj.get("version")
@@ -77,11 +98,18 @@ def read_plugin_version(plugin_json_path):
 
 
 def load_metadata(path):
-    """sync-metadata.json을 읽는다. 없거나 깨졌거나 dict가 아니면 None.
+    """sync-metadata.json을 읽는다. 없거나 깨졌거나 dict가 아니면 None,
+    열지 못했으면 UNREADABLE.
 
     깨진 metadata를 차단 근거로 삼으면 데드락이 된다 — 그 파일을 정상으로 되돌리는 것이
     다음 백업인데 그 백업이 막힌다. load_backup이 깨진 파일을 {}로 degrade하는 것과 같은
-    이유다("레포 파일 하나가 깨졌다고 백업 전체를 막지 않는다").
+    이유다("레포 파일 하나가 깨졌다고 전체를 막지 않는다").
+
+    **못 읽음은 다르다.** 표식 없음은 "2.x가 썼다"는 의미 있는 결론이라 통과로 이어지는데,
+    못 읽은 파일이 그 결론을 참칭하면 상위 버전이 쓴 레포를 통과시킨다. 환경의 문제라
+    다음 백업이 고쳐주지도 않으므로 데드락 논거가 닿지 않는다. 그대로 올려보낸다.
     """
     obj = _load_json(path)
+    if obj is UNREADABLE:
+        return UNREADABLE
     return obj if isinstance(obj, dict) else None
