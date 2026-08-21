@@ -280,12 +280,19 @@ def read_plugin_version(plugin_json_path):
     호출부마다 try가 생기고 그 처리가 갈린다.
     """
 
-def load_metadata(path):
-    """sync-metadata.json을 읽는다. 없거나 깨졌거나 dict가 아니면 None.
+UNREADABLE = object()   # 파일은 있는데 읽지 못했다 — "없다"와 반드시 구별한다
 
-    깨진 metadata를 차단 근거로 삼으면 데드락이 된다 — 그 파일을 고치는 것이
-    다음 백업인데 그 백업이 막힌다. load_backup이 깨진 파일을 {}로 degrade하는 것과
-    같은 이유다(레포 파일 하나가 깨졌다고 전체를 막지 않는다).
+def load_metadata(path):
+    """sync-metadata.json을 읽는다. 세 상태를 구별한다.
+
+    - 없음 / JSON 깨짐 / dict 아님 -> None
+    - 파일은 있는데 열지 못함(PermissionError, EIO, IsADirectoryError 등) -> UNREADABLE
+
+    **"못 읽음"을 "없음"과 같은 값으로 표현하면 안 된다.** 표식 없음은 "2.x가 썼다"는
+    의미 있는 결론이고 통과로 이어지는데(결정 4), 못 읽은 파일이 그 결론을 참칭하면
+    상위 버전이 쓴 레포를 통과시켜 이 기능이 막으려는 파괴가 그대로 일어난다.
+    깨진 JSON만 None으로 degrade한다 — 그것은 내용의 문제이고 다음 백업이 되돌린다.
+    못 읽음은 환경의 문제라 다음 백업이 고쳐주지 않으므로 데드락 논거가 닿지 않는다.
     """
 
 def evaluate(meta, my_version):
@@ -307,6 +314,7 @@ def downgrade_suspected(repo_shape, base_shape):
 
 | # | metadata 상태 | 내 버전 | 판정 | `reason` |
 |---|---|---|---|---|
+| 0 | **못 읽음 (`UNREADABLE`)** | 무관 | **차단** | `metadata_unreadable` |
 | 1 | 없음 (`None`) | 무관 | 통과 | `None` |
 | 2 | dict인데 `min_reader_version` 없음 | 무관 | 통과 | `None` |
 | 3 | `min_reader_version`이 문자열 아님 / 파싱 불가 | 무관 | **차단** | `min_reader_unparsable` |
@@ -314,6 +322,9 @@ def downgrade_suspected(repo_shape, base_shape):
 | 5 | 파싱 가능 | 최소치 미만 | **차단** | `older_than_min_reader` |
 | 6 | 파싱 가능 | 최소치 이상 | 통과 | `None` |
 
+- **0이 차단인 이유**: 표식이 *없다*는 것은 "2.x가 썼다"는 결론이지만, *못 읽었다*는
+  아무 결론도 아니다. 둘을 같은 값으로 접으면 상위 버전이 쓴 레포를 통과시킨다.
+  이때의 해법은 플러그인 업데이트가 아니라 권한·경로 확인이므로 **안내 문구도 다르다**(6.6).
 - **1·2가 통과인 이유**(결정 4): 표식이 없다는 것은 3.0.0 이전이 썼다는 뜻이고, 그것은 우리보다
   앞설 수 없다. 깨진 metadata도 `load_metadata`가 `None`으로 degrade하므로 1에 합류한다.
 - **3이 차단인 이유**: 필드가 *있는데* 못 읽는다는 것은 상위 버전이 우리가 모르는 형식으로
@@ -355,6 +366,16 @@ def downgrade_suspected(repo_shape, base_shape):
 - **재시작 안내는 반드시 넣는다.** `plugin update`가 "restart required to apply"라고 명시하고,
   자동 갱신 경로에서도 `Run /reload-plugins to apply`가 뜬다(브리프 2.1.1).
 - 내 버전이 미상이면 `(이 기기: 버전 미상)`으로 적고, 플러그인 설치 상태 확인을 함께 안내한다.
+- **`metadata_unreadable`은 문구가 다르다.** 플러그인을 올려도 해결되지 않으므로 업그레이드
+  명령을 내밀지 않는다. 대신 못 읽은 사실과 확인할 곳을 알린다:
+
+```
+백업 레포의 sync-metadata.json을 읽지 못했습니다 (권한 또는 입출력 문제).
+표식을 확인할 수 없어 안전을 위해 멈춥니다 — 이 레포가 더 높은 버전을 요구하는지
+알 수 없기 때문입니다.
+
+  ls -l <레포>/sync-metadata.json 으로 권한을 확인하거나, 레포를 다시 클론하세요.
+```
 
 ### 6.7 CLI 진입점
 
@@ -542,6 +563,7 @@ SKILL.md는 다음을 보여주고 사용자에게 고르게 한다.
 |---|---|---|
 | `sync-metadata.json` 없음 | 통과 | 결정 4 |
 | `sync-metadata.json` JSON 깨짐 | 통과 + 경고 | 막으면 데드락이다(6.3). 다음 백업이 고친다 |
+| `sync-metadata.json`을 **열지 못함** (권한·IO) | **차단** | 내용이 아니라 환경의 문제라 다음 백업이 고쳐주지 않는다. 못 읽음을 없음으로 접으면 fail-open이다 |
 | `min_reader_version` 있는데 파싱 불가 | **차단** | 모르면 안 쓴다 |
 | `plugin.json` 없음/깨짐 | 내 버전 미상 → 레포가 요구하면 차단, 아니면 통과 | 증명할 것이 없으면 막지 않는다 |
 | `SYNC_ROOT` 못 찾음 | 즉시 중단 + 안내 | 어떤 버전을 실행할지 모르는 상태로 진행하면 안 된다 |
