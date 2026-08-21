@@ -1916,13 +1916,24 @@ SYNC_ROOT=$(find ~/.claude/plugins/cache -path "*/claude-sync/*/.claude-plugin" 
 SYNC_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"
 SYNC_LIB="$SYNC_ROOT/lib"
 
+# 빈 값 확인이 먼저다. 비어 있는데 아래 python3를 부르면 "/.claude-plugin/plugin.json"을
+# 열려다 트레이스백이 난다 — 원인이 "플러그인을 못 찾았다"임이 가려진다.
+if [ -z "$SYNC_ROOT" ]; then
+  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다." >&2
+fi
+
 # 어느 버전을 쓰는지 눈에 보이게 한다. 불일치는 조용하면 안 된다.
 echo "Plugin root: $SYNC_ROOT"
-python3 -c 'import json,sys; print("Version:", json.load(open(sys.argv[1])).get("version","unknown"))' \
-  "$SYNC_ROOT/.claude-plugin/plugin.json"
+python3 -c 'import json,sys
+try:
+    print("Version:", json.load(open(sys.argv[1])).get("version", "unknown"))
+except Exception as e:
+    print("Version: 읽지 못함 (%s)" % e)' "$SYNC_ROOT/.claude-plugin/plugin.json"
 ```
 
 `SYNC_ROOT`가 비어 있으면 플러그인이 제대로 설치되지 않은 것이므로 **즉시 중단하고** 사용자에게 안내한다. 어떤 버전을 실행할지 모르는 채로 진행해서는 안 된다.
+
+버전을 읽지 못했다고 해서 중단하지는 않는다 — 그것은 표시용이고, 실제 판정은 `compat.py`가 `my_version_unknown`으로 처리한다.
 ````
 
 `plugins/claude-sync/skills/sync-status/SKILL.md`의 같은 절을 다음으로 교체한다. `SYNC_SCRIPTS`의 스킬 이름과 `SYNC_BACKUP_SCRIPTS` 한 줄만 다르다.
@@ -2070,6 +2081,10 @@ SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 ```
 
+**먼저 검사가 성립했는지 본다.** 명령이 비-0으로 끝났거나, 출력이 JSON이 아니거나, `blocked` 키가 없으면 — **`blocked: true`와 같이 다룬다.** `compat.py`는 차단일 때도 종료 코드 0으로 JSON을 내도록 만들어져 있으므로, 그렇지 않다는 것은 판정 결과가 아니라 **검사 자체가 성립하지 않았다**는 뜻이다(`python3`이 없거나, `SYNC_ROOT`가 잘못 잡혔거나, 파일이 없는 경우). 이때만 SKILL.md가 문구를 직접 쓴다:
+
+> "호환성 검사를 실행하지 못했습니다. 이 레포를 안전하게 다룰 수 있는지 판단할 수 없어 중단했습니다. 0단계에서 찾은 플러그인 루트가 올바른지, `python3`이 있는지 확인하세요."
+
 출력 JSON의 `blocked`가 `true`면 **여기서 중단한다.** 파일 복사(4단계)도 `plugins.json`(5단계)도 MCP 수집(6단계)도 하지 않는다.
 
 **`message` 필드를 그대로 보여준다. 명령을 직접 타자하지 않는다** — 안내 문구는 `compat.py`가 만드는 것이 계약이고, SKILL.md가 따로 쓰면 드리프트한다.
@@ -2102,7 +2117,9 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 `SYNC_BACKUP_SCRIPTS`는 0단계의 `SYNC_SCRIPTS`와 같다.
 
-`status`가 `"skipped"`면 탐지만 건너뛰고 백업은 계속한다. 탐지는 부가 기능이다.
+`status`가 `"skipped"`면 탐지만 건너뛰고 백업은 계속한다. 탐지는 부가 기능이다. 다만 **`reason`을 사용자에게 알린다** — "사고가 없다"가 아니라 "확인하지 못했다"이기 때문이다.
+
+`newer_schema_seen`이 `true`면 히스토리에 **이 버전이 알아보지 못하는 백업**이 있다는 뜻이다. 그 사실을 알리고, 복구 후보로 제시된 커밋이 그보다 오래된 것임을 명시한다.
 
 `downgrade_suspected`가 `true`면 레포의 `mcp-servers.json`이 v1 배열인데 이 기기의 base는 v2였다는 뜻이다 — **옛 버전 기기가 덮어썼다.** 사용자에게 다음을 보여주고 고르게 한다.
 
@@ -2238,6 +2255,8 @@ python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 ```
 
+**검사가 성립하지 않았으면**(비-0 종료, JSON 아님, `blocked` 키 없음) 그 사실을 맨 위에 알린다 — "호환성을 확인하지 못했습니다"이지 "문제 없습니다"가 아니다. 그래도 **분석은 계속한다.**
+
 `blocked`가 `true`면 **분석 결과 맨 위에 크게 경고한다.** `message`를 그대로 보여주고 다음을 덧붙인다:
 
 > "이 상태에서는 `/sync-backup`이 차단됩니다. 아래 분석은 계속 진행합니다."
@@ -2332,6 +2351,8 @@ uv run --with pytest pytest plugins/claude-sync/tests/test_script_root.py -q -k 
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 ```
+
+**검사가 성립하지 않았으면**(비-0 종료, JSON 아님, `blocked` 키 없음) 그것도 `blocked: true`와 같이 다룬다 — 확인하지 못한 것을 문제 없음으로 읽지 않는다.
 
 `blocked`가 `true`면 `message`를 보여주고 다음을 덧붙인 뒤 **계속할지 묻는다.**
 
