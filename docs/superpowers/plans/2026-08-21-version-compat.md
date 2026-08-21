@@ -74,7 +74,8 @@ def test_parse_version_accepts(text, expected):
     assert compat.parse_version(text) == expected
 
 
-@pytest.mark.parametrize("text", ["unknown", "", "3.0", "a.b.c", "v", None, 3, ["3.0.0"]])
+@pytest.mark.parametrize("text", ["unknown", "", "3.0", "a.b.c", "v", None, 3, ["3.0.0"],
+                                  "3.0.0.5", "1.2.3.4"])
 def test_parse_version_rejects(text):
     assert compat.parse_version(text) is None
 
@@ -84,7 +85,18 @@ def test_parse_version_orders_by_number_not_string():
     assert compat.parse_version("3.10.0") > compat.parse_version("3.9.0")
     assert compat.parse_version("3.0.0") < compat.parse_version("3.0.1")
     assert compat.parse_version("2.9.9") < compat.parse_version("10.0.0")
+
+
+def test_parse_version_still_accepts_non_numeric_suffix():
+    """lookahead가 접미사까지 막아버리면 안 된다 — 막는 것은 4번째 숫자 구성요소뿐이다."""
+    assert compat.parse_version("3.0.0-rc1") == (3, 0, 0)
+    assert compat.parse_version("3.0.0+build.7") == (3, 0, 0)
+    assert compat.parse_version("3.0.0 or later") == (3, 0, 0)
 ```
+
+> **정정 (2026-08-21, code review 후):** 최초 계획의 정규식에는 `(?![\d.])`가 없어
+> `'3.0.0.5'`가 `(3,0,0)`으로 읽히는 fail-open이 있었다. 위 코드는 그것을 봉쇄한 최종본이며,
+> 실제 구현에서는 Task 1 커밋(`3fe72f8`) 뒤 별건 커밋(`7cb54c3`)으로 적용되었다.
 
 - [ ] **Step 2: test를 실행하여 실패를 확인**
 
@@ -123,7 +135,7 @@ MIN_READER_VERSION = "3.0.0"
 
 METADATA_RELPATH = "sync-metadata.json"
 
-_VERSION_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)")
+_VERSION_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)(?![\d.])")
 
 
 def parse_version(text):
@@ -131,6 +143,9 @@ def parse_version(text):
 
     문자열 비교를 쓰면 "3.10.0" > "3.9.0"이 거짓이 된다. 반드시 정수 튜플로 비교한다.
     선행 v('v3.0.0')와 접미사('3.0.0-rc1')는 허용하고 코어 3자리만 읽는다.
+    접미사를 무시하므로 pre-release는 정식 릴리즈와 동등하게 다뤄진다 — semver의
+    "pre-release가 더 낮다"와 다르지만, 이 프로젝트는 pre-release를 배포한 적이 없다.
+    네 번째 숫자 구성요소('3.0.0.5')는 거부한다 — 코어만 읽어 통과시키면 fail-open이 된다.
     'unknown'은 None이다 — claude plugin list가 실제로 내는 값이다.
     """
     if not isinstance(text, str):
