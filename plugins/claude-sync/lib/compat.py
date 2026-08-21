@@ -146,6 +146,13 @@ def _upgrade_message(reason, repo_min_reader, my_version):
             "  ls -l <레포>/%s 으로 권한을 확인하거나, 레포를 다시 클론하세요."
             % (METADATA_RELPATH, METADATA_RELPATH)
         )
+    if reason == "repo_not_found":
+        # 업그레이드 문제가 아니다. 명령을 내밀지 않는다.
+        return (
+            "백업 레포 디렉토리를 찾을 수 없습니다.\n"
+            "호환성을 확인할 수 없어, 이 레포가 더 높은 버전을 요구하는지 알 수 없습니다.\n\n"
+            "  레포 경로가 올바른지 확인하거나, 레포를 다시 클론하세요."
+        )
     if reason == "min_reader_unparsable":
         head = (
             "이 백업이 요구하는 최소 버전을 알아볼 수 없습니다 "
@@ -231,11 +238,27 @@ def _block_reason(meta, raw_min, my_version):
 
 
 def check(repo_dir, plugin_json_path=None):
-    """레포 디렉토리를 읽어 판정한다. **어떤 파일도 쓰지 않는다.**"""
-    meta = load_metadata(os.path.join(repo_dir, METADATA_RELPATH))
+    """레포 디렉토리를 읽어 판정한다. **어떤 파일도 쓰지 않는다.**
+
+    레포 디렉토리가 없으면 차단한다. "표식 없음"으로 접으면 안 된다 — 표식 없음은
+    "2.x가 썼다"는 *결론*이지만 레포가 없는 것은 결론이 아니라 호출자의 입력 오류다.
+    특히 빈 문자열은 os.path.join("", ...)이 상대 경로가 되어 **현재 디렉토리의 파일을
+    읽고 통과 판정을 낸다.**
+    """
     # or를 쓰지 않는다 — read_plugin_version이 None을 받아 기본 경로를 정한다.
     # or는 빈 문자열도 falsy로 보아 "기본값 써라"로 오독한다.
     my_version = read_plugin_version(plugin_json_path)
+    if not (isinstance(repo_dir, str) and os.path.isdir(repo_dir)):
+        return {
+            "status": "ok",
+            "blocked": True,
+            "reason": "repo_not_found",
+            "my_version": my_version,
+            "repo_min_reader": None,
+            "repo_written_by": None,
+            "message": _upgrade_message("repo_not_found", None, my_version),
+        }
+    meta = load_metadata(os.path.join(repo_dir, METADATA_RELPATH))
     verdict = {"status": "ok"}
     verdict.update(evaluate(meta, my_version))
     return verdict
@@ -245,7 +268,25 @@ def main():
     if len(sys.argv) != 2:
         print("사용: compat.py <레포 경로>", file=sys.stderr)
         sys.exit(1)
-    print(json.dumps(check(sys.argv[1]), indent=2, ensure_ascii=False))
+    try:
+        out = check(sys.argv[1])
+    except Exception as e:  # noqa: BLE001 — 마지막 방어선
+        # 형제 스크립트의 status="skipped"를 베끼지 않는다. 거기서 skipped는
+        # "이 단계만 건너뛰고 진행"이지만, 호환성 검사에서 그것은
+        # "가드 없이 백업 진행"이다. compat은 fail-closed다.
+        out = {
+            "status": "error",
+            "blocked": True,
+            "reason": "check_failed",
+            "my_version": None,
+            "repo_min_reader": None,
+            "repo_written_by": None,
+            "message": "호환성 검사가 실패했습니다 (%s: %s).\n"
+                       "이 레포를 안전하게 다룰 수 있는지 판단할 수 없습니다."
+                       % (type(e).__name__, e),
+        }
+        print("호환성 검사 실패: %s" % e, file=sys.stderr)
+    print(json.dumps(out, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

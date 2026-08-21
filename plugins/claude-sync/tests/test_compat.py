@@ -390,3 +390,31 @@ def test_cli_without_argument_fails():
     proc = subprocess.run([sys.executable, COMPAT_CLI], capture_output=True, text=True)
     assert proc.returncode == 1
     assert "사용:" in proc.stderr
+
+
+def test_check_blocks_when_metadata_unreadable(tmp_path):
+    """load_metadata와 evaluate를 잇는 배선이 UNREADABLE을 접으면 안 된다."""
+    repo = tmp_path / "repo"
+    (repo / compat.METADATA_RELPATH).mkdir(parents=True)   # 디렉토리라 열 수 없다
+    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
+    v = compat.check(str(repo), plugin_json_path=plugin_json)
+    assert v["blocked"] is True
+    assert v["reason"] == "metadata_unreadable"
+
+
+@pytest.mark.parametrize("bad", ["", "/no/such/repo-dir-xyz", None, 3])
+def test_check_blocks_when_repo_missing(bad, tmp_path):
+    """빈 문자열은 cwd의 파일을 읽어 거짓 통과를 낸다. 없는 경로도 결론이 아니다."""
+    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
+    v = compat.check(bad, plugin_json_path=plugin_json)
+    assert v["blocked"] is True
+    assert v["reason"] == "repo_not_found"
+    assert "claude plugin update" not in v["message"]
+
+
+def test_check_still_passes_on_real_repo_without_metadata(tmp_path):
+    """레포가 실제로 있고 표식만 없으면 통과다 — repo_not_found가 과하게 잡으면 안 된다."""
+    repo = repo_with_metadata(tmp_path, missing=True)
+    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
+    v = compat.check(repo, plugin_json_path=plugin_json)
+    assert v["blocked"] is False

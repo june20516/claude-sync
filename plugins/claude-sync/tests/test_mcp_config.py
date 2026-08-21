@@ -665,3 +665,30 @@ def test_object_without_version_still_accepted(tmp_path):
     path = tmp_path / "mcp-servers.json"
     path.write_text(json.dumps({"servers": {"a": {"command": "a"}}}), encoding="utf-8")
     assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
+
+
+@pytest.mark.parametrize("version", [3.0, 99.5])
+def test_float_version_claiming_newer_is_rejected(version, tmp_path):
+    """jq나 다른 언어의 writer가 만드는 형태다. int만 막으면 게이트가 무력화된다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps({"version": version, "servers": {"a": {"command": "a"}}}),
+                    encoding="utf-8")
+    with pytest.raises(mc.UnknownBackupSchema):
+        mc.load_backup(str(path))
+
+
+@pytest.mark.parametrize("version", ["3", True, None, [3]])
+def test_non_numeric_version_is_still_recognized(version, tmp_path):
+    """결정: 숫자가 아니면 버전 주장으로 보지 않는다. 손으로 고친 문서를 막지 않는다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps({"version": version, "servers": {"a": {"command": "a"}}}),
+                    encoding="utf-8")
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
+
+
+@pytest.mark.parametrize("version", [1, 2, 2.0, 0])
+def test_version_at_or_below_current_is_recognized(version, tmp_path):
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps({"version": version, "servers": {"a": {"command": "a"}}}),
+                    encoding="utf-8")
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
