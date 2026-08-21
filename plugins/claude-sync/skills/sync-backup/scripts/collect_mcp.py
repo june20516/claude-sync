@@ -59,7 +59,7 @@ def main():
         sys.exit(1)
     try:
         out = collect(sys.argv[1], sys.argv[2])
-    except (mc.LocalConfigUnavailable, OSError) as e:
+    except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema, OSError) as e:
         out = {"status": "skipped", "reason": str(e)}
         print("MCP 단계 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))

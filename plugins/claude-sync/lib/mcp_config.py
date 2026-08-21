@@ -16,12 +16,23 @@ SCHEMA_VERSION = 2
 BACKUP_RELPATH = "mcp-servers.json"
 DEFAULT_CLAUDE_JSON = os.path.expanduser("~/.claude.json")
 VALID_NAME = re.compile(r"^[A-Za-z0-9_-]+$")   # claude mcp add-json의 실측 제약
+_BROKEN = object()                             # JSON 구문 오류 센티널
 
 
 class LocalConfigUnavailable(Exception):
     """~/.claude.json을 읽지 못했다.
 
     "서버 0개"와 반드시 구별해야 한다. 이 예외가 발생하면 삭제 판정을 해서는 안 된다.
+    """
+
+
+class UnknownBackupSchema(Exception):
+    """레포의 백업 파일이 이 버전이 아는 형식이 아니다.
+
+    상위 버전이 쓴 문서일 수 있으므로 "서버 0개"로 읽어서는 안 된다. 그렇게 읽으면
+    merge가 레포를 빈 것으로 보고 이 기기의 로컬만 남긴 결과를 덮어써, 상위 버전의
+    백업을 파괴한다. 옛 버전이 v2 문서에 저지른 사고와 같은 형태다.
+    LocalConfigUnavailable이 로컬 쪽에서 하는 역할을 레포 쪽에서 한다(불변식 2).
     """
 
 
@@ -111,17 +122,44 @@ def _servers_from_obj(obj):
     return {}
 
 
-def parse_backup(data):
-    """JSON 바이트/문자열에서 servers 매핑을 읽는다.
+def _decode(data):
+    """JSON 디코드. 구문이 깨졌으면 _BROKEN.
 
-    v2 객체({"version":2, "servers":{...}})와 v1 배열([{name,url,type}, ...])을 모두 지원한다.
-    깨진 입력은 {}로 degrade한다 — 레포 파일이 깨졌다고 백업 전체를 막지 않는다.
+    None·false·0처럼 falsy한 유효 값과 "디코드 실패"를 구별해야 하므로 센티널을 쓴다.
     """
     try:
-        obj = json.loads(data)
+        return json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError):
+        return _BROKEN
+
+
+def _recognized_servers(obj):
+    """알아볼 수 있는 백업 문서면 servers 매핑, 아니면 None.
+
+    v1 배열과 servers가 dict인 v2 객체만 인정한다. 이 판정이 parse_base·parse_backup·
+    load_backup의 공통 기준이다 — 세 곳이 갈리면 "이력은 못 믿는데 레포는 믿는" 비대칭이
+    생기고, 그 비대칭이 상위 버전 백업을 파괴한다.
+    """
+    if isinstance(obj, list):
+        return _servers_from_obj(obj)
+    if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
+        return _servers_from_obj(obj)
+    return None
+
+
+def parse_backup(data):
+    """JSON 바이트/문자열에서 servers 매핑을 읽는다(관대한 해석).
+
+    v2 객체({"version":2, "servers":{...}})와 v1 배열([{name,url,type}, ...])을 모두 지원한다.
+    깨진 입력도 알아볼 수 없는 입력도 {}로 degrade한다.
+    **레포 파일을 읽을 때는 이 함수가 아니라 load_backup을 쓴다** — 알아볼 수 없는 문서를
+    "서버 0개"로 읽으면 그 파일을 덮어써 파괴하기 때문이다.
+    """
+    obj = _decode(data)
+    if obj is _BROKEN:
         return {}
-    return _servers_from_obj(obj)
+    servers = _recognized_servers(obj)
+    return {} if servers is None else servers
 
 
 def parse_base(data):
@@ -136,27 +174,35 @@ def parse_base(data):
     """
     if data is None:
         return None
-    try:
-        obj = json.loads(data)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    obj = _decode(data)
+    if obj is _BROKEN:
         return None
-    if isinstance(obj, list):
-        return _servers_from_obj(obj)
-    if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
-        return _servers_from_obj(obj)
-    return None
+    return _recognized_servers(obj)
 
 
 def load_backup(path):
-    """mcp-servers.json을 읽어 servers 매핑을 반환한다. 파일이 없으면 {}.
+    """레포의 mcp-servers.json을 안전하게 읽는다. 파일이 없으면 {}.
 
+    구문이 깨진 파일은 {}로 degrade한다 — 레포 파일 하나가 깨졌다고 백업 전체를 막지
+    않으며, 다음 백업이 그 파일을 정상 내용으로 되돌린다.
+    구문은 유효한데 형식을 알아볼 수 없으면 UnknownBackupSchema를 던진다. 상위 버전이
+    쓴 문서일 수 있고, 그것을 "서버 0개"로 읽으면 이 버전이 그 백업을 덮어써 파괴한다.
     (PermissionError 등 그 외 OSError는 전파한다.)
     """
     try:
         with open(path, "rb") as f:
-            return parse_backup(f.read())
+            raw = f.read()
     except FileNotFoundError:
         return {}
+    obj = _decode(raw)
+    if obj is _BROKEN:
+        return {}
+    servers = _recognized_servers(obj)
+    if servers is None:
+        raise UnknownBackupSchema(
+            "%s의 형식을 알아볼 수 없다 — 상위 버전이 쓴 백업일 수 있다" % path
+        )
+    return servers
 
 
 def dump_backup(servers, path):

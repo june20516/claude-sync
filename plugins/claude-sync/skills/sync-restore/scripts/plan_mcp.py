@@ -102,7 +102,7 @@ def main():
         sys.exit(1)
     try:
         out = runner()
-    except (mc.LocalConfigUnavailable, OSError, ValueError) as e:
+    except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema, OSError, ValueError) as e:
         out = {"status": "skipped", "reason": str(e)}
         print("MCP 단계 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))

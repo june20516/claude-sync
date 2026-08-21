@@ -363,3 +363,70 @@ def test_apply_base_cli_skips_on_broken_choices(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["status"] == "skipped"
+
+
+FUTURE_V3 = '{"version": 3, "scope": "user", "entries": {"x": {"command": "a"}}}'
+
+
+def write_repo_raw(tmp_path, text):
+    """레포에 임의 바이트의 mcp-servers.json을 둔다(미래 스키마 흉내)."""
+    repo = tmp_path / "repo"
+    repo.mkdir(exist_ok=True)
+    (repo / mc.BACKUP_RELPATH).write_text(text, encoding="utf-8")
+    return str(repo)
+
+
+def test_collect_refuses_to_overwrite_unknown_schema(tmp_path):
+    """미래 버전이 쓴 레포 파일을 이 버전이 비워 버리면 안 된다."""
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo_raw(tmp_path, FUTURE_V3)
+    staging = str(tmp_path / "staging")
+    with pytest.raises(mc.UnknownBackupSchema):
+        collect_mcp.collect(repo, staging, claude_json_path=local,
+                            base_dir=write_base_blob(tmp_path, {"mine": A}))
+    assert open(os.path.join(repo, mc.BACKUP_RELPATH), encoding="utf-8").read() == FUTURE_V3
+    assert not os.path.exists(os.path.join(staging, mc.BACKUP_RELPATH))
+
+
+def test_collect_cli_skips_on_unknown_schema(tmp_path):
+    """MCP 단계만 건너뛰고 종료 코드 0 — backup 흐름 전체를 실패시키지 않는다."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"mine": A}}), encoding="utf-8")
+    repo = write_repo_raw(tmp_path, FUTURE_V3)
+    script = os.path.join(SCRIPTS_DIR, "sync-backup", "scripts", "collect_mcp.py")
+    proc = subprocess.run(
+        [sys.executable, os.path.abspath(script), repo, str(tmp_path / "staging")],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "skipped"
+    assert open(os.path.join(repo, mc.BACKUP_RELPATH), encoding="utf-8").read() == FUTURE_V3
+
+
+def test_compare_refuses_unknown_schema(tmp_path):
+    """읽기 전용이지만 '레포에 아무것도 없다'는 오보를 내지 않는다."""
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo_raw(tmp_path, FUTURE_V3)
+    with pytest.raises(mc.UnknownBackupSchema):
+        compare_mcp.compare(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local)
+
+
+def test_plan_refuses_unknown_schema(tmp_path):
+    """복원 계획이 로컬 서버를 전부 local_only로 오보하지 않는다."""
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo_raw(tmp_path, FUTURE_V3)
+    with pytest.raises(mc.UnknownBackupSchema):
+        plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local,
+                            base_dir=write_base_blob(tmp_path, None))
+
+
+def test_apply_base_refuses_unknown_schema(tmp_path):
+    """모르는 레포를 근거로 base를 전진시키지 않는다."""
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo_raw(tmp_path, FUTURE_V3)
+    staging = str(tmp_path / "staging")
+    with pytest.raises(mc.UnknownBackupSchema):
+        plan_mcp.apply_base(os.path.join(repo, mc.BACKUP_RELPATH), staging, {},
+                            claude_json_path=local, base_dir=write_base_blob(tmp_path, None))
+    assert not os.path.exists(os.path.join(staging, mc.BACKUP_RELPATH))

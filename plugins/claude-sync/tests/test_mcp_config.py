@@ -600,3 +600,25 @@ def test_restore_plan_without_base_degrades_to_both_changed_and_local_only():
     assert plan["both_changed"] == ["x"]
     assert plan["local_only"] == ["solo"]
     assert plan["local_stale"] == []
+
+
+FUTURE_V3 = b'{"version": 3, "scope": "user", "entries": {"x": {"command": "a"}}}'
+
+
+def test_load_backup_raises_on_unrecognized_schema(tmp_path):
+    """미래 버전이 쓴 백업을 '서버 0개'로 읽으면 안 된다 — 읽는 쪽이 레포를 비운다.
+
+    parse_base는 이미 이 구별을 하는데(None), 레포 경로에는 적용되어 있지 않았다.
+    불변식 2를 base에만 적용하고 레포 파일에는 적용하지 않은 결함이다.
+    """
+    path = str(tmp_path / "mcp-servers.json")
+    open(path, "wb").write(FUTURE_V3)
+    with pytest.raises(mc.UnknownBackupSchema):
+        mc.load_backup(path)
+
+
+def test_load_backup_stays_lenient_on_broken_json(tmp_path):
+    """구문이 깨진 파일은 여전히 {}로 degrade한다 — 미지의 스키마와 구별한다."""
+    path = str(tmp_path / "mcp-servers.json")
+    open(path, "wb").write(b"{not json")
+    assert mc.load_backup(path) == {}

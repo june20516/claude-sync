@@ -147,7 +147,7 @@ python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json" > /tmp/cl
 cat /tmp/claude-sync-mcp-plan.json
 ```
 
-`status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원은 그대로 진행한다). `"ok"`면 버킷별로 처리한다.
+`status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원은 그대로 진행한다). `reason`이 "형식을 알아볼 수 없다"이면 레포가 **이 기기보다 상위 버전으로 백업된 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다. `"ok"`면 버킷별로 처리한다.
 
 | 버킷 | 처방 |
 |---|---|
