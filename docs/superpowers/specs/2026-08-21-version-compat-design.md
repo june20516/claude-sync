@@ -111,7 +111,9 @@ SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-backup/scripts" -type d 2>/dev/null 
 #  - plugins/cache 아래만 본다. plugins/marketplaces는 레포 클론이지 설치본이 아니다.
 #  - 여러 버전이 남아 있으므로 sort -V로 가장 높은 것을 고른다. head -1은 임의 선택이다.
 SYNC_ROOT=$(find ~/.claude/plugins/cache -path "*/claude-sync/*/.claude-plugin" -type d 2>/dev/null \
-  | sed 's|/\.claude-plugin$||' | sort -V | tail -1)
+  | sed 's|/\.claude-plugin$||' \
+  | grep -E '/[0-9]+\.[0-9]+\.[0-9]+$' \
+  | awk -F/ '{print $NF"\t"$0}' | sort -V | tail -1 | cut -f2-)
 SYNC_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"    # 스킬마다 이 부분만 다르다
 SYNC_LIB="$SYNC_ROOT/lib"
 
