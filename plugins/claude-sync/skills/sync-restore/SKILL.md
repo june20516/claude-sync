@@ -41,23 +41,34 @@ restore는 `git pull`처럼 동작한다. **리모트에 자동 push하지 않�
 
 ```bash
 # plugins/cache 아래만 본다 — plugins/marketplaces는 레포 클론이지 설치본이 아니다.
-# 여러 버전이 남아 있으므로 sort -V로 가장 높은 것을 고른다. head -1은 임의 선택이다.
+# semver 모양인 디렉토리만 본다 — 'unknown'이나 'latest'는 sort -V에서 릴리즈를 이긴다.
+#   (이 기기에 실제로 cache/claude-plugins-official/skill-creator/unknown 이 있다.)
+# 경로 전체가 아니라 버전 성분으로 정렬한다 — 그러지 않으면 마켓플레이스 이름이 정렬을
+#   지배해, 이름이 뒤인 마켓플레이스의 낮은 버전이 선택된다.
+# head -1은 임의 선택이므로 쓰지 않는다.
 SYNC_ROOT=$(find ~/.claude/plugins/cache -path "*/claude-sync/*/.claude-plugin" -type d 2>/dev/null \
-  | sed 's|/\.claude-plugin$||' | sort -V | tail -1)
+  | sed 's|/\.claude-plugin$||' \
+  | grep -E '/[0-9]+\.[0-9]+\.[0-9]+$' \
+  | awk -F/ '{print $NF"\t"$0}' | sort -V | tail -1 | cut -f2-)
 SYNC_SCRIPTS="$SYNC_ROOT/skills/sync-restore/scripts"
 SYNC_BACKUP_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"
 SYNC_LIB="$SYNC_ROOT/lib"
 
+# 못 찾았으면 비-0으로 끝낸다. echo만 하고 exit 0으로 끝나면 "판정 불가"가 "문제 없음"과
+# 같은 모양이 되고, 뒤 단계의 rm -rf + clone + push가 어느 버전인지도 모른 채 먼저 돈다.
+# exit이 아니라 false다 — 뒤 단계가 같은 셸 세션의 $SYNC_SCRIPTS를 쓰므로 세션을 끝내면 안 된다.
 if [ -z "$SYNC_ROOT" ]; then
-  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다." >&2
-fi
-
-echo "Plugin root: $SYNC_ROOT"
-python3 -c 'import json,sys
+  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다. 진행하지 마세요." >&2
+  false
+else
+  # 어느 버전을 쓰는지 눈에 보이게 한다. 불일치는 조용하면 안 된다.
+  echo "Plugin root: $SYNC_ROOT"
+  python3 -c 'import json,sys
 try:
     print("Version:", json.load(open(sys.argv[1])).get("version", "unknown"))
 except Exception as e:
     print("Version: 읽지 못함 (%s)" % e)' "$SYNC_ROOT/.claude-plugin/plugin.json"
+fi
 ```
 
 `SYNC_BACKUP_SCRIPTS`가 필요한 이유는 base 블롭을 기록하는 주체가 `sync-backup/scripts/update_base.py` **하나뿐**이기 때문이다(파일 쪽과 같은 규칙을 공유한다). 이제 두 경로 모두 같은 `SYNC_ROOT`에서 나오므로 서로 다른 버전이 섞일 수 없다.

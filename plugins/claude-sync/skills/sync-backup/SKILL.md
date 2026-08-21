@@ -67,25 +67,33 @@ skills/secret-tool/
 
 ```bash
 # plugins/cache 아래만 본다 — plugins/marketplaces는 레포 클론이지 설치본이 아니다.
-# 여러 버전이 남아 있으므로 sort -V로 가장 높은 것을 고른다. head -1은 임의 선택이다.
+# semver 모양인 디렉토리만 본다 — 'unknown'이나 'latest'는 sort -V에서 릴리즈를 이긴다.
+#   (이 기기에 실제로 cache/claude-plugins-official/skill-creator/unknown 이 있다.)
+# 경로 전체가 아니라 버전 성분으로 정렬한다 — 그러지 않으면 마켓플레이스 이름이 정렬을
+#   지배해, 이름이 뒤인 마켓플레이스의 낮은 버전이 선택된다.
+# head -1은 임의 선택이므로 쓰지 않는다.
 SYNC_ROOT=$(find ~/.claude/plugins/cache -path "*/claude-sync/*/.claude-plugin" -type d 2>/dev/null \
-  | sed 's|/\.claude-plugin$||' | sort -V | tail -1)
+  | sed 's|/\.claude-plugin$||' \
+  | grep -E '/[0-9]+\.[0-9]+\.[0-9]+$' \
+  | awk -F/ '{print $NF"\t"$0}' | sort -V | tail -1 | cut -f2-)
 SYNC_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"
 SYNC_LIB="$SYNC_ROOT/lib"
 
-# 빈 값 확인이 먼저다. 비어 있는데 아래 python3를 부르면 "/.claude-plugin/plugin.json"을
-# 열려다 트레이스백이 난다 — 원인이 "플러그인을 못 찾았다"임이 가려진다.
+# 못 찾았으면 비-0으로 끝낸다. echo만 하고 exit 0으로 끝나면 "판정 불가"가 "문제 없음"과
+# 같은 모양이 되고, 뒤 단계의 rm -rf + clone + push가 어느 버전인지도 모른 채 먼저 돈다.
+# exit이 아니라 false다 — 뒤 단계가 같은 셸 세션의 $SYNC_SCRIPTS를 쓰므로 세션을 끝내면 안 된다.
 if [ -z "$SYNC_ROOT" ]; then
-  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다." >&2
-fi
-
-# 어느 버전을 쓰는지 눈에 보이게 한다. 불일치는 조용하면 안 된다.
-echo "Plugin root: $SYNC_ROOT"
-python3 -c 'import json,sys
+  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다. 진행하지 마세요." >&2
+  false
+else
+  # 어느 버전을 쓰는지 눈에 보이게 한다. 불일치는 조용하면 안 된다.
+  echo "Plugin root: $SYNC_ROOT"
+  python3 -c 'import json,sys
 try:
     print("Version:", json.load(open(sys.argv[1])).get("version", "unknown"))
 except Exception as e:
     print("Version: 읽지 못함 (%s)" % e)' "$SYNC_ROOT/.claude-plugin/plugin.json"
+fi
 ```
 
 `SYNC_ROOT`가 비어 있으면 플러그인이 제대로 설치되지 않은 것이므로 **즉시 중단하고** 사용자에게 안내한다. 어떤 버전을 실행할지 모르는 채로 진행해서는 안 된다.
