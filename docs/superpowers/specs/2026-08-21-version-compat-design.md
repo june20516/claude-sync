@@ -406,6 +406,14 @@ python3 "$SYNC_LIB/compat.py" <레포 경로>
 
 - `plugin.json` 경로는 스크립트 위치에서 유도한다(`lib/../.claude-plugin/plugin.json`).
 - 읽기 전용이다. 어떤 파일도 쓰지 않는다.
+- **레포 디렉토리가 없으면 `blocked: true`, `reason: "repo_not_found"`다.** "표식 없음"으로
+  접으면 안 된다 — 표식 없음은 "2.x가 썼다"는 *결론*이고, 레포가 없는 것은 결론이 아니라
+  호출자의 입력 오류다. 특히 빈 문자열은 `os.path.join("", ...)`이 상대 경로가 되어
+  **현재 디렉토리의 파일을 읽고 통과 판정을 낸다.**
+- **`main()`은 마지막 방어선으로 모든 예외를 잡아 `blocked: true`, `reason: "check_failed"`로
+  떨어뜨린다.** 형제 스크립트(`collect_mcp.py` 등)의 `status: "skipped"`를 베끼면 안 된다 —
+  거기서 skipped는 "이 단계만 건너뛰고 진행"이지만 호환성 검사에서 그것은 "가드 없이 백업 진행"이다.
+  **compat은 fail-closed다.**
 - **다운그레이드 판정은 여기서 하지 않는다.** git이 필요하므로 `detect_downgrade.py`의 몫이다
   (9장). `compat.py`는 순수 판정 함수 `shape_of`·`downgrade_suspected`를 **제공만** 하고,
   그것을 부르는 것은 스크립트다. 두 진입점이 같은 플래그를 각자 계산하면 드리프트한다.
@@ -435,11 +443,25 @@ def _recognized_servers(obj):
         return _servers_from_obj(obj)            # v1 배열에는 version 개념이 없다
     if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
         version = obj.get("version")
-        if isinstance(version, int) and version > SCHEMA_VERSION:
+        if _claims_newer_schema(version):
             return None                          # 상위 스키마 — 알아보지 못한 것으로 취급
         return _servers_from_obj(obj)
     return None
+
+
+def _claims_newer_schema(version):
+    """version이 SCHEMA_VERSION보다 높다고 주장하는가."""
+    if isinstance(version, bool):
+        return False                             # True는 int의 인스턴스다. 버전 주장이 아니다
+    return isinstance(version, (int, float)) and version > SCHEMA_VERSION
 ```
+
+**float까지 막는다.** `{"version": 3.0}`은 파이썬이 아닌 도구(jq, YAML 변환기, 다른 언어의
+v3 writer)가 실제로 만드는 형태다. int만 막고 float를 통과시키는 것은 설계된 구분이 아니라
+`isinstance` 선택의 우연이며, **게이트의 존재 이유 자체를 무력화하는 경로**다.
+
+문자열(`"3"`)은 통과시킨다 — 손으로 고친 문서를 막지 않기 위해서다. 이 결정은
+테스트로 고정한다(12.4).
 
 **`parse_base`·`parse_backup`·`load_backup`이 모두 이 함수를 통하므로 세 곳이 자동으로
 같은 기준을 갖는다.** 한 곳에만 넣으면 "이력은 못 믿는데 레포는 믿는" 비대칭이 생기고,
@@ -573,6 +595,8 @@ SKILL.md는 다음을 보여주고 사용자에게 고르게 한다.
 | `sync-metadata.json`을 **열지 못함** (권한·IO) | **차단** | 내용이 아니라 환경의 문제라 다음 백업이 고쳐주지 않는다. 못 읽음을 없음으로 접으면 fail-open이다 |
 | `min_reader_version` 있는데 파싱 불가 | **차단** | 모르면 안 쓴다 |
 | `plugin.json` 없음/깨짐 | 내 버전 미상 → 레포가 요구하면 차단, 아니면 통과 | 증명할 것이 없으면 막지 않는다 |
+| 레포 디렉토리가 없음 / 경로가 빈 문자열 | **차단** (`repo_not_found`) | 빈 문자열은 cwd의 파일을 읽어 거짓 통과를 낸다 |
+| `check()`가 예상 못 한 예외 | **차단** (`check_failed`) | 마지막 방어선. skipped로 떨어뜨리면 가드 없이 백업이 진행된다 |
 | `SYNC_ROOT` 못 찾음 | 즉시 중단 + 안내 | 어떤 버전을 실행할지 모르는 상태로 진행하면 안 된다 |
 | base 읽기 실패 | 다운그레이드 판정 안 함 | 불변식 2 |
 | `detect_downgrade.py`의 git 실패 | `skipped` + 백업 계속 | 탐지는 부가 기능이다 |
