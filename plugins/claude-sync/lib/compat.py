@@ -41,3 +41,47 @@ def parse_version(text):
     if m is None:
         return None
     return tuple(int(g) for g in m.groups())
+
+
+def default_plugin_json_path():
+    """이 모듈 위치에서 유도한 plugin.json 경로 (lib/../.claude-plugin/plugin.json)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(here, "..", ".claude-plugin", "plugin.json")
+
+
+def _load_json(path):
+    """JSON 파일을 읽는다. 못 읽거나 깨졌으면 None.
+
+    metadata도 plugin.json도 "없음"과 "깨짐"의 처리가 같으므로 한 함수로 둔다.
+    PermissionError 등 다른 OSError도 None으로 degrade한다 — 판정을 못 한다고
+    백업을 막으면, 그 파일을 고치는 다음 백업까지 막혀 데드락이 된다.
+    """
+    try:
+        with open(path, "rb") as f:
+            return json.loads(f.read())
+    except (OSError, ValueError):
+        return None
+
+
+def read_plugin_version(plugin_json_path):
+    """plugin.json의 version 문자열. 읽지 못하면 None(예외 아님).
+
+    '자기 버전을 모른다'는 정상적으로 표현 가능한 상태여야 한다. 예외로 만들면
+    호출부마다 try가 생기고 그 처리가 갈린다.
+    """
+    obj = _load_json(plugin_json_path)
+    if not isinstance(obj, dict):
+        return None
+    version = obj.get("version")
+    return version if isinstance(version, str) else None
+
+
+def load_metadata(path):
+    """sync-metadata.json을 읽는다. 없거나 깨졌거나 dict가 아니면 None.
+
+    깨진 metadata를 차단 근거로 삼으면 데드락이 된다 — 그 파일을 정상으로 되돌리는 것이
+    다음 백업인데 그 백업이 막힌다. load_backup이 깨진 파일을 {}로 degrade하는 것과 같은
+    이유다("레포 파일 하나가 깨졌다고 백업 전체를 막지 않는다").
+    """
+    obj = _load_json(path)
+    return obj if isinstance(obj, dict) else None
