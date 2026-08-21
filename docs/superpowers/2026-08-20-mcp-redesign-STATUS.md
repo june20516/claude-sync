@@ -3,7 +3,8 @@
 - 갱신: 2026-08-20
 - 브랜치: `fix/mcp-config-source` (푸시 안 됨, 로컬 전용)
 - 기준 커밋: `c99d5a4` (작업 시작 직전)
-- **상태: plan의 13개 task 전부 완료. 남은 것은 사용자 승인이 필요한 배포뿐이다(7장).**
+- **상태: plan의 13개 task 전부 완료 + 스키마 가드 추가. `release/3.0.0`에 머지됨.**
+- **배포는 버전 호환성 작업과 함께 한다 — `2026-08-21-release-3.0.0-PLAN.md` 참조.**
 
 이 문서만 읽으면 새 세션에서 이어받을 수 있도록 쓴다.
 
@@ -29,6 +30,7 @@ backup·status·restore가 `lib/mcp_config.py` 단일 모듈만 통해 MCP를 �
 | `~/.claude/suberpowers/reviews/2026-08-20-claude-sync-*.md` | 리뷰·감사 보고서 (14일 후 자동 삭제) |
 | `docs/superpowers/2026-08-20-plugins-sync-followup-BRIEF.md` | **후속 과제.** `plugins.json`의 동일 결함 — 실측·설계 기준·유의사항 |
 | `docs/superpowers/2026-08-21-version-compat-BRIEF.md` | **후속 과제.** 버전 표식·차단·복구, 명령어 3종별 반영 사항 |
+| `docs/superpowers/2026-08-21-release-3.0.0-PLAN.md` | **3.0.0 릴리즈 전체 계획.** 무엇이 실리고 어떤 순서로 배포하는지 |
 
 ## 3. 완료된 것
 
@@ -63,12 +65,14 @@ uv run --with pytest pytest plugins/claude-sync/tests -q   # 159 passed
 
 ## 4. 남은 것
 
-**코드 작업은 없다.** 남은 것은 배포이며 **사용자 승인이 필요하다**(spec 14장):
+**이 작업(MCP 재설계)의 코드는 끝났다.** 3.0.0 릴리즈에는 **버전 호환성 대처**가 함께
+실려야 완결되며, 그 작업은 별도 세션에서 진행한다.
 
-1. `origin`에 푸시 (외부 동작 — 승인 없이 실행하지 않는다)
-2. `claude plugin marketplace update claude-sync`
-3. `claude plugin update claude-sync`
-4. 캐시 디렉토리가 3.0.0 신코드로 교체됐는지 확인
+- 릴리즈 전체 계획: `2026-08-21-release-3.0.0-PLAN.md`
+- 남은 작업의 착수 문서: `2026-08-21-version-compat-BRIEF.md`
+
+`main`에는 아직 아무것도 머지하지 않았다. 두 작업이 `release/3.0.0`에 모인 뒤
+한꺼번에 배포한다. **배포는 외부 동작이므로 사용자 승인을 받고 실행한다.**
 
 ## 5. 설계에서 반드시 알아야 할 것
 
@@ -117,7 +121,8 @@ uv run --with pytest pytest plugins/claude-sync/tests -q   # 159 passed
 
 ```bash
 cd /Users/bran/personal/claude-sync
-git checkout fix/mcp-config-source
+git checkout release/3.0.0
 uv run --with pytest pytest plugins/claude-sync/tests -q   # 159 passed 확인
 ```
-구현은 끝났다. 이어받을 것은 4장의 배포 절차뿐이며, 푸시는 사용자 승인을 받고 실행한다.
+MCP 재설계 구현은 끝났다. 이어받을 것은 버전 호환성 작업이며, 착수 방법은
+`2026-08-21-release-3.0.0-PLAN.md` 3장에 있다.

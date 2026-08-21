@@ -2,8 +2,14 @@
 
 - 작성: 2026-08-21
 - 상태: **착수 전.** 조사·결정이 선행되어야 한다.
-- 선행: `fix/mcp-config-source` (PR #2). 그 안에서 **"모르면 안 쓴다" 가드는 이미 구현**되었다.
+- **작업 브랜치: `release/3.0.0`에서 분기하고, PR도 `release/3.0.0`을 target으로 연다.**
+- 선행: `fix/mcp-config-source` (PR #2, `release/3.0.0`에 머지됨). 그 안에서
+  **"모르면 안 쓴다" 가드는 이미 구현**되었다.
 - 관련: `2026-08-20-plugins-sync-followup-BRIEF.md` (같은 결함의 다른 사례)
+
+> **이 작업은 3.0.0 릴리즈에 함께 실린다.** `main`에는 아직 아무것도 머지되지 않았고,
+> MCP 재설계와 이 작업이 모두 `release/3.0.0`에 모인 뒤에 한꺼번에 배포한다.
+> 자세한 절차는 `2026-08-21-release-3.0.0-PLAN.md`를 볼 것.
 
 ---
 
@@ -86,7 +92,7 @@
 ```jsonc
 {
   "files": { ... },
-  "written_by_version": "3.1.0",
+  "written_by_version": "3.0.0",
   "schema": { "mcp-servers.json": 2, "plugins.json": 1 },
   "min_reader_version": "3.0.0"
 }
@@ -134,7 +140,7 @@ done
 | 6.5 (신설) | 다운그레이드 탐지: 레포는 v1인데 base는 v2 → 경고 + 복구 제안. 백업을 계속할지 물어본다 |
 | 7. `sync-metadata.json` 생성 | `written_by_version`·`schema`·`min_reader_version` 기록 (a) |
 | 10. 커밋 & 푸시 | 변경 없음. 단 (c)에서 사용자가 복구를 택했다면 그 결과가 커밋에 포함된다 |
-| 12. 결과 보고 | "이 백업은 v3.1.0으로 기록되었습니다. 다른 기기가 이보다 낮으면 backup이 차단됩니다"를 처음 한 번 알린다 |
+| 12. 결과 보고 | "이 백업은 v3.0.0으로 기록되었습니다. 다른 기기가 이보다 낮으면 backup이 차단됩니다"를 처음 한 번 알린다 |
 
 **주의: 차단은 backup에만 건다.** pull_only 가드가 이미 1단계에서 같은 형태로 중단하므로 그 패턴을 따른다.
 
@@ -144,7 +150,7 @@ done
 |---|---|
 | 1. 레포 준비 직후 | `min_reader_version` 확인. 앞서면 **맨 위에 크게 경고**하되 분석은 계속한다. 읽기 전용이라 위험이 없고, 사용자가 "무엇이 문제인지" 보러 오는 명령이기 때문이다 |
 | 2. MCP 비교 | `skipped` + 스키마 사유 안내 — **이미 반영됨** |
-| 3. 결과 요약 | 버전 불일치를 **첫 줄에** 넣는다. "이 기기 3.0.0 / 백업 3.1.0 — `/sync-backup`이 차단됩니다" |
+| 3. 결과 요약 | 버전 불일치를 **첫 줄에** 넣는다. "이 기기 3.0.0 / 백업 3.1.0 — `/sync-backup`이 차단됩니다" (다음 major 이후의 예) |
 
 status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 가장 먼저 실행할 명령이 status다. 그것마저 막으면 진단 수단이 사라진다.
 
@@ -197,9 +203,14 @@ status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 
 
 ```bash
 cd /Users/bran/personal/claude-sync
-git checkout fix/mcp-config-source          # 또는 머지 후 main
+git fetch origin
+git checkout release/3.0.0 && git pull
+git checkout -b feat/version-compat          # 여기서 작업한다
 uv run --with pytest pytest plugins/claude-sync/tests -q   # 166 passed 확인
 ```
+
+**버전은 올리지 않는다.** `plugin.json`·`marketplace.json`은 이미 `3.0.0`이고 이 작업도
+같은 릴리즈에 실린다. 끝나면 `release/3.0.0`을 target으로 PR을 연다.
 
 읽을 순서: 이 문서 → `2026-08-20-mcp-redesign-STATUS.md` 5장(불변식) → `lib/mcp_config.py`의 `UnknownBackupSchema`·`_recognized_servers`(이미 구현된 가드).
 
