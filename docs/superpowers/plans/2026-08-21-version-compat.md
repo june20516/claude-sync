@@ -2211,6 +2211,7 @@ git commit -m "feat(restore): 호환성 경고 후 질문 — 막지 않는 것�
 """
 import json
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
@@ -2222,6 +2223,8 @@ import compat  # noqa: E402
 import mcp_config as mc  # noqa: E402
 import collect_mcp  # noqa: E402
 import generate_metadata as gm  # noqa: E402
+
+COMPAT_CLI = os.path.join(os.path.dirname(__file__), "..", "lib", "compat.py")
 
 
 def fake_claude_dir(tmp_path):
@@ -2301,6 +2304,29 @@ def test_block_then_unblock_leaves_no_state(tmp_path):
 
     meta_path.write_text(json.dumps({"min_reader_version": "4.0.0"}), encoding="utf-8")
     assert compat.check(str(repo), plugin_json_path=pj)["blocked"] is True
+
+
+def test_cli_usage_error_is_clean(tmp_path):
+    """가짜 안전망 방지 — sys.exit(1)이 없어도 IndexError가 exit 1을 대신 만든다.
+
+    종료 코드만 보면 변이를 못 잡는다. 트레이스백이 없고 stdout이 비어 있어야
+    "의도된 사용법 오류"이며, 인자를 두 개 준 경우도 함께 본다(그 경로는 변이 시 exit 0이 된다).
+    """
+    for argv in ([], [str(tmp_path), "extra"]):
+        proc = subprocess.run([sys.executable, COMPAT_CLI] + argv,
+                              capture_output=True, text=True)
+        assert proc.returncode == 1, argv
+        assert "사용:" in proc.stderr
+        assert "Traceback" not in proc.stderr, argv
+        assert proc.stdout == "", argv
+
+
+def test_gate_keeps_boolean_version_readable(tmp_path):
+    """{"version": true}가 통과함을 고정한다 — bool 제외가 의도임을 문서화한다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps({"version": True, "servers": {"a": {"command": "a"}}}),
+                    encoding="utf-8")
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
 
 
 def test_check_is_idempotent(tmp_path):
