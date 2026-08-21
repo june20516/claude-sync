@@ -73,6 +73,28 @@ else
 fi
 ```
 
+### 1.5 호환성 검사 (경고만)
+
+```bash
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
+python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
+```
+
+**검사가 성립하지 않았으면**(비-0 종료, JSON 아님, `blocked` 키 없음) 그 사실을 맨 위에 알린다 — "호환성을 확인하지 못했습니다"이지 "문제 없습니다"가 아니다. 그래도 **분석은 계속한다.**
+
+`blocked`가 `true`면 **분석 결과 맨 위에 크게 경고한다.** `message`를 그대로 보여주고 다음을 덧붙인다:
+
+> "이 상태에서는 `/sync-backup`이 차단됩니다. 아래 분석은 계속 진행합니다."
+
+**이 명령은 아무것도 막지 않는다.** 버전이 안 맞을 때 사용자가 가장 먼저 실행할 명령이 status이고, 그것마저 막으면 진단 수단이 사라진다. 읽기 전용이라 위험도 없다.
+
+`downgrade_suspected`가 `true`면 함께 알린다:
+
+> "백업 레포의 MCP 파일이 옛 형식으로 되돌아가 있습니다 — 낮은 버전 기기가 덮어쓴 것으로 보입니다. `/sync-backup`을 실행하면 복구 후보를 제시합니다."
+
+`candidate`가 있으면 그 커밋의 날짜와 서버 수도 함께 보여준다. status는 복구하지 않는다.
+
 ### 2. 메타데이터 기반 상태 분석
 
 `sync-metadata.json`이 있으면 이를 활용해 정밀하게 분석하고, 없으면 단순 diff로 비교한다.
@@ -94,6 +116,8 @@ fi
 출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나 레포 파일의 형식을 알아볼 수 없는 것이다. `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인해 레포의 서버를 전부 `only_repo`로 보고하지 않기 위해서다. `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin update claude-sync`를 안내한다. 세 목록이 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
 
 ### 3. 결과 요약
+
+**버전 불일치가 있으면 요약의 첫 줄에 넣는다.** 예: "이 기기 3.0.0 / 백업 3.1.0 — `/sync-backup`이 차단됩니다."
 
 상태 분류 (내용 해시 3-way, mtime 미사용):
 - **in_sync**: 로컬과 레포 내용 동일

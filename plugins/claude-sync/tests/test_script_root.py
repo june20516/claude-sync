@@ -146,3 +146,15 @@ def test_backup_branches_on_reason_not_blocked():
     text = read_skill("sync-backup")
     assert "metadata_unreadable" in text
     assert "reason" in text
+
+
+def test_status_warns_but_never_blocks():
+    text = read_skill("sync-status")
+    assert "compat.py" in text
+    assert "detect_downgrade.py" in text
+    assert "막지 않는다" in text
+
+
+def test_status_puts_version_mismatch_first():
+    text = read_skill("sync-status")
+    assert "첫 줄" in text
