@@ -220,21 +220,166 @@ def section(skill, heading):
     return text[i:m.start() if m else len(text)]
 
 
-def test_backup_compat_section_sits_right_after_repo_fetch():
-    """레포를 가져온 직후, 아무것도 쓰기 전이어야 한다. 앞뒤를 둘 다 건다."""
-    text = read_skill("sync-backup")
-    assert (text.index("### 2. 레포 준비")
-            < text.index("### 2.5 호환성 검사")
-            < text.index("### 3. Git User 설정"))
+# 세 스킬이 호환성 검사를 부르는 유일한 형태. **셋이 같은 문자열을 쓰는 것 자체가 계약이다** —
+# 스킬마다 제 나름의 호출을 만들면 경로·인자가 갈리고, 그것이 이 프로젝트가 없애려고 만든
+# 드리프트다. 산문이 아니라 실행줄이라야 앵커가 된다(불변식 7).
+COMPAT_CALL = 'python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"'
+
+# 스킬별 배선. 세 스킬의 계약이 서로 다르므로(막는 대상도, 앞뒤 경계도) 표로 몬다.
+# 한 스킬씩 손으로 쓰면 새 스킬이나 새 단계가 생겼을 때 한 곳만 고치고 만다.
+#
+# after_section  : 검사 절이 이 절보다 뒤에 있어야 한다 — 레포를 가져오기 전에는 판정할 것이 없다
+# before_section : 검사 절이 이 절보다 앞에 있어야 한다 — 절이 뒤로 밀리는 것을 막는다
+# before_calls   : 검사 호출이 이 실행줄들보다 앞에 있어야 한다. 검사가 막아야 할 것들이다
+COMPAT_WIRING = {
+    "sync-backup": {
+        "section": "2.5 호환성 검사",
+        "after_section": "### 2. 레포 준비",
+        "before_section": "### 3. Git User 설정",
+        "before_calls": (
+            'python3 $SYNC_SCRIPTS/reconcile_backup.py "$SYNC_REPO"',
+            "python3 $SYNC_SCRIPTS/extract_plugins.py plugins.json",
+            'python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"',
+            'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$MCP_STAGING"',
+            'python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"',
+        ),
+    },
+    "sync-status": {
+        "section": "1.5 호환성 검사",
+        "after_section": "### 1. 설정 확인 및 레포 준비",
+        "before_section": "### 2. 메타데이터 기반 상태 분석",
+        "before_calls": (
+            'python3 $SYNC_SCRIPTS/check_status.py "$SYNC_REPO"',
+            'python3 "$SYNC_SCRIPTS/compare_mcp.py" "$SYNC_REPO/mcp-servers.json"',
+        ),
+    },
+    "sync-restore": {
+        "section": "2.5 호환성 검사",
+        "after_section": "### 2. 레포에서 최신 상태 가져오기",
+        "before_section": "### 3. 파일별 reconcile",
+        "before_calls": (
+            'python3 "$SYNC_SCRIPTS/reconcile_restore.py" "$SYNC_REPO" --apply',
+            'python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json"',
+            'python3 "$SYNC_BACKUP_SCRIPTS/update_base.py" "$MCP_STAGING" mcp-servers.json',
+        ),
+    },
+}
 
 
-def test_backup_runs_compat_before_any_repo_write():
-    """앵커를 산문이 아니라 실행 줄로 잡는다 — 0단계 산문의 'compat.py'가 아니다."""
-    text = read_skill("sync-backup")
-    call = text.index('compat.py" "$SYNC_REPO"')
-    for later in ("### 4. 파일별 reconcile", "extract_plugins.py",
-                  "collect_mcp.py", "generate_metadata.py"):
-        assert call < text.index(later), later
+def index_of(text, needle, skill):
+    """needle의 위치. 없으면 무엇을 못 찾았는지 말하고 실패한다.
+
+    text.index를 그대로 쓰면 ValueError가 나서 "어느 앵커가 낡았는지"가 안 보인다.
+    """
+    assert needle in text, "%s: 실행줄을 찾지 못했다 — 앵커가 낡았다: %r" % (skill, needle)
+    return text.index(needle)
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_skill_actually_runs_the_compatibility_check(skill):
+    """세 스킬 모두 compat.py를 **실제로 실행**한다.
+
+    절의 산문만 검사하면 절이 남은 채 호출줄만 사라져도 통과한다 — 실측으로, status와
+    restore에서 이 한 줄을 지웠을 때 367개가 전부 통과했다. backup만 실행줄 앵커가
+    있었고 나머지 둘은 "분석은 계속한다" 같은 문장만 보고 있었다(불변식 7).
+
+    호출이 지정된 절 **안에** 있어야 한다. 파일 어딘가에 있기만 하면 되는 검사는
+    호출이 엉뚱한 단계로 옮겨져도 통과한다.
+    """
+    text = read_skill(skill)
+    count = text.count(COMPAT_CALL)
+    assert count == 1, (
+        "%s: 호환성 검사 호출이 %d번이다. 정확히 한 번이어야 한다 — %r"
+        % (skill, count, COMPAT_CALL)
+    )
+    heading = COMPAT_WIRING[skill]["section"]
+    assert COMPAT_CALL in section(skill, heading), (
+        "%s: 호출이 '%s' 절 밖에 있다" % (skill, heading)
+    )
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_compatibility_check_sits_between_its_boundaries(skill):
+    """검사 절이 레포 준비 뒤, 그 결과를 쓰는 첫 단계 앞이어야 한다.
+
+    앞뒤를 **둘 다** 건다. 한쪽만 걸면 절이 엉뚱한 위치에 있어도 통과한다.
+    """
+    text = read_skill(skill)
+    w = COMPAT_WIRING[skill]
+    here = index_of(text, "### " + w["section"], skill)
+    assert index_of(text, w["after_section"], skill) < here, (
+        "%s: 검사 절이 '%s'보다 앞이다 — 레포를 가져오기 전에는 판정할 것이 없다"
+        % (skill, w["after_section"])
+    )
+    assert here < index_of(text, w["before_section"], skill), (
+        "%s: 검사 절이 '%s'보다 뒤로 밀렸다" % (skill, w["before_section"])
+    )
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_compatibility_check_precedes_everything_it_gates(skill):
+    """검사 호출이, 검사가 막아야 할 모든 실행줄보다 앞이어야 한다.
+
+    늦게 하면 이미 레포를 건드린 뒤다. backup은 레포를 되쓰고, restore는 모르는
+    스키마의 항목을 건너뛴 부분 복원을 이미 진행한 뒤가 된다.
+    """
+    text = read_skill(skill)
+    call = index_of(text, COMPAT_CALL, skill)
+    for later in COMPAT_WIRING[skill]["before_calls"]:
+        assert call < index_of(text, later, skill), (
+            "%s: 호환성 검사가 %r보다 뒤에 있다" % (skill, later)
+        )
+
+
+# 다운그레이드 탐지는 backup(쓰기 경로)과 status(읽기 경로)가 같이 쓴다(spec 9.2).
+# 부르는 경로가 스킬마다 다르므로($SYNC_SCRIPTS vs $SYNC_BACKUP_SCRIPTS) 공통 조각만 앵커로 쓴다.
+# restore는 명세에 없어 여기서 단언하지 않는다 — 안 하기로 정한 것과 명세가 없는 것은 다르다.
+DOWNGRADE_CALL = 'detect_downgrade.py" "$SYNC_REPO"'
+DOWNGRADE_CALLERS = ["sync-backup", "sync-status"]
+
+
+@pytest.mark.parametrize("skill", DOWNGRADE_CALLERS)
+def test_downgrade_detection_is_actually_called(skill):
+    """탐지 호출도 실행줄로 건다.
+
+    실측으로, status에서 이 줄과 $SYNC_BACKUP_SCRIPTS 정의를 지웠을 때 367개가 전부
+    통과했다. 절의 산문("확인하지 못했다", newer_schema_seen)은 그대로 남기 때문이다.
+    """
+    count = read_skill(skill).count(DOWNGRADE_CALL)
+    assert count == 1, (
+        "%s: 다운그레이드 탐지 호출이 %d번이다 — %r" % (skill, count, DOWNGRADE_CALL)
+    )
+
+
+@pytest.mark.parametrize("skill", ["sync-status", "sync-restore"])
+def test_cross_skill_scripts_come_from_the_same_root(skill):
+    """다른 스킬의 스크립트를 부를 때도 0단계의 SYNC_ROOT에서 유도해야 한다.
+
+    별도 find로 찾으면 한 세션 안에서 서로 다른 버전의 스크립트가 섞인다 — 이 작업이
+    없애려던 바로 그 결함이다(spec 1.2). status는 detect_downgrade.py를, restore는
+    update_base.py를 sync-backup에서 가져온다.
+    """
+    sec = section(skill, "0. 플러그인 루트 확인")
+    assert 'SYNC_BACKUP_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"' in sec
+
+
+def test_every_skill_on_disk_is_covered_by_the_contract():
+    """디스크에 있는 스킬이 계약을 조용히 빠져나가지 못하게 한다.
+
+    SKILLS와 COMPAT_WIRING이 둘 다 손으로 쓴 목록이다. 넷째 스킬이 생겼는데 여기에
+    안 적으면 위 검사들이 그 스킬을 아예 보지 않는다 — 통과하지만 아무것도 안 지킨다.
+    새 스킬을 더할 때는 계약을 어떻게 할지 정하고 두 곳에 적어라.
+    """
+    on_disk = {
+        d for d in os.listdir(SKILLS_DIR)
+        if os.path.isfile(os.path.join(SKILLS_DIR, d, "SKILL.md"))
+    }
+    assert on_disk == set(SKILLS), "SKILLS가 디스크와 다르다: %s" % sorted(
+        on_disk.symmetric_difference(SKILLS)
+    )
+    assert set(COMPAT_WIRING) == set(SKILLS), "COMPAT_WIRING이 SKILLS와 다르다: %s" % sorted(
+        set(COMPAT_WIRING).symmetric_difference(SKILLS)
+    )
 
 
 def test_backup_blocked_stops_the_run():
