@@ -1864,9 +1864,18 @@ SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 ```
 
-출력 JSON의 `blocked`가 `true`면 **여기서 중단한다.** 파일 복사(4단계)도 `plugins.json`(5단계)도 MCP 수집(6단계)도 하지 않는다. `message` 필드를 그대로 보여주고 다음 한 문장을 덧붙인다:
+출력 JSON의 `blocked`가 `true`면 **여기서 중단한다.** 파일 복사(4단계)도 `plugins.json`(5단계)도 MCP 수집(6단계)도 하지 않는다.
 
-> "이 기기의 claude-sync가 백업 레포보다 낮아 백업을 중단했습니다. 위 명령으로 업데이트한 뒤 다시 실행하세요."
+**`message` 필드를 그대로 보여준다. 명령을 직접 타자하지 않는다** — 안내 문구는 `compat.py`가 만드는 것이 계약이고, SKILL.md가 따로 쓰면 드리프트한다.
+
+덧붙이는 한 문장은 **`blocked`가 아니라 `reason`으로 분기한다.** `blocked`는 "차단"이라는 뜻일 뿐 "업그레이드하면 풀린다"는 뜻이 아니다.
+
+| `reason` | 덧붙일 문장 |
+|---|---|
+| `older_than_min_reader` / `my_version_unknown` / `min_reader_unparsable` | "백업을 중단했습니다. 위 명령으로 업데이트한 뒤 다시 실행하세요." |
+| `metadata_unreadable` | "백업을 중단했습니다. 표식을 읽을 수 없어 이 레포를 안전하게 다룰 수 있는지 판단할 수 없기 때문입니다." |
+
+`metadata_unreadable`에 "업데이트하세요"를 붙이면 **틀린 해법**이다. 그 갈래의 `message`에는 업그레이드 명령이 의도적으로 빠져 있으므로 "위 명령"이 가리킬 것도 없다.
 
 `pull_only` 가드가 1단계에서 하는 것과 같은 형태다. **차단은 이 명령에만 건다** — status를 막으면 진단 수단이 사라지고 restore를 막으면 업데이트 안내를 받을 경로가 사라진다.
 
@@ -2412,6 +2421,14 @@ gh pr create --base release/3.0.0 --head feat/version-compat \
 
 ## 완료 정의
 
+- [ ] **업그레이드 명령이 SKILL.md에 하드코딩되어 남아 있지 않다.** 착수 시점의 실측 분포는
+  `lib/compat.py`의 `_UPGRADE_COMMANDS` 1곳 + `sync-backup/SKILL.md:205` + `sync-restore/SKILL.md:150`
+  + `sync-status/SKILL.md:65` + `README.md`·`README.ko.md` 각 1곳이다.
+  - compat 갈래(Task 10·11·12): 세 SKILL.md가 명령을 타자하지 않고 `compat.py`의 `message`를 그대로 옮긴다
+  - MCP 갈래: `compare_mcp.py`·`collect_mcp.py`가 `UnknownBackupSchema`를 잡을 때 payload에 안내 문구를
+    함께 실어 SKILL.md가 옮기기만 하게 한다. 이때 `_UPGRADE_COMMANDS`를 public으로 여는 것이 정당해진다
+  - **`sync-status/SKILL.md:65`는 지금 `claude plugin update claude-sync` 한 줄뿐이라 브리프가 못박은
+    "명령은 항상 두 줄"을 이미 어기고 있다.** 위 둘 중 하나를 하면 자동으로 해결된다
 - [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q`가 전부 통과하고, **기준선 166개가 하나도 깨지지 않았다** (신규 100개 이상 추가)
 - [ ] `plugin.json`·`marketplace.json`이 여전히 `3.0.0`
 - [ ] `test_min_reader_major_matches_plugin_json`이 통과한다 (semver 불변식)
