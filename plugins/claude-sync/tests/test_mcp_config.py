@@ -622,3 +622,46 @@ def test_load_backup_stays_lenient_on_broken_json(tmp_path):
     path = str(tmp_path / "mcp-servers.json")
     open(path, "wb").write(b"{not json")
     assert mc.load_backup(path) == {}
+
+
+# --- 상위 스키마 게이트 (spec 7장) ---
+
+def _v3_doc():
+    """형태는 v2와 같지만 version이 3인 문서. 형태만 보면 알아보게 된다."""
+    return json.dumps({"version": 3, "scope": "user", "servers": {"a": {"command": "a"}}})
+
+
+def test_load_backup_rejects_higher_schema_version(tmp_path):
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(_v3_doc(), encoding="utf-8")
+    with pytest.raises(mc.UnknownBackupSchema):
+        mc.load_backup(str(path))
+
+
+def test_parse_base_rejects_higher_schema_version():
+    """레포와 base가 같은 기준을 써야 한다 — 비대칭이 상위 버전 백업을 파괴한다."""
+    assert mc.parse_base(_v3_doc().encode("utf-8")) is None
+
+
+def test_parse_backup_degrades_higher_schema_version():
+    assert mc.parse_backup(_v3_doc()) == {}
+
+
+def test_current_schema_version_still_accepted(tmp_path):
+    path = tmp_path / "mcp-servers.json"
+    mc.dump_backup({"a": {"command": "a"}}, str(path))
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
+
+
+def test_v1_array_still_accepted(tmp_path):
+    """v1 배열에는 version 개념이 없다. 게이트가 이것을 막으면 안 된다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps([{"name": "a", "command": "a"}]), encoding="utf-8")
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
+
+
+def test_object_without_version_still_accepted(tmp_path):
+    """손으로 만든 문서를 막을 이유는 없다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps({"servers": {"a": {"command": "a"}}}), encoding="utf-8")
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
