@@ -31,9 +31,15 @@ Claude 설정 파일들을 Git 레포에 백업하는 스킬이다.
 | `~/.claude/skills/` | `skills/` | 범용 스킬들 |
 | `~/.claude/CLAUDE.md` | `CLAUDE.md` | 글로벌 규칙 |
 | `~/.claude/settings.json` → 추출 | `plugins.json` | 플러그인/마켓플레이스 목록만 |
-| `claude mcp list` → 추출 | `mcp-servers.json` | MCP 서버 이름과 URL |
+| `~/.claude.json` (user 스코프) → 추출 | `mcp-servers.json` | MCP 서버 설정 (비밀 값은 마스킹) |
 
 settings.json에는 API 키 등 민감 정보가 포함될 수 있으므로, `enabledPlugins`와 `extraKnownMarketplaces` 필드만 추출하여 `plugins.json`으로 관리한다. settings.json 원본은 레포에 올리지 않는다.
+
+MCP 서버는 `~/.claude.json`의 top-level `mcpServers`(user 스코프)만 대상으로 한다. 계정 레벨 커넥터(`claude.ai *`), 플러그인이 제공하는 서버(`plugin:*`), project(`.mcp.json`)·local 스코프 서버는 애초에 그 객체에 없으므로 자동으로 제외된다. `headers`와 `env`의 **값만** `<REDACTED>`로 마스킹하고 키 이름은 보존한다.
+
+`mcp-servers.json`은 파일 통째로 덮어쓰지 않고 **서버 이름 키 단위 3-way 병합** 대상이다. 다른 기기가 추가·변경한 서버는 이 기기의 백업으로 사라지지 않는다.
+
+반면 `plugins.json`은 여전히 매 백업마다 통째로 새로 생성되어 덮어쓰인다(reconcile 대상이 아니다). 여러 기기에서 서로 다른 플러그인을 쓰면 마지막에 백업한 기기의 목록이 남는다.
 
 `~/.claude/.sync-state/`는 기기별 로컬 상태(merge-base)이므로 백업/복원 대상이 아니며 레포에 올리지 않는다.
 
@@ -180,13 +186,37 @@ settings.json에서 플러그인 관련 필드만 추출한다:
 python3 $SYNC_SCRIPTS/extract_plugins.py plugins.json
 ```
 
-### 6. mcp-servers.json 생성
+### 6. mcp-servers.json 생성 (키 단위 3-way 병합)
 
-`claude mcp list`의 출력을 파싱하여 MCP 서버 목록을 추출한다. 복원에 필요한 name, url, type만 저장한다.
+`~/.claude.json`의 user 스코프 `mcpServers`를 읽어 레포의 `mcp-servers.json`과 서버 이름 키 단위로 병합한다. `claude mcp list`는 호출하지 않는다.
 
 ```bash
-claude mcp list 2>/dev/null | python3 $SYNC_SCRIPTS/parse_mcp.py mcp-servers.json
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+MCP_STAGING="${TMPDIR:-/tmp}/claude-sync-mcp-base"
+rm -rf "$MCP_STAGING"
+python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$MCP_STAGING" > /tmp/claude-sync-mcp.json
+cat /tmp/claude-sync-mcp.json
 ```
+
+출력 JSON의 `status`로 분기한다.
+
+- `"skipped"`: `~/.claude.json`을 읽지 못했거나, **레포 파일의 형식을 알아볼 수 없다**(상위 버전이 쓴 백업일 수 있다). 어느 쪽이든 **레포의 `mcp-servers.json`은 손대지 않았고 base도 전진시키지 않는다.** `reason`을 사용자에게 알리고 MCP 단계만 건너뛴다. **파일 동기화는 그대로 진행한다.**
+
+  `reason`이 "형식을 알아볼 수 없다"이면 이 기기의 플러그인이 낡은 것이므로 **업데이트를 안내한다**: `claude plugin marketplace update claude-sync && claude plugin update claude-sync`. 모르는 문서를 "서버 0개"로 읽어 덮어쓰면 상위 버전의 백업이 파괴되므로 건너뛰는 것이 옳다.
+- `"ok"`: 아래 항목을 결과 보고(12단계)에 포함하고 각각 다음 행동을 안내한다.
+
+| 키 | 의미 | 안내 |
+|---|---|---|
+| `conflicts.repo_kept` | 케이스 9 — 양쪽이 바뀜 | "양쪽이 바뀌었습니다. 레포 값을 그대로 두었습니다. `/sync-restore`에서 해소하세요" |
+| `conflicts.repo_absent` | 케이스 5 — 타 기기 삭제 + 로컬 수정 | "다른 기기가 삭제했는데 이 기기에서 수정했습니다. `/sync-restore` 먼저 실행하세요" |
+| `local_stale` | 케이스 4 — 타 기기가 삭제, 로컬 잔존 | "`/sync-restore`에서 로컬을 정리하세요" |
+| `repo_ahead.absent` | 케이스 2 — 타 기기가 추가 | "다른 기기가 추가했습니다. `/sync-restore`가 이 기기에 설치합니다" |
+| `repo_ahead.present` | 케이스 8 — 타 기기가 **변경** | "다른 기기가 이 서버를 **변경**했습니다. `/sync-restore`에서 채택할지 선택이 필요합니다" |
+| `deleted` | 이 기기에서 지운 서버 | 레포에서도 제거되었음을 알린다 |
+
+`repo_ahead.present`(케이스 8)에 케이스 2와 같은 문구("restore를 실행하면 반영됩니다")를 쓰면 안 된다. restore는 케이스 8을 자동 반영하지 않으므로 그 안내는 사실이 아니고, 사용자가 빠져나갈 수 없는 루프에 갇힌다. 실제로 필요한 것은 사용자의 선택이다.
+
+충돌이 있어도 백업 전체를 막지 않는다. 해당 서버만 건너뛴다.
 
 ### 7. sync-metadata.json 생성
 
@@ -234,16 +264,24 @@ cp $SYNC_SCRIPTS/backup-readme.ko.md README.ko.md
 ### 10. 커밋 & 푸시
 
 ```bash
-cd ${TMPDIR:-/tmp}/claude-sync-repo
+cd "${TMPDIR:-/tmp}/claude-sync-repo"
 git add -A
 git diff --cached --stat
 ```
 
-- **변경사항이 없으면**: "변경사항이 없습니다. 모든 설정이 최신 상태입니다." 라고 알려준다.
-- **변경사항이 있으면**: 변경 내용을 간단히 요약하고, 커밋 & 푸시한다:
+변경 내용을 간단히 요약한 뒤, 아래 블록을 그대로 실행한다. **MCP base 갱신 호출이 "푸시 성공"과 "커밋할 변경 없음" 두 경로 모두에 있어야 한다** — 하나라도 빠지면 그 경로의 기기에서 base가 전진하지 않는다.
 
 ```bash
-if git commit -m "sync: backup claude settings ($(date '+%Y-%m-%d %H:%M'))" && git push; then
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+MCP_STAGING="${TMPDIR:-/tmp}/claude-sync-mcp-base"
+cd "$SYNC_REPO"
+REPO_HAS_CONTENT=0
+
+if git diff --cached --quiet; then
+  echo "변경사항이 없습니다. 모든 설정이 최신 상태입니다."
+  REPO_HAS_CONTENT=1          # 레포가 이미 이번 결과와 정합하다
+elif git commit -m "sync: backup claude settings ($(date '+%Y-%m-%d %H:%M'))" && git push; then
+  REPO_HAS_CONTENT=1
   mapfile -t PUSHED_RELS < <(python3 -c "
 import json
 data = json.load(open('/tmp/claude-sync-reconcile.json'))
@@ -253,14 +291,27 @@ for r in data.get('push', []):
   if [ "${#PUSHED_RELS[@]}" -gt 0 ]; then
     python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${PUSHED_RELS[@]}"
   fi
+else
+  echo "푸시에 실패했습니다. base를 갱신하지 않습니다."
+fi
+
+# MCP base: 레포가 실제로 그 내용을 갖게 된 뒤에만 기록한다.
+# 스테이징 파일은 collect_mcp.py가 status=ok일 때만 쓰므로, 파일 존재가 곧 'skip 아님'이다.
+if [ "$REPO_HAS_CONTENT" = "1" ] && [ -f "$MCP_STAGING/mcp-servers.json" ]; then
+  python3 "$SYNC_SCRIPTS/update_base.py" "$MCP_STAGING" mcp-servers.json
+  echo "MCP base 갱신됨"
 fi
 ```
 
-### 11. base(.sync-state) 갱신
+### 11. base(.sync-state) 갱신 규칙
 
-커밋 & 푸시에 **성공한 경우에만** push된 각 파일의 base를 방금 올린 로컬 내용으로 갱신한다. 이 base가 다음 sync의 merge-base가 된다. base 갱신은 반드시 push 성공 이후에 실행되며, push가 실패하면 base는 변경되지 않는다.
+**파일**: 커밋 & 푸시에 성공한 경우에만 push된 각 파일의 base를 방금 올린 로컬 내용으로 갱신한다. **핵심 계약: push 성공 파일의 base ← 로컬 내용.**
 
-`update_base.py`는 각 rel 파일을 `~/.claude/<rel>`에서 읽어 `~/.claude/.sync-state/base/<rel>`에 기록한다. **핵심 계약: push 성공 파일의 base ← 로컬 내용.** base 갱신은 독립적으로 실행되거나 push 실패 후 실행되지 않는다.
+**MCP 서버**: base는 레포 파일의 사본이 아니라 **"이 기기의 로컬이 동의한 부분"만 담는 파생 문서**다. `collect_mcp.py`가 계산한 `next_base`를 스테이징 디렉토리에 써 두었다가 여기서 옮긴다.
+
+- `update_base.py "$MCP_STAGING" mcp-servers.json` — 올바른 호출.
+- `update_base.py "$SYNC_REPO" mcp-servers.json` — **금지.** `base ← 레포 파일 바이트`가 되어, 타 기기가 추가·변경한 서버(케이스 2·8)의 값이 base에 실린다. 그러면 다음 백업이 그것을 "이 기기가 삭제했다"로 오독해 **다른 기기의 서버를 경고 없이 지운다.**
+- 기록을 건너뛰는 경우는 **푸시 실패**와 **MCP 단계 skip** 둘뿐이다. 충돌(`conflicts`)이나 `local_stale`이 있다고 해서 전역으로 막지 않는다 — `next_base`가 이름 단위로 이미 그 서버의 base를 고정하고 있고, 전역 게이트는 나머지 서버의 base까지 얼려 정확도를 떨어뜨린다.
 
 ### 12. 결과 보고
 

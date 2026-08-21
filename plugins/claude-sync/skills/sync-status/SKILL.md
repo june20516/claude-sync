@@ -58,9 +58,11 @@ python3 $SYNC_SCRIPTS/check_status.py "$SYNC_REPO"
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 if [ -f "$SYNC_REPO/mcp-servers.json" ]; then
-  claude mcp list 2>/dev/null | python3 $SYNC_SCRIPTS/compare_mcp.py "$SYNC_REPO/mcp-servers.json"
+  python3 "$SYNC_SCRIPTS/compare_mcp.py" "$SYNC_REPO/mcp-servers.json"
 fi
 ```
+
+출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나 레포 파일의 형식을 알아볼 수 없는 것이다. `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인해 레포의 서버를 전부 `only_repo`로 보고하지 않기 위해서다. `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin update claude-sync`를 안내한다. 세 목록이 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
 
 ### 3. 결과 요약
 
@@ -71,7 +73,15 @@ fi
 - **local_ahead / local_only**: 로컬이 앞섬 → backup 시 push
 - **conflict**: 양쪽 모두 base 이후 변경 → restore 시 해소 필요
 
-이 명령은 아무것도 바꾸지 않는다. `plugin:`으로 시작하는 MCP 서버는 플러그인이 제공하므로 비교에서 제외한다.
+**MCP 서버의 어휘는 파일과 다르다.** 위의 "local_ahead / local_only: 로컬이 앞섬 → backup 시 push"는 MCP에 적용되지 않는다.
+
+- **only_local**: 로컬에만 있음 — 신규이거나, 다른 기기가 삭제한 뒤 남은 것일 수 있습니다. `/sync-backup`이 판정합니다.
+- **only_repo**: 레포에만 있음 — `/sync-restore`가 이 기기에 설치합니다.
+- **changed**: 양쪽에 있으나 설정이 다름 — 어느 쪽이 앞선 것인지는 `/sync-backup`이 base를 읽어 판정합니다.
+
+status는 base를 읽지 않으므로 케이스를 확정하지 않는다. 판정의 단일 진입점은 backup의 `merge` 하나다.
+
+이 명령은 아무것도 바꾸지 않는다. MCP 서버 비교 대상은 `~/.claude.json`의 user 스코프뿐이다. 계정 커넥터(`claude.ai *`), 플러그인 제공 서버(`plugin:*`), project·local 스코프 서버는 그 객체에 없으므로 자동으로 제외된다.
 
 분석 결과를 사용자에게 보여준다. 이 스킬은 아무것도 변경하지 않으므로, 필요한 다음 단계를 안내한다:
 

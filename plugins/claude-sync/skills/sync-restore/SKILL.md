@@ -19,6 +19,8 @@ restore는 `git pull`처럼 동작한다. **리모트에 자동 push하지 않�
 - **keep** (local_ahead / local_only): 로컬만 변경 또는 로컬 전용 — 그대로 유지
 - **merge** (conflict): 양쪽 모두 base 이후 변경 — 3-way 시도 후 자동 병합 또는 충돌 격리
 
+**MCP 서버는 파일이 아니라 서버 이름 키 단위로 판정한다.** 로컬 `~/.claude.json`(user 스코프) / 레포 `mcp-servers.json` / base의 3-way이며, 레포에만 있는 서버는 등록하고, 양쪽이 다르거나 한쪽에서 사라진 서버는 **서버마다 물어본다**(제거·유지·나중에 / 레포 값 채택·로컬 유지·나중에). restore는 로컬 서버를 임의로 지우거나 덮어쓰지 않는다.
+
 ## 설정 파일
 
 동기화 설정은 `~/.claude/sync-config.json`에 저장된다:
@@ -39,8 +41,12 @@ restore는 `git pull`처럼 동작한다. **리모트에 자동 push하지 않�
 
 ```bash
 SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-restore/scripts" -type d 2>/dev/null | head -1)
+SYNC_BACKUP_SCRIPTS=$(find ~/.claude -path "*/sync-backup/scripts" -type d 2>/dev/null | head -1)
 echo "Scripts: $SYNC_SCRIPTS"
+echo "Backup scripts: $SYNC_BACKUP_SCRIPTS"
 ```
+
+`SYNC_BACKUP_SCRIPTS`가 필요한 이유는 base 블롭을 기록하는 주체가 `sync-backup/scripts/update_base.py` **하나뿐**이기 때문이다(파일 쪽과 같은 규칙을 공유한다).
 
 이 경로를 찾지 못하면 플러그인이 제대로 설치되지 않은 것이므로 사용자에게 안내한다.
 
@@ -130,21 +136,141 @@ claude plugin install <plugin-name@marketplace>
 
 `claude plugin` 명령어가 없거나 실패하면 `plugins.json` 내용을 보여주고 수동 설치를 안내한다.
 
-### 6. MCP 서버 복원 (additive, plugin: 제외)
+### 6. MCP 서버 복원
 
-`mcp-servers.json` 중 현재 미등록이고 **이름이 `plugin:`으로 시작하지 않는** 서버만 추가한다. `plugin:` 서버는 플러그인 설치로 자동으로 따라오므로 `mcp add`하지 않는다.
+`~/.claude.json`의 user 스코프 `mcpServers`와 레포 `mcp-servers.json`을 비교해 계획을 세운다. `claude mcp list`는 호출하지 않는다.
 
 ```bash
-# 현재 등록된 서버 목록 확인
-claude mcp list 2>/dev/null
-
-# 미등록 서버 추가
-claude mcp add <name> <url> --transport <http|stdio> --scope user
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+MCP_STAGING="${TMPDIR:-/tmp}/claude-sync-mcp-base"
+python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json" > /tmp/claude-sync-mcp-plan.json
+cat /tmp/claude-sync-mcp-plan.json
 ```
 
-인증이 필요한 서버는 등록 후 사용자에게 인증 안내를 한다.
+`status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원은 그대로 진행한다). `reason`이 "형식을 알아볼 수 없다"이면 레포가 **이 기기보다 상위 버전으로 백업된 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다. `"ok"`면 버킷별로 처리한다.
 
-`claude mcp` 명령어가 실패하면 `mcp-servers.json` 내용을 보여주고 수동 등록을 안내한다.
+| 버킷 | 처방 |
+|---|---|
+| `add` | 그대로 등록한다 (6-1) |
+| `needs_secret` | 값을 물어 채운 뒤 등록한다. 건너뛰면 등록하지 않는다 (6-2) |
+| `unrestorable` | 등록을 **시도하지 않고 한 번만** 안내한다. 실패 건수로 세지 않는다 (6-3) |
+| `in_sync` | 아무것도 하지 않는다 |
+| `local_only` | 보고만 — "다음 `/sync-backup`에서 레포로 올라갑니다" |
+| `local_ahead` | 보고만 — "이 기기의 변경이 아직 백업되지 않았습니다. `/sync-backup`을 실행해 올리세요". **선택지를 주지 않는다** |
+| `repo_ahead` | 세 선택지 (6-4) |
+| `both_changed` | 세 선택지 + "양쪽이 모두 바뀌었습니다" 안내 (6-4) |
+| `local_stale` | 세 선택지 (6-5) |
+
+#### 6-1. `add` — 그대로 등록
+
+`configs`에 등록용 JSON이 이미 들어 있다. 레포 파일을 직접 파싱하지 않는다.
+
+```bash
+NAME="<서버 이름>"
+SERVER_JSON=$(python3 -c "
+import json, sys
+plan = json.load(open('/tmp/claude-sync-mcp-plan.json'))
+print(json.dumps(plan['configs'][sys.argv[1]]))
+" "$NAME")
+claude mcp add-json "$NAME" "$SERVER_JSON" --scope user
+```
+
+`--scope user`를 **반드시** 붙인다. 기본값이 `local`이라 빠뜨리면 현재 디렉토리 전용으로 등록된다. 하나가 실패해도 나머지는 계속 진행하고, 마지막에 실패 목록을 모아 보고한다.
+
+#### 6-2. `needs_secret` — 값을 받아 채운 뒤 등록
+
+`secret_keys`에 어떤 필드의 어떤 키가 필요한지 들어 있다(예: `[["headers", "CONTEXT7_API_KEY"]]`).
+
+값을 묻기 전에 **반드시 다음을 고지한다**: "`claude mcp add-json`은 JSON을 위치 인자로만 받으므로, 입력한 값이 프로세스 목록과 이 대화 기록에 남습니다. 현재 CLI에 대안이 없습니다."
+
+```bash
+python3 - <<'PY' > /tmp/claude-sync-mcp-one.json
+import json
+plan = json.load(open('/tmp/claude-sync-mcp-plan.json'))
+cfg = plan['configs']['<서버 이름>']
+cfg['headers']['<KEY>'] = '<사용자가 입력한 값>'   # secret_keys의 항목마다 반복
+print(json.dumps(cfg))
+PY
+claude mcp add-json '<서버 이름>' "$(cat /tmp/claude-sync-mcp-one.json)" --scope user
+rm -f /tmp/claude-sync-mcp-one.json
+```
+
+**사용자가 입력을 건너뛰면 그 서버는 등록하지 않는다.** 인증이 깨진 서버를 만드는 것보다 낫다.
+
+#### 6-3. `unrestorable` — 시도하지 않고 한 번만 안내
+
+이름이 CLI 규칙(영숫자·하이픈·언더스코어)을 어겼거나, config에 `command`도 `url`+`type`(http/sse)도 없는 항목이다. 옛 v1 형식에서 승격된 항목이 정확히 이 형태다. 목록을 한 번만 보여주고 "이 항목들은 옛 형식이거나 이름 규칙에 맞지 않아 복원할 수 없습니다"라고 안내한다. **실패 건수로 세지 않는다.**
+
+#### 6-4. `repo_ahead`(케이스 8) · `both_changed`(케이스 9) — 세 선택지
+
+서버마다 로컬 값과 레포 값의 차이를 보여주고 셋 중 하나를 고르게 한다.
+
+- `repo_ahead`: "다른 기기가 이 서버를 변경했습니다."
+- `both_changed`: "**양쪽이 모두 바뀌었습니다. 채택하면 이 기기의 변경이 사라집니다.**"
+
+| 선택 | 동작 | 도달 상태 |
+|---|---|---|
+| **레포 값 채택** | 아래 5단계 | 양쪽 레포 값 |
+| **로컬 유지** | 로컬 그대로 두고 이름을 `keep_local`에 넣는다 | 다음 backup이 로컬 값을 push |
+| **나중에** | 아무것도 하지 않는다 | 변화 없음, 다시 보고 |
+
+**"레포 값 채택" 5단계 — 순서를 바꾸면 안 된다.**
+
+```
+1. 그 이름이 unrestorable 목록에 있으면 채택 선택지를 제시하지 않는다.
+2. secret_keys에 있으면 **먼저** 값을 물어 넣을 JSON을 완성한다(6-2와 같은 흐름).
+   건너뛰면 여기서 중단하고 "나중에"와 동일하게 처리한다(로컬 불변, base 불변).
+3. claude mcp remove <name> -s user
+4. claude mcp add-json <name> '<완성된 JSON>' --scope user
+5. 4가 실패하면 서버가 로컬에서 사라진 상태로 남는다.
+```
+
+`add-json`은 이미 있는 이름에 대해 `already exists`로 exit 1이므로 3이 필요하고, remove 뒤에 값을 묻다가 사용자가 중단하면 아무것도 채택되지 않은 채 서버만 사라지므로 2가 3보다 앞이다. **5의 실패는 크게 경고하고 넣으려던 JSON을 그대로 보여주어** 사용자가 직접 다시 등록할 수 있게 한다. 이때 base는 건드리지 않는다.
+
+기존 로컬 비밀을 조용히 이월하지 않는다 — 레포 값이 바뀐 이유가 키 교체일 수 있고, 그때 이월은 "동작하는 것처럼 보이다가 인증에서 실패하는" 더 나쁜 상태를 만든다.
+
+**"레포 값 채택"에는 base override가 없다.** 채택 후에는 로컬이 레포 값에 동의하므로 6-6의 `apply-base`가 스스로 전진시킨다.
+
+#### 6-5. `local_stale`(케이스 4·5) — 세 선택지
+
+레포에서 사라졌지만 로컬에 남아 있는 서버다. 안내 문구를 둘로 가른다.
+
+- 케이스 4(로컬 값이 base와 같음): "다른 기기가 이 서버를 삭제했습니다."
+- 케이스 5(로컬에서 수정도 했음): "다른 기기가 삭제했는데 이 기기에서 수정했습니다."
+
+| 선택 | 동작 | 도달 상태 |
+|---|---|---|
+| **제거** | `claude mcp remove <name> -s user` | 레포·로컬 모두 없음 |
+| **유지** | 로컬 그대로 두고 이름을 `keep_stale`에 넣는다 | 다음 backup이 레포로 되돌린다 |
+| **나중에** | 아무것도 하지 않는다 | 변화 없음, 다시 보고 |
+
+"유지"가 base에서 이름을 지우는 것은 **"그 이력은 잊는다"는 명시적 선언**이다. 이 동작이 없으면 케이스 4가 영원히 유지되어 사용자가 그 서버를 레포에 되돌릴 방법이 없다.
+
+#### 6-6. base 갱신
+
+**사용자가 아무 선택도 하지 않았어도 실행한다.** 무선택은 "이전 base 유지"로 계산되므로 결과가 달라지지 않는다.
+
+```bash
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+MCP_STAGING="${TMPDIR:-/tmp}/claude-sync-mcp-base"
+
+# 6-4에서 "로컬 유지"를, 6-5에서 "유지"를 고른 이름만 적는다.
+# 나머지 선택(제거·채택·나중에)에는 base override가 필요 없다.
+# 이 파일에는 이름과 선택만 들어간다 — 비밀 값은 절대 담지 않는다.
+cat > /tmp/claude-sync-mcp-choices.json << 'EOF'
+{"keep_stale": [], "keep_local": []}
+EOF
+
+rm -rf "$MCP_STAGING"
+python3 "$SYNC_SCRIPTS/plan_mcp.py" apply-base "$SYNC_REPO/mcp-servers.json" "$MCP_STAGING" /tmp/claude-sync-mcp-choices.json
+if [ -f "$MCP_STAGING/mcp-servers.json" ]; then
+  python3 "$SYNC_BACKUP_SCRIPTS/update_base.py" "$MCP_STAGING" mcp-servers.json
+  echo "MCP base 갱신됨"
+fi
+rm -f /tmp/claude-sync-mcp-choices.json
+```
+
+`apply-base`는 `~/.claude.json`을 **다시 읽어** 계산하므로, 위 6-1~6-5의 CLI 실행이 **모두 끝난 뒤**에 호출해야 한다. `update_base.py`에 `"$SYNC_REPO"`를 넘기면 안 된다 — `base ← 레포 파일 바이트`가 되어 타 기기의 서버를 다음 백업이 삭제한다.
 
 ### 7. 결과 보고
 
@@ -154,6 +280,8 @@ claude mcp add <name> <url> --transport <http|stdio> --scope user
 - **해소한 충돌**: 파일명과 선택 방식 (나중에는 미해소로 표시)
 - **local_ahead 파일** → "올리려면 /sync-backup을 실행하세요" 안내 (restore는 push하지 않음)
 - **설치한 플러그인** (있으면)
-- **추가한 MCP 서버** (있으면)
-- **인증이 필요한 MCP 서버** (있으면)
-- **설치/등록 실패한 항목** (있으면)
+- **등록한 MCP 서버** (`add` / `needs_secret`에서 값을 받아 등록한 것)
+- **건너뛴 MCP 서버**: 비밀 값 입력을 건너뛴 것, `unrestorable`(옛 형식·이름 규칙 위반 — 실패로 세지 않는다)
+- **해소한 MCP 충돌**: 서버명과 선택(채택 / 로컬 유지 / 유지 / 제거 / 나중에)
+- **`local_ahead` MCP 서버** → "올리려면 `/sync-backup`을 실행하세요"
+- **등록 실패한 MCP 서버**: `add-json`이 실패한 것. "레포 값 채택"의 `remove` **이후** 실패는 서버가 로컬에서 사라진 상태이므로 넣으려던 JSON과 함께 크게 경고한다
