@@ -189,10 +189,13 @@ plugin list가 실제로 내는 'unknown'은 파싱 실패(None)로 다룬다." 
 `plugins/claude-sync/tests/test_compat.py` 끝에 추가한다.
 
 ```python
-def write_plugin_json(tmp_path, obj):
-    """plugin.json 역할의 임시 파일. obj가 None이면 깨진 JSON을 쓴다."""
+def write_plugin_json(tmp_path, obj=None, *, broken=False):
+    """plugin.json 역할의 임시 파일 경로를 반환한다.
+
+    broken=True면 깨진 JSON을 쓴다. obj는 그대로 직렬화한다.
+    """
     path = tmp_path / "plugin.json"
-    path.write_text("{ not json" if obj is None else json.dumps(obj), encoding="utf-8")
+    path.write_text("{ not json" if broken else json.dumps(obj), encoding="utf-8")
     return str(path)
 
 
@@ -206,7 +209,7 @@ def test_read_plugin_version_missing_file(tmp_path):
 
 
 def test_read_plugin_version_broken_json(tmp_path):
-    assert compat.read_plugin_version(write_plugin_json(tmp_path, None)) is None
+    assert compat.read_plugin_version(write_plugin_json(tmp_path, broken=True)) is None
 
 
 @pytest.mark.parametrize("obj", [{}, {"version": 3}, {"version": None}, [], "x"])
@@ -214,37 +217,34 @@ def test_read_plugin_version_unusable(tmp_path, obj):
     assert compat.read_plugin_version(write_plugin_json(tmp_path, obj)) is None
 
 
-def write_metadata(tmp_path, obj):
-    """레포 디렉토리와 sync-metadata.json을 만든다.
+def write_metadata(tmp_path, obj=None, *, broken=False, missing=False):
+    """sync-metadata.json **파일 경로**를 반환한다 (레포 디렉토리가 아니다).
 
-    obj가 None이면 파일 없음, 'broken'이면 깨진 JSON.
+    missing=True면 파일을 만들지 않는다. broken=True면 깨진 JSON을 쓴다.
+    같은 이름의 인자가 헬퍼마다 정반대를 뜻하지 않도록 의미를 키워드로 드러낸다.
     """
     repo = tmp_path / "repo"
     repo.mkdir(exist_ok=True)
     path = repo / compat.METADATA_RELPATH
-    if obj == "broken":
+    if broken:
         path.write_text("{ not json", encoding="utf-8")
-    elif obj is not None:
+    elif not missing:
         path.write_text(json.dumps(obj), encoding="utf-8")
-    return str(repo)
+    return str(path)
 
 
 def test_load_metadata_reads_dict(tmp_path):
-    repo = write_metadata(tmp_path, {"min_reader_version": "3.0.0"})
-    assert compat.load_metadata(os.path.join(repo, compat.METADATA_RELPATH)) == {
-        "min_reader_version": "3.0.0"
-    }
+    path = write_metadata(tmp_path, {"min_reader_version": "3.0.0"})
+    assert compat.load_metadata(path) == {"min_reader_version": "3.0.0"}
 
 
 def test_load_metadata_missing_is_none(tmp_path):
-    repo = write_metadata(tmp_path, None)
-    assert compat.load_metadata(os.path.join(repo, compat.METADATA_RELPATH)) is None
+    assert compat.load_metadata(write_metadata(tmp_path, missing=True)) is None
 
 
 def test_load_metadata_broken_is_none(tmp_path):
     """깨진 metadata를 차단 근거로 삼으면 데드락이다 — 그 파일을 고치는 것이 다음 백업이다."""
-    repo = write_metadata(tmp_path, "broken")
-    assert compat.load_metadata(os.path.join(repo, compat.METADATA_RELPATH)) is None
+    assert compat.load_metadata(write_metadata(tmp_path, broken=True)) is None
 
 
 @pytest.mark.parametrize("obj", [[], "x", 3, None])
@@ -753,7 +753,9 @@ uv run --with pytest pytest plugins/claude-sync/tests/test_compat.py -q
 def check(repo_dir, plugin_json_path=None):
     """레포 디렉토리를 읽어 판정한다. **어떤 파일도 쓰지 않는다.**"""
     meta = load_metadata(os.path.join(repo_dir, METADATA_RELPATH))
-    my_version = read_plugin_version(plugin_json_path or default_plugin_json_path())
+    # or를 쓰지 않는다 — read_plugin_version이 None을 받아 기본 경로를 정한다.
+    # or는 빈 문자열도 falsy로 보아 "기본값 써라"로 오독한다.
+    my_version = read_plugin_version(plugin_json_path)
     verdict = {"status": "ok"}
     verdict.update(evaluate(meta, my_version))
     return verdict
