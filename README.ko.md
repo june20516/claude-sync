@@ -67,6 +67,21 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 /sync-status
 ```
 
+## v3.0.0으로 올릴 때 (먼저 읽으세요)
+
+v3.0.0은 `mcp-servers.json`의 스키마를 바꾸며 **역호환되지 않습니다.**
+
+> **아직 v2.x인 기기가 하나라도 남아 있다면, 그 기기에서 `/sync-backup`을 실행하지 마세요.** v2의 백업 단계는 레포 파일을 읽지 않고 `mcp-servers.json`을 통째로 다시 만들기 때문에, 한 번만 실행해도 v3 파일이 옛 배열 형식으로 되돌아가고 **명령에 공백이 든 서버는 아예 사라집니다.** v2의 `/sync-status`도 `TypeError`로 중단됩니다.
+
+모든 기기를 먼저 올린 뒤에 백업하세요:
+
+```bash
+claude plugin marketplace update claude-sync
+claude plugin update claude-sync    # 적용하려면 재시작이 필요합니다
+```
+
+v3.0.0부터는 알아볼 수 없는 백업을 만난 기기가 MCP 단계를 건너뛰고 레포 파일을 그대로 둔 채 플러그인 업데이트를 안내하므로, 이후 업그레이드에서는 같은 사고가 반복되지 않습니다.
+
 ## 동작 모델 (v3.0.0+)
 
 claude-sync는 **내용 해시(content-hash) 기반 git 3-way 방식**으로 동기화합니다. 수정 시각(mtime)은 일절 사용하지 않습니다.

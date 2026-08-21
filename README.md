@@ -67,6 +67,21 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 /sync-status
 ```
 
+## Upgrading to v3.0.0 (read this first)
+
+v3.0.0 changes the `mcp-servers.json` schema and **is not backward compatible**.
+
+> **While any machine is still on v2.x, do not run `/sync-backup` on it.** The v2 backup step regenerates `mcp-servers.json` wholesale without reading the repo copy, so a single run rewrites the v3 file back to the old array format — and servers whose command contains spaces are dropped entirely. A v2 `/sync-status` will also abort with a `TypeError`.
+
+Upgrade every machine first, then back up:
+
+```bash
+claude plugin marketplace update claude-sync
+claude plugin update claude-sync    # restart required to apply
+```
+
+From v3.0.0 on, a machine that meets a backup it cannot recognize skips the MCP step, leaves the repo file untouched, and tells you to update the plugin — so this class of damage cannot repeat in later upgrades.
+
 ## Sync Behavior Model (v3.0.0+)
 
 claude-sync uses a **content-hash, git-like 3-way reconcile** — modification timestamps are never used.
