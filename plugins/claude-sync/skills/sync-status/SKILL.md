@@ -16,16 +16,34 @@ backup이나 restore 전에 "지금 상태가 어떤지" 확인하고 싶을 때
 
 ## 실행 절차
 
-### 0. 스크립트 경로 확인
+### 0. 플러그인 루트 확인
 
-이 스킬에서 사용하는 스크립트들의 경로를 먼저 찾는다. 이후 모든 단계에서 `$SYNC_SCRIPTS`로 참조한다.
+**실행 중인 플러그인과 같은 버전의 스크립트를 써야 한다.** 옛 버전 디렉토리가 지워지지 않고 남으므로, 아무거나 고르면 이 세션이 다른 버전의 스크립트를 실행하게 된다.
 
 ```bash
-SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-status/scripts" -type d 2>/dev/null | head -1)
-echo "Scripts: $SYNC_SCRIPTS"
+# plugins/cache 아래만 본다 — plugins/marketplaces는 레포 클론이지 설치본이 아니다.
+# 여러 버전이 남아 있으므로 sort -V로 가장 높은 것을 고른다. head -1은 임의 선택이다.
+SYNC_ROOT=$(find ~/.claude/plugins/cache -path "*/claude-sync/*/.claude-plugin" -type d 2>/dev/null \
+  | sed 's|/\.claude-plugin$||' | sort -V | tail -1)
+SYNC_SCRIPTS="$SYNC_ROOT/skills/sync-status/scripts"
+SYNC_BACKUP_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"
+SYNC_LIB="$SYNC_ROOT/lib"
+
+if [ -z "$SYNC_ROOT" ]; then
+  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다." >&2
+fi
+
+echo "Plugin root: $SYNC_ROOT"
+python3 -c 'import json,sys
+try:
+    print("Version:", json.load(open(sys.argv[1])).get("version", "unknown"))
+except Exception as e:
+    print("Version: 읽지 못함 (%s)" % e)' "$SYNC_ROOT/.claude-plugin/plugin.json"
 ```
 
-이 경로를 찾지 못하면 플러그인이 제대로 설치되지 않은 것이므로 사용자에게 안내한다.
+`SYNC_BACKUP_SCRIPTS`는 다운그레이드 탐지(`detect_downgrade.py`)를 부르기 위해 필요하다. 읽기 전용 스크립트이므로 status가 불러도 안전하며, 복사본을 만들지 않는다.
+
+`SYNC_ROOT`가 비어 있으면 플러그인이 제대로 설치되지 않은 것이므로 즉시 중단하고 사용자에게 안내한다.
 
 ### 1. 설정 확인 및 레포 준비
 

@@ -61,16 +61,36 @@ skills/secret-tool/
 
 ## 실행 절차
 
-### 0. 스크립트 경로 확인
+### 0. 플러그인 루트 확인
 
-이 스킬에서 사용하는 스크립트들의 경로를 먼저 찾는다. 이후 모든 단계에서 `$SYNC_SCRIPTS`로 참조한다.
+**실행 중인 플러그인과 같은 버전의 스크립트를 써야 한다.** 옛 버전 디렉토리가 지워지지 않고 남으므로, 아무거나 고르면 3.0.0 세션이 2.0.0의 스크립트를 실행해 버전 표식이 조용히 안 써진다.
 
 ```bash
-SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-backup/scripts" -type d 2>/dev/null | head -1)
-echo "Scripts: $SYNC_SCRIPTS"
+# plugins/cache 아래만 본다 — plugins/marketplaces는 레포 클론이지 설치본이 아니다.
+# 여러 버전이 남아 있으므로 sort -V로 가장 높은 것을 고른다. head -1은 임의 선택이다.
+SYNC_ROOT=$(find ~/.claude/plugins/cache -path "*/claude-sync/*/.claude-plugin" -type d 2>/dev/null \
+  | sed 's|/\.claude-plugin$||' | sort -V | tail -1)
+SYNC_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"
+SYNC_LIB="$SYNC_ROOT/lib"
+
+# 빈 값 확인이 먼저다. 비어 있는데 아래 python3를 부르면 "/.claude-plugin/plugin.json"을
+# 열려다 트레이스백이 난다 — 원인이 "플러그인을 못 찾았다"임이 가려진다.
+if [ -z "$SYNC_ROOT" ]; then
+  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다." >&2
+fi
+
+# 어느 버전을 쓰는지 눈에 보이게 한다. 불일치는 조용하면 안 된다.
+echo "Plugin root: $SYNC_ROOT"
+python3 -c 'import json,sys
+try:
+    print("Version:", json.load(open(sys.argv[1])).get("version", "unknown"))
+except Exception as e:
+    print("Version: 읽지 못함 (%s)" % e)' "$SYNC_ROOT/.claude-plugin/plugin.json"
 ```
 
-이 경로를 찾지 못하면 플러그인이 제대로 설치되지 않은 것이므로 사용자에게 안내한다.
+`SYNC_ROOT`가 비어 있으면 플러그인이 제대로 설치되지 않은 것이므로 **즉시 중단하고** 사용자에게 안내한다. 어떤 버전을 실행할지 모르는 채로 진행해서는 안 된다.
+
+버전을 읽지 못했다고 해서 중단하지는 않는다 — 그것은 표시용이고, 실제 판정은 `compat.py`가 맡는다.
 
 ### 1. 설정 확인
 

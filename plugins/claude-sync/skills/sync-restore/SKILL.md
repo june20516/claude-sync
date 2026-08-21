@@ -35,20 +35,34 @@ restore는 `git pull`처럼 동작한다. **리모트에 자동 push하지 않�
 
 ## 실행 절차
 
-### 0. 스크립트 경로 확인
+### 0. 플러그인 루트 확인
 
-이 스킬에서 사용하는 스크립트들의 경로를 먼저 찾는다. 이후 모든 단계에서 `$SYNC_SCRIPTS`로 참조한다.
+**실행 중인 플러그인과 같은 버전의 스크립트를 써야 한다.** 옛 버전 디렉토리가 지워지지 않고 남으므로, 아무거나 고르면 이 세션이 다른 버전의 스크립트를 실행하게 된다.
 
 ```bash
-SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-restore/scripts" -type d 2>/dev/null | head -1)
-SYNC_BACKUP_SCRIPTS=$(find ~/.claude -path "*/sync-backup/scripts" -type d 2>/dev/null | head -1)
-echo "Scripts: $SYNC_SCRIPTS"
-echo "Backup scripts: $SYNC_BACKUP_SCRIPTS"
+# plugins/cache 아래만 본다 — plugins/marketplaces는 레포 클론이지 설치본이 아니다.
+# 여러 버전이 남아 있으므로 sort -V로 가장 높은 것을 고른다. head -1은 임의 선택이다.
+SYNC_ROOT=$(find ~/.claude/plugins/cache -path "*/claude-sync/*/.claude-plugin" -type d 2>/dev/null \
+  | sed 's|/\.claude-plugin$||' | sort -V | tail -1)
+SYNC_SCRIPTS="$SYNC_ROOT/skills/sync-restore/scripts"
+SYNC_BACKUP_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"
+SYNC_LIB="$SYNC_ROOT/lib"
+
+if [ -z "$SYNC_ROOT" ]; then
+  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다." >&2
+fi
+
+echo "Plugin root: $SYNC_ROOT"
+python3 -c 'import json,sys
+try:
+    print("Version:", json.load(open(sys.argv[1])).get("version", "unknown"))
+except Exception as e:
+    print("Version: 읽지 못함 (%s)" % e)' "$SYNC_ROOT/.claude-plugin/plugin.json"
 ```
 
-`SYNC_BACKUP_SCRIPTS`가 필요한 이유는 base 블롭을 기록하는 주체가 `sync-backup/scripts/update_base.py` **하나뿐**이기 때문이다(파일 쪽과 같은 규칙을 공유한다).
+`SYNC_BACKUP_SCRIPTS`가 필요한 이유는 base 블롭을 기록하는 주체가 `sync-backup/scripts/update_base.py` **하나뿐**이기 때문이다(파일 쪽과 같은 규칙을 공유한다). 이제 두 경로 모두 같은 `SYNC_ROOT`에서 나오므로 서로 다른 버전이 섞일 수 없다.
 
-이 경로를 찾지 못하면 플러그인이 제대로 설치되지 않은 것이므로 사용자에게 안내한다.
+`SYNC_ROOT`가 비어 있으면 플러그인이 제대로 설치되지 않은 것이므로 즉시 중단하고 사용자에게 안내한다.
 
 ### 1. 설정 확인
 
