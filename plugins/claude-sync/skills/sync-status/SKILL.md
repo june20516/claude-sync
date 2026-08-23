@@ -16,16 +16,45 @@ backup이나 restore 전에 "지금 상태가 어떤지" 확인하고 싶을 때
 
 ## 실행 절차
 
-### 0. 스크립트 경로 확인
+### 0. 플러그인 루트 확인
 
-이 스킬에서 사용하는 스크립트들의 경로를 먼저 찾는다. 이후 모든 단계에서 `$SYNC_SCRIPTS`로 참조한다.
+**실행 중인 플러그인과 같은 버전의 스크립트를 써야 한다.** 옛 버전 디렉토리가 지워지지 않고 남으므로, 아무거나 고르면 이 세션이 다른 버전의 스크립트를 실행하게 된다.
 
 ```bash
-SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-status/scripts" -type d 2>/dev/null | head -1)
-echo "Scripts: $SYNC_SCRIPTS"
+# plugins/cache 아래만 본다 — plugins/marketplaces는 레포 클론이지 설치본이 아니다.
+# semver 모양인 디렉토리만 본다 — 'unknown'이나 'latest'는 sort -V에서 릴리즈를 이긴다.
+#   (이 기기에 실제로 cache/claude-plugins-official/skill-creator/unknown 이 있다.)
+# 경로 전체가 아니라 버전 성분으로 정렬한다 — 그러지 않으면 마켓플레이스 이름이 정렬을
+#   지배해, 이름이 뒤인 마켓플레이스의 낮은 버전이 선택된다.
+# head -1은 임의 선택이므로 쓰지 않는다.
+SYNC_ROOT=$(find ~/.claude/plugins/cache -path "*/claude-sync/*/.claude-plugin" -type d 2>/dev/null \
+  | sed 's|/\.claude-plugin$||' \
+  | grep -E '/[0-9]+\.[0-9]+\.[0-9]+$' \
+  | awk -F/ '{print $NF"\t"$0}' | sort -V | tail -1 | cut -f2-)
+SYNC_SCRIPTS="$SYNC_ROOT/skills/sync-status/scripts"
+SYNC_BACKUP_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"
+SYNC_LIB="$SYNC_ROOT/lib"
+
+# 못 찾았으면 비-0으로 끝낸다. echo만 하고 exit 0으로 끝나면 "판정 불가"가 "문제 없음"과
+# 같은 모양이 되고, 뒤 단계의 rm -rf + clone + push가 어느 버전인지도 모른 채 먼저 돈다.
+# exit이 아니라 false다 — 뒤 단계가 같은 셸 세션의 $SYNC_SCRIPTS를 쓰므로 세션을 끝내면 안 된다.
+if [ -z "$SYNC_ROOT" ]; then
+  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다. 진행하지 마세요." >&2
+  false
+else
+  # 어느 버전을 쓰는지 눈에 보이게 한다. 불일치는 조용하면 안 된다.
+  echo "Plugin root: $SYNC_ROOT"
+  python3 -c 'import json,sys
+try:
+    print("Version:", json.load(open(sys.argv[1])).get("version", "unknown"))
+except Exception as e:
+    print("Version: 읽지 못함 (%s)" % e)' "$SYNC_ROOT/.claude-plugin/plugin.json"
+fi
 ```
 
-이 경로를 찾지 못하면 플러그인이 제대로 설치되지 않은 것이므로 사용자에게 안내한다.
+`SYNC_BACKUP_SCRIPTS`는 다운그레이드 탐지(`detect_downgrade.py`)를 부르기 위해 필요하다. 읽기 전용 스크립트이므로 status가 불러도 안전하며, 복사본을 만들지 않는다.
+
+`SYNC_ROOT`가 비어 있으면 플러그인이 제대로 설치되지 않은 것이므로 즉시 중단하고 사용자에게 안내한다.
 
 ### 1. 설정 확인 및 레포 준비
 
@@ -43,6 +72,32 @@ else
   git clone <repo_url> ${TMPDIR:-/tmp}/claude-sync-repo
 fi
 ```
+
+### 1.5 호환성 검사 (경고만)
+
+```bash
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
+python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
+```
+
+**검사가 성립하지 않았으면**(비-0 종료, JSON 아님, `blocked` 키 없음) 그 사실을 맨 위에 알린다 — "호환성을 확인하지 못했습니다"이지 "문제 없습니다"가 아니다. 그래도 **분석은 계속한다.**
+
+`blocked`가 `true`면 **분석 결과 맨 위에 크게 경고한다.** `message`를 그대로 보여주고 다음을 덧붙인다:
+
+> "이 상태에서는 `/sync-backup`이 차단됩니다. 아래 분석은 계속 진행합니다."
+
+**이 명령은 아무것도 막지 않는다.** 버전이 안 맞을 때 사용자가 가장 먼저 실행할 명령이 status이고, 그것마저 막으면 진단 수단이 사라진다. 읽기 전용이라 위험도 없다.
+
+탐지 출력의 `status`가 `"skipped"`면 **`reason`을 알린다** — "사고가 없다"가 아니라 "확인하지 못했다"이다. `repo_shape`·`base_shape`를 함께 보여준다. 그래도 분석은 계속한다.
+
+`newer_schema_seen`이 `true`면 히스토리에 **이 버전이 알아보지 못하는 백업**이 있다는 뜻이다. 그 사실도 알린다.
+
+`downgrade_suspected`가 `true`면 함께 알린다:
+
+> "백업 레포의 MCP 파일이 옛 형식으로 되돌아가 있습니다 — 낮은 버전 기기가 덮어쓴 것으로 보입니다. `/sync-backup`을 실행하면 복구 후보를 제시합니다."
+
+`candidate`가 있으면 그 커밋의 날짜와 서버 수도 함께 보여준다. status는 복구하지 않는다.
 
 ### 2. 메타데이터 기반 상태 분석
 
@@ -62,9 +117,13 @@ if [ -f "$SYNC_REPO/mcp-servers.json" ]; then
 fi
 ```
 
-출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나 레포 파일의 형식을 알아볼 수 없는 것이다. `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인해 레포의 서버를 전부 `only_repo`로 보고하지 않기 위해서다. `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin update claude-sync`를 안내한다. 세 목록이 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
+출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나 레포 파일의 형식을 알아볼 수 없는 것이다. `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인해 레포의 서버를 전부 `only_repo`로 보고하지 않기 위해서다. `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다. 세 목록이 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
 
 ### 3. 결과 요약
+
+**`blocked`가 `true`면 요약의 첫 줄에 넣는다.** `my_version`과 `repo_min_reader`를 그대로 쓴다. 예: "이 기기 3.0.0 / 이 백업이 요구하는 최소 버전 4.0.0 — `/sync-backup`이 차단됩니다."
+
+`blocked`가 `false`인데 `repo_written_by`가 더 높으면 그것은 **차단 사유가 아니다.** 알리더라도 "차단됩니다"라고 쓰지 않는다 — `min_reader_version`은 항상 `{major}.0.0`이므로 같은 major의 상위 버전이 쓴 백업은 막히지 않는다.
 
 상태 분류 (내용 해시 3-way, mtime 미사용):
 - **in_sync**: 로컬과 레포 내용 동일

@@ -61,16 +61,44 @@ skills/secret-tool/
 
 ## 실행 절차
 
-### 0. 스크립트 경로 확인
+### 0. 플러그인 루트 확인
 
-이 스킬에서 사용하는 스크립트들의 경로를 먼저 찾는다. 이후 모든 단계에서 `$SYNC_SCRIPTS`로 참조한다.
+**실행 중인 플러그인과 같은 버전의 스크립트를 써야 한다.** 옛 버전 디렉토리가 지워지지 않고 남으므로, 아무거나 고르면 3.0.0 세션이 2.0.0의 스크립트를 실행해 버전 표식이 조용히 안 써진다.
 
 ```bash
-SYNC_SCRIPTS=$(find ~/.claude -path "*/sync-backup/scripts" -type d 2>/dev/null | head -1)
-echo "Scripts: $SYNC_SCRIPTS"
+# plugins/cache 아래만 본다 — plugins/marketplaces는 레포 클론이지 설치본이 아니다.
+# semver 모양인 디렉토리만 본다 — 'unknown'이나 'latest'는 sort -V에서 릴리즈를 이긴다.
+#   (이 기기에 실제로 cache/claude-plugins-official/skill-creator/unknown 이 있다.)
+# 경로 전체가 아니라 버전 성분으로 정렬한다 — 그러지 않으면 마켓플레이스 이름이 정렬을
+#   지배해, 이름이 뒤인 마켓플레이스의 낮은 버전이 선택된다.
+# head -1은 임의 선택이므로 쓰지 않는다.
+SYNC_ROOT=$(find ~/.claude/plugins/cache -path "*/claude-sync/*/.claude-plugin" -type d 2>/dev/null \
+  | sed 's|/\.claude-plugin$||' \
+  | grep -E '/[0-9]+\.[0-9]+\.[0-9]+$' \
+  | awk -F/ '{print $NF"\t"$0}' | sort -V | tail -1 | cut -f2-)
+SYNC_SCRIPTS="$SYNC_ROOT/skills/sync-backup/scripts"
+SYNC_LIB="$SYNC_ROOT/lib"
+
+# 못 찾았으면 비-0으로 끝낸다. echo만 하고 exit 0으로 끝나면 "판정 불가"가 "문제 없음"과
+# 같은 모양이 되고, 뒤 단계의 rm -rf + clone + push가 어느 버전인지도 모른 채 먼저 돈다.
+# exit이 아니라 false다 — 뒤 단계가 같은 셸 세션의 $SYNC_SCRIPTS를 쓰므로 세션을 끝내면 안 된다.
+if [ -z "$SYNC_ROOT" ]; then
+  echo "claude-sync 플러그인 설치 경로를 찾지 못했습니다. 진행하지 마세요." >&2
+  false
+else
+  # 어느 버전을 쓰는지 눈에 보이게 한다. 불일치는 조용하면 안 된다.
+  echo "Plugin root: $SYNC_ROOT"
+  python3 -c 'import json,sys
+try:
+    print("Version:", json.load(open(sys.argv[1])).get("version", "unknown"))
+except Exception as e:
+    print("Version: 읽지 못함 (%s)" % e)' "$SYNC_ROOT/.claude-plugin/plugin.json"
+fi
 ```
 
-이 경로를 찾지 못하면 플러그인이 제대로 설치되지 않은 것이므로 사용자에게 안내한다.
+`SYNC_ROOT`가 비어 있으면 플러그인이 제대로 설치되지 않은 것이므로 **즉시 중단하고** 사용자에게 안내한다. 어떤 버전을 실행할지 모르는 채로 진행해서는 안 된다.
+
+버전을 읽지 못했다고 해서 중단하지는 않는다 — 그것은 표시용이고, 실제 판정은 `compat.py`가 맡는다.
 
 ### 1. 설정 확인
 
@@ -111,6 +139,38 @@ cd ${TMPDIR:-/tmp}/claude-sync-repo
 git commit --allow-empty -m "initial commit"
 git push -u origin main
 ```
+
+### 2.5 호환성 검사 (차단 지점)
+
+**레포를 가져온 직후, 아무것도 쓰기 전에 검사한다.** 늦게 하면 이미 레포를 건드린 뒤가 된다.
+
+```bash
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
+```
+
+**먼저 검사가 성립했는지 본다.** 명령이 비-0으로 끝났거나, 출력이 JSON이 아니거나, `blocked` 키가 없으면 — **`blocked: true`와 같이 다룬다.** `compat.py`는 차단일 때도 종료 코드 0으로 JSON을 내도록 만들어져 있으므로, 그렇지 않다는 것은 판정 결과가 아니라 **검사 자체가 성립하지 않았다**는 뜻이다(`python3`이 없거나, `SYNC_ROOT`가 잘못 잡혔거나, 파일이 없는 경우). 이때만 SKILL.md가 문구를 직접 쓴다:
+
+> "호환성 검사를 실행하지 못했습니다. 이 레포를 안전하게 다룰 수 있는지 판단할 수 없어 중단했습니다. 0단계에서 찾은 플러그인 루트가 올바른지, `python3`이 있는지 확인하세요."
+
+출력 JSON의 `blocked`가 `true`면 **여기서 중단한다.** 파일 복사(4단계)도 `plugins.json`(5단계)도 MCP 수집(6단계)도 하지 않는다.
+
+**`message` 필드를 그대로 보여준다. 명령을 직접 타자하지 않는다** — 안내 문구는 `compat.py`가 만드는 것이 계약이고, SKILL.md가 따로 쓰면 드리프트한다.
+
+덧붙이는 한 문장은 **`blocked`가 아니라 `reason`으로 분기한다.** `blocked`는 "차단"이라는 뜻일 뿐 "업그레이드하면 풀린다"는 뜻이 아니다.
+
+| `reason` | 덧붙일 문장 |
+|---|---|
+| `older_than_min_reader` / `my_version_unknown` / `min_reader_unparsable` | "백업을 중단했습니다. 위 명령으로 업데이트한 뒤 다시 실행하세요." |
+| `metadata_unreadable` | "백업을 중단했습니다. 표식을 읽을 수 없어 이 레포를 안전하게 다룰 수 있는지 판단할 수 없기 때문입니다." |
+| `repo_not_found` | "백업을 중단했습니다. 레포 경로를 찾지 못했습니다." |
+| `check_failed` | "백업을 중단했습니다. 호환성 검사 자체가 실패했습니다." |
+
+`metadata_unreadable`에 "업데이트하세요"를 붙이면 **틀린 해법**이다. 그 갈래의 `message`에는 업그레이드 명령이 의도적으로 빠져 있으므로 "위 명령"이 가리킬 것도 없다.
+
+`pull_only` 가드가 1단계에서 하는 것과 같은 형태다. **차단은 이 명령에만 건다** — status를 막으면 진단 수단이 사라지고 restore를 막으면 업데이트 안내를 받을 경로가 사라진다.
+
+`blocked`가 `false`면 조용히 다음 단계로 간다.
 
 ### 3. Git User 설정
 
@@ -186,6 +246,35 @@ settings.json에서 플러그인 관련 필드만 추출한다:
 python3 $SYNC_SCRIPTS/extract_plugins.py plugins.json
 ```
 
+### 5.5 다운그레이드 사고 탐지
+
+**MCP 수집보다 먼저 한다.** 6단계가 `mcp-servers.json`을 v2로 덮어쓰면 "레포가 v1 배열"이라는 증거가 사라져 탐지 자체가 불가능해진다.
+
+```bash
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
+```
+
+`status`가 `"skipped"`면 탐지만 건너뛰고 백업은 계속한다. 탐지는 부가 기능이다. 다만 **`reason`을 사용자에게 알린다** — "사고가 없다"가 아니라 "확인하지 못했다"이기 때문이다.
+
+`newer_schema_seen`이 `true`면 히스토리에 **이 버전이 알아보지 못하는 백업**이 있다는 뜻이다. 그 사실을 알리고, 복구 후보로 제시된 커밋이 그보다 오래된 것임을 명시한다.
+
+`downgrade_suspected`가 `true`면 레포의 `mcp-servers.json`이 v1 배열인데 이 기기의 base는 v2였다는 뜻이다 — **옛 버전 기기가 덮어썼다.** 사용자에게 다음을 보여주고 고르게 한다.
+
+1. 사고 사실과 근거: "백업 레포의 MCP 파일이 옛 형식으로 되돌아가 있습니다. 이 기기가 마지막으로 본 것은 새 형식이었습니다."
+2. `candidate`가 있으면 그 커밋의 `date`·`subject`·`server_count`·`server_names`
+3. 선택지 셋:
+   - **복구한다** — 후보 커밋의 파일을 레포 작업본에 되돌려 놓고 백업을 계속한다. 이어지는 6단계의 3-way 병합이 로컬과 정상적으로 합친다.
+     ```bash
+     git -C "$SYNC_REPO" show "<sha>:mcp-servers.json" > "$SYNC_REPO/mcp-servers.json"
+     ```
+   - **복구하지 않고 계속한다** — 현재 레포 상태 그대로 백업한다.
+   - **중단한다** — 다른 기기의 상태를 확인한 뒤 다시 온다.
+
+`candidate`가 `null`이면 히스토리에 v2 커밋이 없다는 뜻이다. 사고는 알리되 복구는 제안하지 않는다.
+
+**자동으로 복구하지 않는다.** 옛 기기가 *의도적으로* 지운 서버까지 되살리기 때문이다.
+
 ### 6. mcp-servers.json 생성 (키 단위 3-way 병합)
 
 `~/.claude.json`의 user 스코프 `mcpServers`를 읽어 레포의 `mcp-servers.json`과 서버 이름 키 단위로 병합한다. `claude mcp list`는 호출하지 않는다.
@@ -220,10 +309,10 @@ cat /tmp/claude-sync-mcp.json
 
 ### 7. sync-metadata.json 생성
 
-백업 시점의 메타데이터를 기록한다. 이 파일은 restore나 status에서 충돌 판단에 사용된다.
+백업 시점의 파일 해시와 **버전 표식**을 기록한다.
 
 ```bash
-python3 $SYNC_SCRIPTS/generate_metadata.py sync-metadata.json
+python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"
 ```
 
 생성되는 파일 예시:
@@ -231,12 +320,21 @@ python3 $SYNC_SCRIPTS/generate_metadata.py sync-metadata.json
 ```json
 {
   "files": {
+    "CLAUDE.md": "1c2d3e4f5a6b...(sha256 64자)",
     "agents/code-reviewer.md": "a3f2c1d4e5b6...(sha256 64자)",
-    "skills/investigate/SKILL.md": "9d8e7f6a5b4c...(sha256 64자)",
-    "CLAUDE.md": "1c2d3e4f5a6b...(sha256 64자)"
-  }
+    "skills/investigate/SKILL.md": "9d8e7f6a5b4c...(sha256 64자)"
+  },
+  "min_reader_version": "3.0.0",
+  "schema": { "mcp-servers.json": 2 },
+  "written_by_version": "3.0.0"
 }
 ```
+
+- `written_by_version` — 이 백업을 쓴 플러그인 버전. 정보일 뿐 판정에 쓰지 않는다.
+- `min_reader_version` — **이 백업을 읽는 데 필요한 최소 버전.** 2.5단계의 차단 근거가 이것 하나다.
+- `schema` — 사람이 읽는 요약. 항목별 보류는 각 파일 자체의 `version` 필드로 판정하므로 이 맵은 판정에 쓰지 않는다.
+
+이 파일은 매 백업마다 재생성되는 파생 산출물이며 **reconcile 대상이 아니다.** 시각·기기명은 넣지 않는다 — 매번 diff가 생겨 소음이 된다. 언제·누가는 git commit이 이미 기록한다.
 
 ### 8. bootstrap.sh 복사
 
@@ -316,3 +414,12 @@ fi
 ### 12. 결과 보고
 
 백업 완료 후 변경된 파일 목록과 결과를 사용자에게 요약해서 보여준다.
+
+레포에 `sync-metadata.json`을 처음 쓴 경우(직전 커밋에 그 파일의 `min_reader_version`이 없었던 경우) 한 번만 알린다. 아래 명령으로 레포에서 직접 확인한다 — 짐작하지 않는다:
+
+```bash
+git -C "$SYNC_REPO" show HEAD~1:sync-metadata.json 2>/dev/null \
+  | grep -q min_reader_version || echo "표식을 처음 기록했습니다"
+```
+
+> "이 백업은 claude-sync 3.0.0 이상을 요구하도록 기록되었습니다. **3.0.0 이상 기기는 이 표식을 읽고 스스로 멈춥니다. 그러나 2.x 기기는 멈추지 않습니다** — 2.x에는 이 가드가 없어, `/sync-backup`을 실행하면 레포를 옛 형식으로 되돌리고 명령에 공백이 든 서버를 누락시킵니다. 모든 기기를 3.0.0으로 올리고 재시작하기 전에는 다른 기기에서 `/sync-backup`을 실행하지 마세요."

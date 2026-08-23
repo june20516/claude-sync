@@ -139,12 +139,32 @@ def _recognized_servers(obj):
     v1 배열과 servers가 dict인 v2 객체만 인정한다. 이 판정이 parse_base·parse_backup·
     load_backup의 공통 기준이다 — 세 곳이 갈리면 "이력은 못 믿는데 레포는 믿는" 비대칭이
     생기고, 그 비대칭이 상위 버전 백업을 파괴한다.
+
+    version이 SCHEMA_VERSION보다 높다고 주장하면 알아보지 못한 것으로 취급한다.
+    형태만 보면 미래의 v3 문서({"version": 3, "servers": {...}})가 통과해 그대로
+    병합되는데, v3가 servers 값의 의미를 바꿨다면 조용히 파괴된다.
     """
     if isinstance(obj, list):
-        return _servers_from_obj(obj)
+        return _servers_from_obj(obj)          # v1 배열에는 version 개념이 없다
     if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
+        if _claims_newer_schema(obj.get("version")):
+            return None
         return _servers_from_obj(obj)
     return None
+
+
+def _claims_newer_schema(version):
+    """version이 SCHEMA_VERSION보다 높다고 주장하는가.
+
+    float까지 본다. {"version": 3.0}은 파이썬이 아닌 도구(jq, YAML 변환기, 다른 언어의
+    v3 writer)가 실제로 만드는 형태다. int만 막고 float를 통과시키면 게이트의 존재
+    이유 자체가 무력화된다.
+    bool은 제외한다 — True는 int의 인스턴스지만 버전 주장이 아니다.
+    문자열("3")은 통과시킨다. 손으로 고친 문서를 막지 않기 위해서다.
+    """
+    if isinstance(version, bool):
+        return False
+    return isinstance(version, (int, float)) and version > SCHEMA_VERSION
 
 
 def parse_backup(data):

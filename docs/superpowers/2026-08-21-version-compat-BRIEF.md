@@ -1,7 +1,10 @@
 # 버전 호환성 — 후속 작업 브리프
 
 - 작성: 2026-08-21
-- 상태: **착수 전.** 조사·결정이 선행되어야 한다.
+- 상태: **완료.** 조사(2장)와 결정(3장)이 끝났고 설계는
+  `specs/2026-08-21-version-compat-design.md`, 구현은 `plans/2026-08-21-version-compat.md`로 이어졌다.
+  **이 문서는 조사 기록으로 남긴다.** 5장의 다운그레이드 탐지 위치(6.5단계)는
+  설계 8.1에서 5.5단계로 정정되었다 — MCP 수집이 레포 파일을 덮어쓰면 증거가 사라진다.
 - **작업 브랜치: `release/3.0.0`에서 분기하고, PR도 `release/3.0.0`을 target으로 연다.**
 - 선행: `fix/mcp-config-source` (PR #2, `release/3.0.0`에 머지됨). 그 안에서
   **"모르면 안 쓴다" 가드는 이미 구현**되었다.
@@ -42,14 +45,109 @@
 
 ## 2. 먼저 조사할 것
 
-### 2.1 `autoUpdate`의 의미 — 최우선
+### 2.1 `autoUpdate`의 의미 — **확인 완료 (2026-08-21)**
 
-`~/.claude/settings.json`의 `extraKnownMarketplaces.<name>.autoUpdate: true`가 무엇을 하는지 확정해야 한다. **이 하나가 나머지 작업의 가치를 절반 이상 좌우한다.**
+`~/.claude/settings.json`의 `extraKnownMarketplaces.<name>.autoUpdate: true`가 무엇을 하는지가
+나머지 작업의 가치를 좌우한다. 브리프는 두 갈래를 상정했다 — 플러그인까지 갱신하는가,
+마켓플레이스 메타데이터만 갱신하는가.
 
-- 플러그인까지 자동 갱신 → 버전 불일치 창이 짧다 → 차단 로직의 가치가 낮다
-- 마켓플레이스 메타데이터만 갱신 → 사용자가 명시적으로 `plugin update`를 할 때까지 불일치가 지속된다 → 차단·안내의 가치가 높다
+**결론: 플러그인까지 갱신한다. 그러나 그것이 차단 로직의 가치를 낮추지는 않는다.**
 
-측정 방법: 버전을 올려 푸시한 뒤, 다른 기기(또는 임시 HOME)에서 아무 조작 없이 캐시 디렉토리 버전이 바뀌는지 관찰한다. `claude plugin marketplace add --help`에 `autoUpdate` 플래그가 없으므로 기본값이거나 대화형 `/plugin` UI가 설정하는 것으로 보인다 — 어느 쪽인지도 함께 확인한다.
+측정은 두 갈래로 했다. (A) 이 기기의 실제 상태 관찰 — 어떤 파일도 변경하지 않았다.
+(B) `claude` 2.1.238 번들 정적 분석. 임시 HOME(`HOME=$T`)으로 격리가 성립함을 먼저 확인했고
+(`claude plugin marketplace list`가 `$T` 안에만 파일을 만들었다), 실제
+`~/.claude/settings.json`·`~/.claude.json`은 읽기만 했다.
+
+#### 증거 1 — 사용자 조작 없이 플러그인 버전이 올라갔다 (관찰)
+
+2026-08-21T02:29:26~32Z, 이 기기에서 아무 명령도 실행하지 않은 채:
+
+| 대상 | 시각(UTC) | 결과 |
+|---|---|---|
+| 마켓플레이스 `claude-plugins-official` | 02:29:26.456 | 갱신 |
+| 마켓플레이스 `claude-sync` | 02:29:30.264 | 갱신 |
+| 마켓플레이스 `suberpower` | 02:29:30.494 | 갱신 |
+| 플러그인 `frontend-design` / `skill-creator` | 02:29:30.54x | 갱신 |
+| 플러그인 **`figma` 2.2.95 → 2.2.96** | 02:29:32.464 | **버전 상승** |
+
+`autoUpdate`가 없는 `planning-with-files`는 마켓플레이스도 플러그인도
+2026-03-18 이후 다섯 달째 그대로다. **게이트는 `autoUpdate`다.**
+
+#### 증거 2 — 문언 (번들)
+
+`known_marketplaces.json` 스키마의 필드 설명, 그리고 `/plugin` UI 문구:
+
+> `autoUpdate`: "Whether to automatically update this marketplace **and its installed plugins** on startup"
+>
+> "Auto-update enabled. Claude Code will automatically update this marketplace **and its installed plugins**."
+
+#### 증거 3 — 코드 경로 (번들)
+
+`startBackgroundHousekeeping`이 세션 시작 시 오토업데이트 pass를 띄운다. 순서는:
+
+1. 자동 업데이터가 꺼져 있으면 **전체 skip** (`DISABLE_UPDATES`·`DISABLE_AUTOUPDATER` 등)
+2. 효력 있는 `autoUpdate`가 켜진 마켓플레이스 **집합**을 만든다
+3. **0~600,000ms(0~10분) 균등 랜덤 지연**
+4. 그 집합의 마켓플레이스를 각각 refresh
+5. **같은 집합**의 설치된 플러그인을 update — 로그 `Plugin autoupdate: updated {plugin} from {old} to {new}`
+
+4와 5는 같은 pass의 연속된 두 단계이고 같은 집합을 쓴다. 공식/비공식으로 갈리는 분기는 없다.
+즉 **"메타데이터만 갱신" 갈래는 존재하지 않는다.**
+
+---
+
+### 2.1.1 그런데도 불일치 창은 닫히지 않는다
+
+네 가지 이유가 있고, 전부 측정으로 확인됐다.
+
+**(1) 서드파티 마켓플레이스의 기본값은 꺼짐이다. — 가장 중요하다**
+
+효력 있는 값은 `settings.json`의 명시값 > `known_marketplaces.json`의 명시값 > 기본값 순이다.
+기본값이 켜짐인 것은 Anthropic 예약 이름 집합뿐이다 —
+`claude-plugins-official`, `claude-code-plugins`, `anthropic-marketplace`, `agent-skills` 등.
+**`june20516/claude-sync`는 여기 없다.** 이 기기에 `autoUpdate: true`가 있는 것은 사용자가
+`/plugin` UI에서 직접 켰기 때문이다.
+
+그리고 **`settings.json`은 claude-sync의 동기화 대상이 아니다**(동기화 대상은 agents·skills·
+CLAUDE.md·plugins.json·mcp-servers.json). 즉 이 설정은 다른 기기로 전파되지 않는다.
+새 기기, 또는 켜 두지 않은 기기는 **사용자가 `plugin update`를 칠 때까지 영구히 옛 버전이다.**
+
+**(2) 갱신은 세션 시작 시에만, 그것도 0~10분 지연 뒤에 일어난다.**
+세션을 열자마자 `/sync-backup`을 실행하면 지연 구간에 걸려 옛 코드가 돈다.
+
+**(3) 갱신되어도 그 세션은 옛 코드를 계속 쓴다.**
+설치 경로가 버전별로 갈리고 옛 디렉토리가 지워지지 않는다 — 실측으로
+`figma/2.2.90`, `2.2.91`, `2.2.95`, `2.2.96`이 모두 남아 있다. 실행 중인 세션의
+`CLAUDE_PLUGIN_ROOT`는 옛 버전 디렉토리에 고정된 채다.
+알림은 `Plugins updated: figma · Run /reload-plugins to apply` 한 줄이며
+**priority가 low이고 10초 뒤 사라진다.** 놓치기 쉽다.
+
+**(4) 기기를 켜지 않으면 갱신도 없다.** 온라인이어야 하고 Claude Code를 실행해야 한다.
+
+### 2.1.2 설계에 주는 함의
+
+- **(b) 가드의 가치는 낮아지지 않는다. (1) 때문에 오히려 높다.**
+  다른 기기의 `autoUpdate` 상태를 우리는 알 수도 없고 켤 수도 없다. "자동으로 따라잡을 것"을
+  전제한 설계는 세울 수 없다.
+- **(c) 다운그레이드 사고의 빈도는 낮아진다.** `autoUpdate`를 켠 기기라면 며칠 안에 따라잡는다.
+  하지만 (1)에 해당하는 기기가 하나라도 있으면 사고는 계속 가능하다. **(c)를 버릴 근거는 아니고,
+  (a)·(b) 뒤로 미룰 근거는 된다.**
+- **안내 문구에 `/reload-plugins` 또는 재시작을 반드시 넣는다.** `claude plugin update`의
+  "restart required to apply"와 같은 이유이며, 자동 갱신 경로에서도 똑같이 필요하다.
+- **3.0.0 배포 자체에는 `autoUpdate`가 도움이 되지 않는다.** 2.0.0 기기가 3.0.0을 받기 전에
+  `/sync-backup`을 실행하면 레포가 파괴되고, 그것을 막을 코드는 2.0.0 안에 없다.
+  릴리즈 계획의 "모든 기기를 올린 뒤에 backup" 순서는 그대로 유효하다.
+
+### 2.1.3 부수 실측
+
+- **대상 설치분**: scope가 `user` 또는 `managed`면 항상 대상. `project` 스코프는 현재
+  프로젝트일 때만. claude-sync는 user 스코프이므로 대상이다.
+- **소스 필터**: 로컬 경로를 가리키는 git URL은 제외된다. 관리 정책(허용/차단 목록)이 설정돼 있으면 그것도 적용된다.
+- **관리 설정 우선**: 효력 있는 `autoUpdate`를 managed-settings.json이나 `--settings`가 정하면
+  `/plugin` UI에서 바꿀 수 없다.
+- `claude plugin marketplace add`에 `autoUpdate` 플래그는 여전히 없다. 켜는 경로는
+  `/plugin` UI의 토글, 또는 `settings.json`의 `extraKnownMarketplaces.<name>.autoUpdate`다.
+  후자는 세션 시작 시 `known_marketplaces.json`으로 동기화된다.
 
 ### 2.2 semver가 Claude Code 동작에 주는 영향 — **확인 완료 (2026-08-21)**
 

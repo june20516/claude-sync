@@ -1,4 +1,6 @@
 import json
+import os
+import re
 
 import pytest
 
@@ -622,3 +624,102 @@ def test_load_backup_stays_lenient_on_broken_json(tmp_path):
     path = str(tmp_path / "mcp-servers.json")
     open(path, "wb").write(b"{not json")
     assert mc.load_backup(path) == {}
+
+
+# --- 상위 스키마 게이트 (spec 7장) ---
+
+def _v3_doc():
+    """형태는 v2와 같지만 version이 3인 문서. 형태만 보면 알아보게 된다."""
+    return json.dumps({"version": 3, "scope": "user", "servers": {"a": {"command": "a"}}})
+
+
+def test_load_backup_rejects_higher_schema_version(tmp_path):
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(_v3_doc(), encoding="utf-8")
+    with pytest.raises(mc.UnknownBackupSchema):
+        mc.load_backup(str(path))
+
+
+def test_parse_base_rejects_higher_schema_version():
+    """레포와 base가 같은 기준을 써야 한다 — 비대칭이 상위 버전 백업을 파괴한다."""
+    assert mc.parse_base(_v3_doc().encode("utf-8")) is None
+
+
+def test_parse_backup_degrades_higher_schema_version():
+    assert mc.parse_backup(_v3_doc()) == {}
+
+
+PLUGIN_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+PROD_DIRS = (os.path.join(PLUGIN_ROOT, "lib"), os.path.join(PLUGIN_ROOT, "skills"))
+PARSE_BACKUP_CALL = re.compile(r"\b(?:mc|mcp_config)\.parse_backup\s*\(")
+
+
+def test_no_production_code_calls_parse_backup():
+    """읽기 경로에서 parse_backup을 쓰면 상위 버전 백업이 '서버 0개'가 된다.
+
+    레포 파일은 load_backup(UnknownBackupSchema로 막는다), base 블롭은 parse_base(None).
+    parse_backup만 알아볼 수 없는 문서를 {}로 degrade하므로, 게이트가 한 곳에 있어도
+    이 함수를 통과하는 경로만은 fail-open이다. **프로덕션에 호출부가 하나도 없다는
+    사실 자체가 계약이다** — 새 호출부가 생기면 여기서 걸린다.
+    """
+    offenders = []
+    for root_dir in PROD_DIRS:
+        for root, _, files in os.walk(root_dir):
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(root, name)
+                with open(path, encoding="utf-8") as f:
+                    if PARSE_BACKUP_CALL.search(f.read()):
+                        offenders.append(os.path.relpath(path, PLUGIN_ROOT))
+    assert not offenders, (
+        "parse_backup 호출부가 생겼다: %s — 레포는 load_backup, base는 parse_base다"
+        % sorted(offenders)
+    )
+
+
+def test_current_schema_version_still_accepted(tmp_path):
+    path = tmp_path / "mcp-servers.json"
+    mc.dump_backup({"a": {"command": "a"}}, str(path))
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
+
+
+def test_v1_array_still_accepted(tmp_path):
+    """v1 배열에는 version 개념이 없다. 게이트가 이것을 막으면 안 된다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps([{"name": "a", "command": "a"}]), encoding="utf-8")
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
+
+
+def test_object_without_version_still_accepted(tmp_path):
+    """손으로 만든 문서를 막을 이유는 없다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps({"servers": {"a": {"command": "a"}}}), encoding="utf-8")
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
+
+
+@pytest.mark.parametrize("version", [3.0, 99.5])
+def test_float_version_claiming_newer_is_rejected(version, tmp_path):
+    """jq나 다른 언어의 writer가 만드는 형태다. int만 막으면 게이트가 무력화된다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps({"version": version, "servers": {"a": {"command": "a"}}}),
+                    encoding="utf-8")
+    with pytest.raises(mc.UnknownBackupSchema):
+        mc.load_backup(str(path))
+
+
+@pytest.mark.parametrize("version", ["3", True, None, [3]])
+def test_non_numeric_version_is_still_recognized(version, tmp_path):
+    """결정: 숫자가 아니면 버전 주장으로 보지 않는다. 손으로 고친 문서를 막지 않는다."""
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps({"version": version, "servers": {"a": {"command": "a"}}}),
+                    encoding="utf-8")
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
+
+
+@pytest.mark.parametrize("version", [1, 2, 2.0, 0])
+def test_version_at_or_below_current_is_recognized(version, tmp_path):
+    path = tmp_path / "mcp-servers.json"
+    path.write_text(json.dumps({"version": version, "servers": {"a": {"command": "a"}}}),
+                    encoding="utf-8")
+    assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
