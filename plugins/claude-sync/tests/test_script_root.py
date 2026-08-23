@@ -33,6 +33,9 @@ VERSIONS = ["2.0.0", "3.0.0", "3.9.0", "3.10.0", "12.0.0"]
 HIGHEST = "/12.0.0"
 SORT_PIPE = "| sort -V | tail -1 |"
 
+# restore의 검사 절은 두 방향(상위 버전 / 다운그레이드)을 다 다루므로 제목이 다르다.
+RESTORE_CHECK_SECTION = "2.5 호환성·다운그레이드 검사"
+
 
 def step0_block(skill):
     """SKILL.md의 0단계 bash 블록을 파일에서 그대로 꺼낸다."""
@@ -174,18 +177,6 @@ def read_skill(name):
         return f.read()
 
 
-def test_backup_detects_downgrade_before_mcp_collection():
-    """수집이 레포 파일을 덮어쓰면 v1 배열이라는 증거가 사라진다.
-
-    실행 줄 전체를 앵커로 쓴다 — 파일명만 쓰면 다른 절의 산문에 등장하는
-    같은 파일명이 순서를 우연히 맞춰 통과시킬 수 있다(불변식 7).
-    """
-    text = read_skill("sync-backup")
-    assert text.index('detect_downgrade.py" "$SYNC_REPO"') < text.index(
-        'collect_mcp.py" "$SYNC_REPO" "$MCP_STAGING"'
-    )
-
-
 def test_backup_documents_marker_fields():
     """세 필드 각각에 대한 설명 문장(백틱 표기)이 있는지 확인한다.
 
@@ -217,6 +208,14 @@ def section(skill, heading):
     text = read_skill(skill)
     i = text.index("### " + heading)
     m = re.compile(r"\n### ").search(text, i + 1)
+    return text[i:m.start() if m else len(text)]
+
+
+def subsection(skill, heading):
+    """'#### <heading>'부터 다음 '#### ' 또는 '### '까지 잘라낸다."""
+    text = read_skill(skill)
+    i = text.index("#### " + heading)
+    m = re.compile(r"\n#{3,4} ").search(text, i + 1)
     return text[i:m.start() if m else len(text)]
 
 
@@ -254,7 +253,7 @@ COMPAT_WIRING = {
         ),
     },
     "sync-restore": {
-        "section": "2.5 호환성 검사",
+        "section": RESTORE_CHECK_SECTION,
         "after_section": "### 2. 레포에서 최신 상태 가져오기",
         "before_section": "### 3. 파일별 reconcile",
         "before_calls": (
@@ -331,16 +330,28 @@ def test_compatibility_check_precedes_everything_it_gates(skill):
         )
 
 
-# 다운그레이드 탐지는 backup(쓰기 경로)과 status(읽기 경로)가 같이 쓴다(spec 9.2).
+# 다운그레이드 탐지는 **세 스킬 모두** 부른다.
 # 부르는 경로가 스킬마다 다르므로($SYNC_SCRIPTS vs $SYNC_BACKUP_SCRIPTS) 공통 조각만 앵커로 쓴다.
-# restore는 명세에 없어 여기서 단언하지 않는다 — 안 하기로 정한 것과 명세가 없는 것은 다르다.
+#
+# restore가 뒤늦게 합류했다. 브리프·스펙·계획이 모두 (c)를 backup·status 이야기로만 썼고
+# 여섯 단계가 그대로 통과시켰는데, restore야말로 사고가 **마지막 피해**를 내는 자리다 —
+# 되돌아간 레포에는 서버가 없고 base에는 있으므로 restore_plan이 그것을 local_stale로 넣고,
+# 6-5가 "다른 기기가 삭제했습니다"라며 제거를 권한다. 그 서버의 마지막 사본이 로컬에 있는데도.
 DOWNGRADE_CALL = 'detect_downgrade.py" "$SYNC_REPO"'
-DOWNGRADE_CALLERS = ["sync-backup", "sync-status"]
+DOWNGRADE_CALLERS = SKILLS
+
+# 탐지 호출이 있어야 할 절. 파일 어딘가면 되는 검사는 호출이 엉뚱한 단계로 옮겨져도
+# 통과한다 — 실측으로, 호출을 MCP 계획 바로 앞으로 옮겼을 때 383개가 전부 통과했다.
+DOWNGRADE_SECTION = {
+    "sync-backup": "5.5 다운그레이드 사고 탐지",
+    "sync-status": "1.5 호환성 검사",
+    "sync-restore": RESTORE_CHECK_SECTION,
+}
 
 
 @pytest.mark.parametrize("skill", DOWNGRADE_CALLERS)
 def test_downgrade_detection_is_actually_called(skill):
-    """탐지 호출도 실행줄로 건다.
+    """탐지 호출도 실행줄로 걸고, 지정된 절 안에 있는지까지 본다.
 
     실측으로, status에서 이 줄과 $SYNC_BACKUP_SCRIPTS 정의를 지웠을 때 367개가 전부
     통과했다. 절의 산문("확인하지 못했다", newer_schema_seen)은 그대로 남기 때문이다.
@@ -348,6 +359,34 @@ def test_downgrade_detection_is_actually_called(skill):
     count = read_skill(skill).count(DOWNGRADE_CALL)
     assert count == 1, (
         "%s: 다운그레이드 탐지 호출이 %d번이다 — %r" % (skill, count, DOWNGRADE_CALL)
+    )
+    heading = DOWNGRADE_SECTION[skill]
+    assert DOWNGRADE_CALL in section(skill, heading), (
+        "%s: 탐지 호출이 '%s' 절 밖에 있다" % (skill, heading)
+    )
+
+
+# 탐지 호출이 반드시 앞서야 하는 실행줄.
+#  - backup : 수집이 레포 파일을 v2로 덮어쓰면 "레포가 v1"이라는 증거가 사라진다
+#  - restore: 6-5의 local_stale 안내 문구가 이 판정에 기대므로 그 앞이어야 한다
+# status는 읽기 전용이라 순서가 결과를 바꾸지 않으므로 표에 없다.
+DOWNGRADE_BEFORE = {
+    "sync-backup": 'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$MCP_STAGING"',
+    "sync-restore": 'python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json"',
+}
+
+
+@pytest.mark.parametrize("skill", sorted(DOWNGRADE_BEFORE))
+def test_downgrade_detection_precedes_what_it_informs(skill):
+    """탐지가 그 결과를 쓰는 단계보다 앞이어야 한다.
+
+    실행줄 전체를 앵커로 쓴다 — 파일명만 쓰면 다른 절의 산문에 등장하는
+    같은 파일명이 순서를 우연히 맞춰 통과시킬 수 있다(불변식 7).
+    """
+    text = read_skill(skill)
+    call = index_of(text, DOWNGRADE_CALL, skill)
+    assert call < index_of(text, DOWNGRADE_BEFORE[skill], skill), (
+        "%s: 다운그레이드 탐지가 %r보다 뒤에 있다" % (skill, DOWNGRADE_BEFORE[skill])
     )
 
 
@@ -409,20 +448,69 @@ def test_status_puts_version_mismatch_first():
 
 
 def test_restore_asks_instead_of_deciding():
-    sec = section("sync-restore", "2.5 호환성 검사")
+    sec = section("sync-restore", RESTORE_CHECK_SECTION)
     assert "계속할지 묻는다" in sec
     assert "부분 복원" in sec
 
 
 def test_restore_branches_on_reason_for_upgrade_advice():
     """업그레이드로 풀리지 않는 갈래에 '업데이트하세요'를 붙이면 틀린 해법이다."""
-    sec = section("sync-restore", "2.5 호환성 검사")
+    sec = section("sync-restore", RESTORE_CHECK_SECTION)
     assert "업데이트를 권하지 않는다" in sec
 
 
 def test_restore_reports_version_skips_as_pending():
     sec = section("sync-restore", "7. 결과 보고")
     assert "보류" in sec
+
+
+def test_restore_reports_downgrade_and_points_at_the_writable_path():
+    """restore는 push하지 않으므로 레포를 고칠 수 없다. 고칠 수 있는 경로로 보내야 한다.
+
+    여기서 "복구했다"고 말하거나 복구를 실행하는 시늉을 하면, 사용자는 레포가
+    나은 줄 알고 떠난다.
+    """
+    sub = subsection("sync-restore", "다운그레이드 탐지 결과")
+    assert "downgrade_suspected" in sub
+    assert "push하지 않으므로" in sub
+    assert "/sync-backup" in sub
+    # "확인하지 못했다"와 "사고가 없다"를 구별해 보고해야 한다(불변식 6).
+    assert "reason" in sub
+
+
+def test_restore_local_stale_does_not_claim_deletion_when_downgraded():
+    """다운그레이드 의심 시 "다른 기기가 삭제했습니다"는 거짓이고, 제거로 이끈다.
+
+    아무도 지우지 않았다. 낮은 버전 기기가 레포를 되돌리며 흘린 것이고, 그렇다면
+    **로컬에 남은 값이 마지막 사본**이다. 여기서 제거를 권하면 이 릴리즈가 막으려는
+    사고가 완성된다 — restore가 그 마지막 피해를 내는 자리다.
+
+    기본 문구가 `downgrade_suspected` 분기 **뒤에** 와야 한다. 순서를 걸지 않으면
+    분기를 지워도 문장이 남아 통과한다(불변식 7).
+    """
+    sub = subsection("sync-restore", "6-5. ")
+    assert "downgrade_suspected" in sub, "6-5가 탐지 결과로 분기하지 않는다"
+    guard = sub.index("`downgrade_suspected`가 거짓일 때")
+    assert guard < sub.index("다른 기기가 이 서버를 삭제했습니다"), (
+        "기본 문구가 분기보다 앞에 있다 — 분기를 지워도 통과한다"
+    )
+    # 절 전체에 대한 존재 검사는 안 된다 — 같은 표현이 표에도, 작성자용 설명문에도 있어
+    # 정작 사용자에게 보일 문장이 지워져도 가려 준다. 실측으로 그렇게 세 갈래를
+    # 놓쳤다(불변식 7). 갈래를 자르고, 그 안에서 다시 인용문만 자른다.
+    true_branch = sub[sub.index("**`downgrade_suspected`가 참일 때**"):sub.index("| 선택 |")]
+
+    # 사용자에게 실제로 보일 문구. 설명문이 아니라 이것이 행동을 바꾼다.
+    quote = "\n".join(ln for ln in true_branch.splitlines() if ln.startswith("> "))
+    assert quote, "다운그레이드 갈래에 사용자에게 보일 문구가 없다"
+    assert "유실된 것으로 보입니다" in quote, "삭제가 아니라 유실이라고 말해야 한다"
+    assert "마지막 사본" in quote, "로컬이 마지막 사본일 수 있다는 경고가 없다"
+
+    assert "권하지 않는다" in true_branch, "제거를 권하지 않는다고 말해야 한다"
+
+    # 표의 '제거' 행도 같은 말을 해야 한다. 산문과 표가 갈리면 표가 이긴다.
+    table = sub[sub.index("| 선택 |"):]
+    remove_row = next(ln for ln in table.splitlines() if ln.startswith("| **제거**"))
+    assert "권하지 않는다" in remove_row, remove_row
 
 
 def test_backup_notice_does_not_claim_older_devices_stop_themselves():
@@ -466,7 +554,7 @@ def test_restore_reason_table_covers_every_compat_reason():
     with open(os.path.join(LIB_DIR, "compat.py"), encoding="utf-8") as f:
         reasons = set(REASON_LITERAL.findall(f.read()))
     assert reasons, "compat.py에서 reason을 못 뽑았다 — 정규식이 낡았다"
-    sec = section("sync-restore", "2.5 호환성 검사")
+    sec = section("sync-restore", RESTORE_CHECK_SECTION)
     missing = sorted(r for r in reasons if r not in sec)
     assert not missing, "restore 2.5에 없는 reason: %s" % missing
 
