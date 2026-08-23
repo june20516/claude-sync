@@ -284,6 +284,40 @@ plugin required by an enabled dependent is enabled regardless of this value."*
   다음 세션에 `investigate@skills-dir`로 자동 로드되지만 `enabledPlugins`에 없다.
 
 
+#### 추가 실측 2건 (2026-08-24, 결정 근거)
+
+**N5. `-y/--yes`는 Claude Code 세션 안에서 무시된다. 세션 밖에서만 효력이 있다.**
+
+`source: {"source": "command", ...}`로 선언된 플러그인은 설치 시 **마켓플레이스가 지정한
+셸 명령을 실행한다**(그 명령이 플러그인 디렉토리 경로를 stdout으로 출력하는 방식).
+실제 명령이 실행됐는지 마커 파일로 증명하며 세 갈래를 측정했다.
+
+| 조건 | exit | 명령 실행 | 문구 |
+|---|---|---|---|
+| 세션 안, `-y` 없음 | 1 | **안 됨** | *"Not an interactive terminal, so the command was only displayed, not accepted."* |
+| 세션 안, `-y` 있음 | 1 | **안 됨** | *"-y/--yes is ignored inside a Claude Code session: run this in your own terminal to accept the command shown above."* |
+| 세션 밖(`CLAUDE*` 환경변수 제거), `-y` 있음 | 0 | **실행됨** | 정상 설치 |
+
+→ **세 스킬은 항상 세션 안에서 돌므로 `-y`는 그곳에서 아무 효과가 없다.** 효력이 생기는
+유일한 지점은 세션 밖에서 실행되는 경로(`bootstrap.sh` 같은)이고, 거기가 바로 위험한 곳이다.
+실패 문구는 실행할 명령과 방법("your own terminal", "/plugin details pane")을 그대로 알려주므로
+**사용자에게 그대로 전달하면 된다.**
+
+**N6. 의존성으로 들어온 플러그인을 명시적으로 설치하면 `auto` 표식이 지워진다 — 되돌릴 수 없다.**
+
+```
+$ claude plugin install zeta@testmkt-d
+✔ Plugin "zeta@testmkt-d" is already installed (scope: user) — marked as manually installed
+```
+
+이 호출 전: `zeta`는 `auto: true`, 부모를 지우면 `prune` 대상.
+이 호출 후: `auto` 필드가 사라져 **수동 설치로 승격**되고, 부모를 지워도
+`prune`이 *"Nothing to prune"*이라 답한다.
+
+→ **복원이 `auto` 항목을 그대로 설치하면 그 기기에서 의존성이 영구히 수동 설치로 바뀐다.**
+반대로 부모만 설치하면 자식이 `auto: true`인 채로 자동으로 따라온다(측정 확인).
+즉 `auto` 항목을 백업에서 빼는 것은 **무손실**이다 — 부모가 백업에 있으므로 CLI가 다시 유도한다.
+
 ---
 
 ## 4. 2단계 — 실측이 가른 설계 분기 (확정)
@@ -332,6 +366,34 @@ plugin required by an enabled dependent is enabled regardless of this value."*
    "extraKnownMarketplaces":{...}}`다. 구버전 `check_status.py`는
    `.get("enabledPlugins", {})`로 읽으므로, v2로 감싸면 **죽지는 않지만 빈 집합으로 읽어
    "레포에만 있음"을 오보한다.** MAJOR 상승이 필요한지 판단해 기록한다.
+
+### 5-a. 확정된 설계 결정 (2026-08-24, 사용자 승인)
+
+spec은 아래를 전제로 쓴다. 뒤집으려면 근거를 새로 대야 한다.
+
+**D1. `pluginConfigs`를 동기화 대상에 넣는다. 복원 시 사용자에게 묻되 건너뛸 수 있게 한다.**
+
+`userConfig` 값이 평문이므로(1-b N2) **마스킹이 필수**다. MCP의 `redact`·`secret_keys`·
+`needs_secret` 버킷 구조를 그대로 쓴다 — 값만 `<REDACTED>`로 치환하고 키 이름은 보존해,
+복원 시 "어떤 값을 물어야 하는지"를 레포 파일만 보고 알 수 있게 한다.
+
+MCP와 다른 점은 **건너뛰기가 1급 상태**라는 것이다. 사용자가 값을 지금 모를 수 있으므로:
+
+- 값을 입력하지 않아도 **플러그인 자체는 설치한다.** 설정만 비운 채 둔다.
+- 건너뛴 항목은 복원 보고서에 남기고, 나중에 채우는 방법
+  (`claude plugin install <id> --config <k>=<v>` — 이미 설치된 플러그인에도 값이 갱신되고
+  지정하지 않은 키는 보존된다, 1-b N2)을 함께 안내한다.
+- 건너뛴 상태가 다음 `/sync-status`에서 "레포와 다름"으로 계속 보고되면 소음이 된다.
+  **탈출구가 필요하다**(불변식 3) — spec이 이 상태의 표현과 해소 방법을 정한다.
+
+**D2. 복원 `install`에 `-y`를 붙이지 않는다.**
+
+N5가 보여주듯 세션 안에서는 `-y`가 어차피 무시되므로 **붙여서 얻는 것이 없고**, 효력이
+생기는 유일한 지점(세션 밖 실행)이 정확히 위험한 곳이다. 명령 기반 플러그인은
+**복원하지 않고 사용자에게 넘긴다** — CLI가 실행할 명령 전문과 승인 방법을 이미 출력하므로
+그 문구를 그대로 보여주고 실패 항목으로 수집한다.
+
+`headersHelper`로 아카이브를 받는 플러그인, `update`의 변경된 설치 명령도 같은 갈래다.
 
 ### 공용 코어 추출 판단 기준
 
