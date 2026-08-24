@@ -430,3 +430,26 @@ def test_apply_base_refuses_unknown_schema(tmp_path):
         plan_mcp.apply_base(os.path.join(repo, mc.BACKUP_RELPATH), staging, {},
                             claude_json_path=local, base_dir=write_base_blob(tmp_path, None))
     assert not os.path.exists(os.path.join(staging, mc.BACKUP_RELPATH))
+
+
+def test_collect_does_not_stage_when_repo_write_fails(tmp_path, monkeypatch):
+    """레포 쓰기가 실패하면 스테이징 최종 파일이 남지 않아야 base가 전진하지 않는다.
+
+    남으면 SKILL.md의 게이트 `[ -f ... ]`가 통과해 base가 전진하고,
+    다음 백업이 이 기기 자신의 서버를 케이스 4로 오독한다.
+    """
+    local = write_local(tmp_path, {"x": A})
+    repo = write_repo(tmp_path, None)
+    base_dir = write_base_blob(tmp_path, None)
+    staging = str(tmp_path / "staging")
+    real_dump = mc.dump_backup
+
+    def fail_on_repo(servers, path):
+        if path.endswith(os.path.join("repo", mc.BACKUP_RELPATH)):
+            raise OSError("disk full")
+        return real_dump(servers, path)
+
+    monkeypatch.setattr(mc, "dump_backup", fail_on_repo)
+    with pytest.raises(OSError):
+        collect_mcp.collect(repo, staging, claude_json_path=local, base_dir=base_dir)
+    assert not os.path.exists(os.path.join(staging, mc.BACKUP_RELPATH))
