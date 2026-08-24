@@ -128,3 +128,23 @@ def parse_backup(data, recognize):
 def no_hold(local, repo):
     """보류가 없는 도메인을 위한 기본 훅. MCP 어댑터가 쓴다."""
     return {"value": frozenset(), "action": frozenset()}
+
+
+def diff(local, repo, *, normalize, hold):
+    """상태 비교. 비교 직전 양쪽에 normalize를 적용한다.
+
+    비밀 값은 로컬에 평문, 레포에 마스킹된 형태로 저장되므로 원본끼리 비교하면
+    비밀을 가진 항목이 영구히 "변경됨"으로 보고된다(미수렴).
+    값 보류 키는 세 버킷 어디에도 넣지 않고 held에만 넣는다.
+    """
+    local, repo = normalize(local), normalize(repo)
+    value_held = set(hold(local, repo)["value"])
+    return {
+        "only_local": sorted(set(local) - set(repo) - value_held),
+        "only_repo": sorted(set(repo) - set(local) - value_held),
+        "changed": sorted(
+            name for name in (set(local) & set(repo)) - value_held
+            if not same(local[name], repo[name])
+        ),
+        "held": sorted(value_held),
+    }

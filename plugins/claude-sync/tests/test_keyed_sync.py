@@ -121,3 +121,96 @@ def test_parse_backup_is_lenient():
     assert ks.parse_backup(b"{oops", only_dict_with_items) == {}
     assert ks.parse_backup(b'{"nope": 1}', only_dict_with_items) == {}
     assert ks.parse_backup(b'{"items": {"a": 1}}', only_dict_with_items) == {"a": 1}
+
+
+def mask_secret(mapping):
+    """테스트용 normalize 훅 — 'secret' 필드 값을 가린다. 멱등이다."""
+    out = {}
+    for key, value in mapping.items():
+        if isinstance(value, dict) and "secret" in value:
+            copied = dict(value)
+            copied["secret"] = "<X>"
+            out[key] = copied
+        else:
+            out[key] = value
+    return out
+
+
+def hold_keys(value=(), action=()):
+    """지정한 키를 보류로 만드는 훅 팩토리."""
+    def _hold(local, repo):
+        return {"value": frozenset(value), "action": frozenset(action)}
+    return _hold
+
+
+def test_diff_applies_normalize_to_both_sides():
+    """로컬은 평문, 레포는 마스킹됨. 정규화 없이 비교하면 영원히 changed가 된다."""
+    local = {"a": {"secret": "plain"}}
+    repo = {"a": {"secret": "<X>"}}
+    out = ks.diff(local, repo, normalize=mask_secret, hold=ks.no_hold)
+    assert out["changed"] == []
+
+
+def trim_whitespace(mapping):
+    """테스트용 normalize 훅 — 문자열 값의 앞뒤 공백을 제거한다. 멱등이다.
+
+    mask_secret과 달리 repo 쪽 원본이 이미 정규화된 형태가 아니므로, local만 정규화하고
+    repo를 원본 그대로 두는 변조도 이 훅으로는 숨을 곳이 없다.
+    """
+    return {k: (v.strip() if isinstance(v, str) else v) for k, v in mapping.items()}
+
+
+def test_diff_applies_normalize_to_local_side_too():
+    """local만 정규화해도 repo가 우연히 이미 정규화된 형태라 앞의 테스트를 통과할 수 있다
+    (mask_secret은 멱등이라 repo="<X>"는 이미 정규화된 값과 같다). 양쪽 다 원본이
+    미정규화 상태인 값을 써서, local 쪽 정규화 누락도 changed로 드러나게 한다.
+    """
+    local = {"a": "value "}
+    repo = {"a": " value"}
+    # local, repo = normalize(local), repo (변조 2: local만 정규화)로 바꾸면
+    # repo가 " value"로 남아 local의 "value"와 달라 changed=["a"]가 되어 이 줄이 FAIL한다.
+    out = ks.diff(local, repo, normalize=trim_whitespace, hold=ks.no_hold)
+    assert out["changed"] == []
+
+
+def test_diff_reports_three_buckets():
+    out = ks.diff({"a": 1, "b": 1}, {"b": 2, "c": 1},
+                  normalize=lambda m: m, hold=ks.no_hold)
+    assert out["only_local"] == ["a"]
+    assert out["only_repo"] == ["c"]
+    assert out["changed"] == ["b"]
+    assert out["held"] == []
+
+
+def test_diff_moves_held_keys_out_of_all_three_buckets():
+    """보류 키는 only_local/only_repo/changed 어디에도 들어가지 않는다."""
+    out = ks.diff({"a": 1, "b": 1}, {"b": 2, "c": 1},
+                  normalize=lambda m: m, hold=hold_keys(value=("a", "b", "c")))
+    assert out["only_local"] == [] and out["only_repo"] == [] and out["changed"] == []
+    assert out["held"] == ["a", "b", "c"]
+
+
+def test_diff_buckets_are_sorted():
+    """네 버킷은 전부 정렬된 리스트다 — 사용자에게 그대로 보고되는 순서이므로 결정론이어야 한다.
+
+    set의 순회 순서는 파이썬 프로세스마다 무작위인 문자열 해시에 의존한다. 원소를 2~3개만
+    쓰면 set 순회 순서가 우연히 정렬 순서와 같아져 sorted를 list로 바꾼 변조(변조 6)를
+    놓칠 수 있다. 10개 키를 삽입 순서와 다르게 넣어 우연히 일치할 확률을 무시할 수준으로
+    낮춘다 — sorted(...)를 list(...)로 바꾸면 이 네 단언 중 최소 하나는 거의 모든 실행에서
+    FAIL한다(자세한 재현은 self-review에서 5회 반복 실행으로 확인했다).
+    """
+    keys = ["j", "h", "f", "d", "b", "i", "g", "e", "c", "a"]
+    expected = sorted(keys)
+
+    only_local = ks.diff({k: 1 for k in keys}, {}, normalize=lambda m: m, hold=ks.no_hold)
+    assert only_local["only_local"] == expected
+
+    only_repo = ks.diff({}, {k: 1 for k in keys}, normalize=lambda m: m, hold=ks.no_hold)
+    assert only_repo["only_repo"] == expected
+
+    changed = ks.diff({k: 1 for k in keys}, {k: 2 for k in keys},
+                       normalize=lambda m: m, hold=ks.no_hold)
+    assert changed["changed"] == expected
+
+    held = ks.diff({k: 1 for k in keys}, {}, normalize=lambda m: m, hold=hold_keys(value=keys))
+    assert held["held"] == expected
