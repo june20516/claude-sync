@@ -1657,6 +1657,9 @@ Task 1의 두 리뷰가 범위 밖으로 판정했지만 기록해 둔 것들이
 | **`reason` 키 이름 충돌** | `status:"ok"` payload에 `reason`이 실린다. `reason`은 `SKILL.md:292`가 skipped 경로의 필드로 문서화한 이름이다. 배선을 붙일 때 `base_staging_reason` 등으로 정할 것 | quality review M6 |
 | **스테이징 위생의 근거가 코드 밖에 있다** | `os.replace` 실패 시 남는 `.tmp`가 무해한 이유는 호출부(`SKILL.md:285`, `sync-restore/SKILL.md:369`)가 실행마다 `rm -rf`하기 때문이다. spec 7.4의 미래 배선이 `BASE_STAGING`을 공유하고 `rm -rf`를 앞으로 옮기므로, "실행당 한 번 비운다"가 유지되어야 이 성질이 산다. docstring에 전제로 한 줄 남길 것 | quality review M4 |
 | **`chmod(0)` 기반 권한 테스트가 root에서 판별력을 잃는다** | `test_keyed_sync.py`의 `test_load_backup_propagates_permission_error`, `test_downgrade.py:137`, `test_compat.py:134,153`이 모두 이 관행을 쓴다. root는 권한 비트를 무시하므로 정상 구현에서도 `DID NOT RAISE`로 **거짓 실패**한다 — 조용히 통과하는 것이 아니라 상시 빨간 테스트가 되고, 누군가 skip 처리하면 그 시점부터 보호가 사라진다. 현재 root로 도는 CI 설정은 없다. 다루려면 저장소 전역으로 `os.getuid() == 0`일 때 skip | Task 3 quality r2 N-1 |
+| **`recognize` 공유 가드가 `mc`에 하드코딩** | `test_keyed_sync.py`의 `test_mcp_adapter_passes_one_recognize_hook_to_all_three`가 `mc`만 본다. 바로 위의 `hold` 소비 함수 가드는 소스를 훑어 자동 확장되는데 이쪽은 아니다. `plugin_config`가 붙으면 손으로 복제해야 하고, **잊으면 "이력은 못 믿는데 레포는 믿는" 비대칭이 무증상으로 들어온다.** 어댑터 목록을 파라미터화하는 편이 낫다 | 최종 리뷰 m-3 |
+| **`restore_plan`의 `base=None`/`{}` 동일 처리가 docstring에 없다** | `merge`는 둘을 구별하는데(합집합 degrade vs 판정표) `restore_plan`은 `if base else {}`로 같게 만든다. 테스트가 그 동일성을 고정하지만 docstring은 침묵한다. `plan_mcp.py:35`가 `None` 가능한 값을 그대로 넘긴다 — "복원은 삭제를 하지 않으므로 구별이 불필요하다"를 한 줄 적을 것 | 최종 리뷰 m-1 |
+| **어댑터 테스트 ~25개가 코어 로직을 중복 검증** | `test_mcp_config.py`의 `merge_case1~10`·`next_base_*`·`restore_plan_*`. **이번 브랜치에서는 정당하다** — Task 8 게이트의 증거가 바로 그 테스트들이다. 삭제하지 말 것(회귀 안전망). 다만 지금부터 코어 버킷 하나를 바꾸면 두 파일을 고쳐야 한다 | 최종 리뷰 m-4 |
 | **`apply_base`와의 패턴 비대칭** | `plan_mcp.apply_base:73-74`는 여전히 최종 이름으로 직접 쓴다. 앞에 "레포 쓰기"가 없어 같은 결함이 성립하지 않는 **정당한 비대칭**이지만, 두 스크립트가 다른 패턴을 쓰게 됐으니 근거를 한 줄 남길 것 | quality review 교차 패스 |
 
 **이 plan이 끝나야 다음 plan을 쓸 수 있다.** Task 8의 결과가 코어 시그니처를 확정하고, 다음 plan의 모든 task가 그 시그니처에 의존한다.
