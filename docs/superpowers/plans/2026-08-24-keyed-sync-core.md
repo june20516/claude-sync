@@ -2,7 +2,7 @@
 
 > **agentic worker에게:** REQUIRED SUB-SKILL: 이 plan을 task 단위로 구현하려면 suberpower:subagent-driven-development(권장) 또는 suberpower:executing-plans를 사용하세요. Step은 추적을 위해 checkbox(`- [ ]`) 문법을 사용합니다.
 
-**Goal:** `lib/mcp_config.py`의 키 단위 3-way 판정·인식 계층을 값에 무관한 `lib/keyed_sync.py`로 빼내고, `mcp_config`를 얇은 어댑터로 남긴다. **공개 계약과 기존 383개 테스트는 그대로다.**
+**Goal:** `lib/mcp_config.py`의 키 단위 3-way 판정·인식 계층을 값에 무관한 `lib/keyed_sync.py`로 빼내고, `mcp_config`를 얇은 어댑터로 남긴다. **공개 계약과 기존 테스트는 그대로다**(이 plan 착수 시점 385개).
 
 **Architecture:** 코어는 값을 모른다 — 마스킹(`normalize`), 판정 보류(`hold`), 복원 가능성(`restorable`), 비밀 키 목록(`secret_keys`)을 전부 훅으로 주입받는다. `mcp_config`는 `normalize=redact`와 "보류 없음"을 주입하는 래퍼가 되고, 나중에 `plugin_config`가 두 번째 어댑터로 붙는다.
 
@@ -22,6 +22,23 @@
 **근거 절 표기.** 각 task 머리에 `**근거:** spec N.M` 을 적었다. spec의 그 절이 바뀌면 그 task는 무효다 — 폭발 반경을 기계적으로 식별하기 위한 장치이고, 이 plan을 재생성할 때 어디부터 다시 쓸지를 정한다.
 
 **사용자 가치.** 이 plan이 끝나도 사용자에게 보이는 변화는 **Task 1 하나뿐**이다(스테이징 결함 수정). 나머지는 전부 다음 plan의 토대다. spec 부록 A 참조.
+
+**변조 확인은 각 task의 필수 스텝이다.** 이 plan의 테스트 블록은 불변식 7("테스트는 의미
+반전을 잡아야 한다")을 통과하지 못한 채 실려 왔다 — Task 2에서만 **다섯 개 중 세 개가
+공허했다**(`claims_newer_schema(True, 2)`는 bool 가드를 지워도 통과, `BROKEN = None`으로
+바꿔도 통과, `same`을 `a == b`로 바꿔도 통과). 셋 다 기존 스위트도 잡지 못하므로 Task 8의
+"기존 테스트 그대로 통과" 게이트로는 영영 걸리지 않는다. 성실한 구현일수록 plan의 결함을
+그대로 재생산하므로, **각 task의 통과 확인 스텝에서 대응 구현 줄을 지우거나 뒤집어 실제로
+FAIL하는지 임시 복사본에서 확인한다.** Task 5의 `next_base` deepcopy와 Task 6의 판정표
+10케이스가 특히 "단언은 참인데 그 참이 구현의 가드에서 나오지 않는" 형태가 되기 쉽다.
+
+**실행 중 확정된 것.**
+
+| 결정 | 근거 |
+|---|---|
+| `fingerprint`는 **공개로 둔다**(`_fingerprint`로 되돌리지 않는다) | spec 5.2 표에는 없지만, spec 6.4가 `plugins-held.json`에 "레포 값의 sha256 지문"을 저장하도록 정했다. 다음 plan의 `plugin_config`가 그 지문을 만들려면 코어와 **동일한 정규 직렬화**가 필요하고, 거기서 옵션을 다시 적으면 이 추출이 막으려는 표류가 그대로 재발한다 |
+| `mcp_config` 쪽 원본 테스트는 **강화하지 않는다** | `test_mcp_config.py`의 `same`·`_BROKEN`·`_decode` 테스트가 코어와 똑같은 구멍을 갖고 있지만, Task 8이 그 구현들을 삭제하고 코어에 위임하므로 코어만 고치면 최종 상태가 안전하다. Task 8 이전에 누가 `mcp_config`를 건드리면 감지되지 않는 창이 남는다는 것은 알고 받아들인 위험이다 |
+| **`plugin_config`는 Task 8보다 먼저 붙일 수 없다** | Task 2~7 동안 `mcp_config`의 예외 두 클래스·`_BROKEN`과 코어의 동명 객체가 **서로 다른 객체**로 공존한다. `except mc.UnknownBackupSchema`가 `ks.UnknownBackupSchema`를 잡지 못한다. Task 8의 re-export가 이것을 닫으므로 현 순서에서는 안전하지만, 순서가 바뀌면 두 도메인이 다른 예외 계층을 쓰게 된다 |
 
 ---
 
@@ -974,9 +991,12 @@ git commit -m "feat(core): restore_plan — 버킷 열한 개와 두 축의 보�
 - [ ] **Step 1: 교체 전 기준선 기록**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests -q`
-기대: `413 passed` (383 기존 + Task 1의 1 + Task 2~7의 29)
+기대: **Task 7 종료 시점의 개수 그대로.** 절대값을 적지 않는다 — 리뷰 후속 커밋이
+테스트를 추가하면 계획 시점의 숫자는 항상 어긋난다(실제로 어긋났다: 기준선은 383이
+아니라 385였다).
 
-이 숫자를 적어 둔다. Step 4에서 같은 숫자가 나와야 한다.
+**여기서 나온 숫자를 적어 두고 Step 4에서 같은 숫자가 나오는지 본다.** Task 8은
+테스트를 한 개도 더하지 않으므로 두 숫자는 반드시 같아야 한다.
 
 - [ ] **Step 2: `mcp_config.py`의 판정·인식 부분을 코어 호출로 교체**
 
@@ -1084,7 +1104,7 @@ def restore_plan(local, backed, base):
 - [ ] **Step 4: 전체 회귀 확인 — 이 task의 합격 기준**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests -q`
-기대: **`413 passed`** — Step 1과 같은 숫자. 하나라도 실패하면 추출이 틀린 것이므로 되돌리고 원인을 찾는다.
+기대: **Step 1에서 적어 둔 숫자와 동일.** 하나라도 실패하면 추출이 틀린 것이므로 되돌리고 원인을 찾는다.
 
 실행: `git diff --stat plugins/claude-sync/tests/`
 기대: **출력 없음** (테스트를 한 줄도 고치지 않았다)
@@ -1301,7 +1321,7 @@ def test_new_machine_without_base_does_not_delete_others_on_second_round(adapter
 - [ ] **Step 3: 전체 회귀 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests -q`
-기대: `413 passed`
+기대: **Task 8 Step 1에서 적어 둔 숫자와 동일** (Task 9는 테스트를 재작성할 뿐 개수를 바꾸지 않는다)
 
 - [ ] **Step 4: Commit**
 
@@ -1314,7 +1334,7 @@ git commit -m "test: 상태 기계 시나리오를 어댑터·값 픽스처 주�
 
 ## 완료 정의
 
-- [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q` → **413 passed**
+- [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q` → **Task 8 Step 1의 기준선과 동일한 개수, 0 failed**
 - [ ] `git diff --stat main..HEAD -- plugins/claude-sync/tests/test_mcp_config.py plugins/claude-sync/tests/test_mcp_cycle.py` → **출력 없음** (두 파일을 고치지 않았다)
 - [ ] `lib/mcp_config.py`에서 `_BROKEN`·`_decode`·`_claims_newer_schema`·`_fingerprint`가 사라졌고, 예외 두 클래스가 `keyed_sync`의 것을 가리킨다
 - [ ] `python3 -c "import sys; sys.path.insert(0,'plugins/claude-sync/lib'); import mcp_config as m, keyed_sync as k; assert m.UnknownBackupSchema is k.UnknownBackupSchema"` → 조용히 종료
