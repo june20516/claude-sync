@@ -348,7 +348,7 @@ lib/plugin_config.py  ← 플러그인 어댑터 (신규)
 | `diff(local, repo, *, normalize, hold)` | `only_local`/`only_repo`/`changed`/**`held`** |
 | `next_base(local, base, merged, *, normalize, hold)` | 로컬이 동의한 키만 전진. **값 보류 키는 base에서 제거한다**(5.3) |
 | `merge(local, repo, base, *, normalize, hold)` | 판정표 케이스 1~10 + `held` 처리 |
-| `restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)` | 버킷 9개 + **`held`** |
+| `restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)` | 버킷 9개 + `value_held` + **`action_held`** |
 
 `normalize`·`hold`·`restorable`·`secret_keys`는 **필수 키워드 인자다. 기본값을 두지 않는다.**
 초판은 `restorable`의 기본값을 `True`로 뒀는데, 그것은 이 프로젝트가 아홉 번 반복해서 고친
@@ -358,6 +358,19 @@ lib/plugin_config.py  ← 플러그인 어댑터 (신규)
 
 **`normalize`는 값 층위 변환만 한다.** 키를 추가하거나 제거해서는 안 된다.
 키 층위 제외는 전부 `hold`가 맡는다. 이 분리가 이 개정의 핵심이다(0장).
+
+**이 계약은 코어가 집행한다.** 계약을 적고 집행 주체를 안 적으면 아무도 지키지 않는다 —
+실측으로 확인했다. 가드가 없을 때 `normalize`가 키 하나를 빼면 `diff`의 **네 버킷 어디에도
+나타나지 않고 통째로 증발**했고, 예외도 경고도 없었다. `diff`에서는 오보에 그치지만
+`merge`에서는 로컬 키 증발이 곧 `in_l=False, in_r=True, in_s=True` = **케이스 3(삭제)**,
+즉 이 개정이 없애려던 손실 경로의 부활이다.
+
+그래서 코어는 `normalize` 적용을 `_normalized(mapping, normalize)`로 감싸고, 키 집합이
+바뀌면 `ValueError`를 던진다. 조용히 통과시키지 않는 것이 불변식 6("조용한 fail-open 금지")이다.
+`diff`·`next_base`·`merge`·`restore_plan`이 같은 헬퍼를 쓴다.
+(**멱등성**은 집행하지 않는다 — 코어가 값을 모르므로 두 번 적용해 비교하는 것 외에 방법이 없고,
+그 비용을 매 호출에 물릴 이유가 없다. 어댑터 테스트가 책임진다: `mcp_config.redact`는
+`test_mcp_config.py`가, `plugin_config`의 훅은 다음 plan이 각각 고정한다.)
 
 ### 5.3 `held` — 판정 보류 키
 
@@ -405,7 +418,14 @@ restorable(key, value) -> bool
 | `diff` | 세 버킷 어디에도 넣지 않고 `held` 버킷에만 넣는다 |
 | status 보고 | 종류별 문구로 보고하거나 침묵한다. `only_local`/`changed`에 넣지 않는다 |
 
-**행동 보류** 키는 `restore_plan`이 `held` 버킷에만 넣고 **어떤 CLI 명령의 대상도 되지 않는다.**
+**행동 보류** 키는 `restore_plan`이 **`action_held`** 버킷에만 넣고 **어떤 CLI 명령의 대상도 되지 않는다.**
+
+> **버킷 이름이 축을 말해야 하는 곳.** `restore_plan`은 **두 축이 같은 dict에 함께 나타나는 유일한 함수**다.
+> 거기서 행동 보류 버킷을 그냥 `held`라 부르면 옆의 `value_held`와 나란히 놓여 상위 집합처럼 읽힌다.
+> 그래서 `restore_plan`에서만 `action_held`로 이름을 갈랐다. `diff`·`merge`의 `held`는 값 축 하나뿐이므로
+> 그대로 두었고, **`diff`/`merge`의 `held` = `restore_plan`의 `value_held`**다.
+> (`held`를 전면적으로 `value_held`로 바꾸는 안도 검토했으나 이 문서 30곳을 건드려야 하고,
+> 국소 수정 잔재가 이 문서에서 이미 Critical 다섯 건을 냈다 — 0.2장. 최소 변경을 택했다.)
 
 **행동 보류가 아닌 값 보류 키**(H3)는 `restore_plan`에서도 **판정표를 타지 않는다**(`merge`와 같다).
 대신 로컬 존재 여부로 갈린다:

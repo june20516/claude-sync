@@ -86,6 +86,23 @@ secret_keys(value)  -> list        # 복원 시 사용자에게 물어야 하는
 그 결과 `mcp_config._recognized_servers`에 있던 공통 기준 설명이 추출 과정에서 어느 쪽에도
 남지 않고 증발했다 — Task 3 quality review가 잡았다.)
 
+**`normalize`의 키 불변 조건은 코어가 집행한다.** `_normalized(mapping, normalize)`가 키 집합이
+바뀌면 `ValueError`를 던지고, `diff`·`next_base`·`merge`·`restore_plan`이 모두 그것을 쓴다.
+가드 없이 실측했더니 `normalize`가 키 하나를 빼면 `diff`의 **네 버킷 어디에도 나타나지 않고
+통째로 증발**했다 — 예외도 경고도 없이. `merge`에서는 같은 일이 케이스 3(삭제)이 되어
+이 개정이 없애려던 손실 경로가 부활한다. **멱등성은 집행하지 않는다** — 코어가 값을 모르므로
+두 번 적용해 비교하는 것 외에 방법이 없고, 어댑터 테스트가 책임진다(spec 5.2).
+
+**`hold`는 좌우 대칭이 아니다.** spec 7.3의 H3는 **레포** 값을 보고, H1·H2는 로컬 쪽 사실을 본다.
+`hold(local, repo)` 순서가 뒤집히면 `plugin_config`의 보류 판정이 조용히 반대로 선다.
+MCP는 `no_hold`뿐이라 이 실수가 Task 8 게이트를 정상 통과한 뒤 다음 plan에서야 발현한다 —
+그래서 Task 4가 `recording_hold` 훅으로 **인자·순서·정규화 여부·호출 횟수**를 고정했다.
+**Task 6·7은 그 훅을 재사용한다.**
+
+**버킷 이름 `held`가 뜻하는 것.** `diff`·`merge`의 `held`는 **값 보류**다. `restore_plan`만
+두 축이 같은 dict에 함께 나타나므로 거기서는 `value_held`와 **`action_held`**로 이름을 갈랐다
+(`held`라는 이름을 쓰지 않는다). 즉 **`diff`/`merge`의 `held` = `restore_plan`의 `value_held`**다.
+
 **`next_base`만 `hold` 콜러블이 아니라 `value_held` 집합을 받는다.** `hold`는 `(local, repo)`가 필요한데 `next_base`의 인자에는 `repo`가 없고 `merged`뿐이기 때문이다. `merge`가 한 번 계산해 넘기고, 단독 호출자(restore)는 스스로 계산해 넘긴다. spec 15장 오픈이슈 1이 이 결정을 plan에 맡겼다.
 
 ---
@@ -545,14 +562,28 @@ def test_diff_moves_held_keys_out_of_all_three_buckets():
 `keyed_sync.py` 끝에 추가한다.
 
 ```python
+def _normalized(mapping, normalize):
+    """normalize를 적용하되 키 집합이 보존됐는지 확인한다.
+
+    키 층위 제외는 전부 hold의 몫이다(spec 5.2). normalize가 키를 빼면
+    merge가 그것을 "로컬에서 삭제됨"(케이스 3)으로 읽어 레포에서 지운다.
+    조용히 통과시키면 이 개정이 없애려던 손실 경로가 그대로 부활한다.
+    """
+    out = normalize(mapping)
+    if set(out) != set(mapping):
+        raise ValueError("normalize가 키 집합을 바꿨다 — 키 층위 제외는 hold가 맡는다")
+    return out
+
+
 def diff(local, repo, *, normalize, hold):
     """상태 비교. 비교 직전 양쪽에 normalize를 적용한다.
 
     비밀 값은 로컬에 평문, 레포에 마스킹된 형태로 저장되므로 원본끼리 비교하면
     비밀을 가진 항목이 영구히 "변경됨"으로 보고된다(미수렴).
     값 보류 키는 세 버킷 어디에도 넣지 않고 held에만 넣는다.
+    키 층위 제외는 normalize가 아니라 hold의 몫이므로 _normalized가 그것을 강제한다.
     """
-    local, repo = normalize(local), normalize(repo)
+    local, repo = _normalized(local, normalize), _normalized(repo, normalize)
     value_held = set(hold(local, repo)["value"])
     return {
         "only_local": sorted(set(local) - set(repo) - value_held),
@@ -653,8 +684,8 @@ def next_base(local, base, merged, *, normalize, value_held=frozenset()):
 
     반환값은 입력의 어떤 nested 객체도 공유하지 않는다(deepcopy).
     """
-    local, merged = normalize(local), normalize(merged)
-    old = normalize(base) if base else {}
+    local, merged = _normalized(local, normalize), _normalized(merged, normalize)
+    old = _normalized(base, normalize) if base else {}
     out = {}
     for name in sorted(set(old) | set(merged)):
         if name in value_held:
@@ -767,8 +798,8 @@ def merge(local, repo, base, *, normalize, hold):
     들어가는데 결과가 다르다 — 9는 merged에 레포 값이 남고 5는 merged에서 아예 빠진다.
     "name in result['merged']"로 둘을 구분할 수 있다.
     """
-    local, repo = normalize(local), normalize(repo)
-    base = None if base is None else normalize(base)
+    local, repo = _normalized(local, normalize), _normalized(repo, normalize)
+    base = None if base is None else _normalized(base, normalize)
     held = hold(local, repo)
     value_held = set(held["value"])
 
@@ -885,12 +916,12 @@ def test_restore_plan_routes_add_needs_secret_and_unrestorable():
     assert plan["add"] == []
 
 
-def test_restore_plan_action_held_goes_to_held_only():
+def test_restore_plan_action_held_goes_to_its_own_bucket_only():
     """행동 보류 키는 어떤 CLI 명령의 대상도 되지 않는다."""
     plan = ks.restore_plan({}, {"h": 1}, {}, normalize=lambda m: m,
                            hold=hold_keys(value=("h",), action=("h",)),
                            restorable=always_restorable, secret_keys=no_secrets)
-    assert plan["held"] == ["h"]
+    assert plan["action_held"] == ["h"]
     assert plan["add"] == [] and plan["value_held"] == []
 
 
@@ -900,7 +931,7 @@ def test_restore_plan_value_held_installs_when_absent_locally():
                            hold=hold_keys(value=("h",)),
                            restorable=always_restorable, secret_keys=no_secrets)
     assert plan["add"] == ["h"]
-    assert plan["value_held"] == [] and plan["held"] == []
+    assert plan["value_held"] == [] and plan["action_held"] == []
 
 
 def test_restore_plan_value_held_uses_own_bucket_when_present_locally():
@@ -923,7 +954,7 @@ def test_restore_plan_value_held_uses_own_bucket_when_present_locally():
 BUCKETS = (
     "add", "needs_secret", "unrestorable", "in_sync", "local_ahead",
     "repo_ahead", "both_changed", "local_stale", "local_only",
-    "value_held", "held",
+    "value_held", "action_held",
 )
 
 
@@ -935,13 +966,13 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
     local_stale은 케이스 4와 5를 모두 담는다 — 담지 않으면 케이스 5가 탈출구 없는 상태가 된다.
 
     보류 키는 두 축으로 갈린다(spec 5.3):
-      행동 보류        → held 버킷에만. 어떤 CLI 명령의 대상도 되지 않는다
+      행동 보류        → action_held 버킷에만. 어떤 CLI 명령의 대상도 되지 않는다
       값 보류(행동 아님) → 로컬에 없으면 add(설치 대상), 있으면 value_held 전용 버킷
     value_held를 판정표에 태우면 케이스 9로 분류되어 "양쪽이 모두 바뀌었습니다"가 뜨는데,
     그것은 사실이 아니고 "레포 따르기"를 실행할 수단도 없다.
     """
-    local, repo = normalize(local), normalize(repo)
-    known = normalize(base) if base else {}
+    local, repo = _normalized(local, normalize), _normalized(repo, normalize)
+    known = _normalized(base, normalize) if base else {}
     held = hold(local, repo)
     value_held, action_held = set(held["value"]), set(held["action"])
 
@@ -958,7 +989,7 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
 
     for name in sorted(set(local) | set(repo)):
         if name in action_held:
-            plan["held"].append(name)
+            plan["action_held"].append(name)
             continue
         if name in value_held:
             if name in local:
@@ -1121,7 +1152,14 @@ def restore_plan(local, backed, base):
         "repo_ahead", "both_changed", "local_stale", "local_only")}
 ```
 
-**`merge`·`diff`·`restore_plan`의 반환 dict에 `held`를 넣지 않는다.** 공개 계약을 넓히지 않기 위해서다 — MCP에서 보류는 항상 비어 있으므로 정보도 없다.
+**`merge`·`diff`의 반환 dict에 `held`를, `restore_plan`의 반환 dict에 `value_held`·`action_held`를 넣지 않는다.** 공개 계약을 넓히지 않기 위해서다 — MCP에서 보류는 항상 비어 있으므로 정보도 없다.
+
+**이 화이트리스트는 장식이 아니라 기존 테스트가 강제하는 요구사항이다.** `compare_mcp.py:28`이
+`out.update(mc.diff(local, repo))`로 **반환 dict를 통째로 사용자 JSON에 펼치므로**, 어댑터가
+`held`를 걸러내지 않으면 status 출력에 없던 필드가 생긴다. 그리고 `test_mcp_scripts.py:150`이
+`assert out == {"status": "ok", "only_local": [], "only_repo": [], "changed": []}`로 **정확한
+dict 동등**을 보므로, 화이트리스트를 빼먹으면 그 테스트가 FAIL한다. 나중에 누가 이것을
+"불필요한 복사"로 오해해 지우지 않도록 여기 적어 둔다.
 
 - [ ] **Step 4: 전체 회귀 확인 — 이 task의 합격 기준**
 
