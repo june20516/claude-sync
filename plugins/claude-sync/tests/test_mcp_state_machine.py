@@ -12,6 +12,7 @@
 """
 import pytest
 
+import keyed_sync as ks
 import mcp_config as mc
 
 
@@ -32,7 +33,7 @@ class Adapter:
         self.merged_key = merged_key
         self.A, self.B, self.ORIG = values
         pairs = ((self.A, self.B), (self.B, self.ORIG), (self.A, self.ORIG))
-        assert not any(mc.same(x, y) for x, y in pairs), (
+        assert not any(ks.same(x, y) for x, y in pairs), (
             "%s: A·B·ORIG가 서로 달라야 한다 — 케이스 9를 표현할 수 없다" % name)
 
 

@@ -1585,7 +1585,9 @@ git commit -m "test: 상태 기계 시나리오를 어댑터·값 픽스처 주�
 
 ## 완료 정의
 
-- [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q` → **Task 8 Step 1의 기준선 +1(Step 4.5의 어댑터 가드), 0 failed**
+- [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q` → **0 failed.** Task 8 Step 1의
+  기준선 대비 **+2**다 — Step 2의 `test_keyed_sync.py` 추가분 하나와 Step 4.5의 어댑터 가드 하나.
+  (초판이 "+1"로 적었는데 실측은 +2였다. 게이트는 "0 failed"이고 개수는 참고값이다)
 - [ ] `git diff --stat c2a0cd7..HEAD -- plugins/claude-sync/tests/test_mcp_cycle.py` → **출력 없음**
   (`main..HEAD`가 아니다 — 이 테스트 파일들은 `main`에 아직 존재하지 않아 전부 신규 추가로 잡힌다.
   `c2a0cd7`은 이 plan을 커밋한 지점이다)
