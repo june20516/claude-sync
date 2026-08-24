@@ -445,7 +445,7 @@ def test_collect_does_not_stage_when_repo_write_fails(tmp_path, monkeypatch):
     real_dump = mc.dump_backup
 
     def fail_on_repo(servers, path):
-        if path.endswith(os.path.join("repo", mc.BACKUP_RELPATH)):
+        if path == os.path.join(repo, mc.BACKUP_RELPATH):
             raise OSError("disk full")
         return real_dump(servers, path)
 
@@ -453,3 +453,29 @@ def test_collect_does_not_stage_when_repo_write_fails(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         collect_mcp.collect(repo, staging, claude_json_path=local, base_dir=base_dir)
     assert not os.path.exists(os.path.join(staging, mc.BACKUP_RELPATH))
+
+
+def test_collect_keeps_repo_write_when_staging_rename_fails(tmp_path, monkeypatch):
+    """rename 자체가 실패해도 레포는 이미 갱신돼 있다 — skipped로 접으면 거짓말이 된다(spec 7.4).
+
+    status는 ok를 유지하고 base_staging에 failed를 남긴다. 스테이징 최종 파일은
+    존재하지 않아야 SKILL.md의 게이트가 막혀 base가 전진하지 않는다.
+    """
+    local = write_local(tmp_path, {"x": A})
+    repo = write_repo(tmp_path, None)
+    base_dir = write_base_blob(tmp_path, None)
+    staging = str(tmp_path / "staging")
+    staged = os.path.join(staging, mc.BACKUP_RELPATH)
+    real_replace = collect_mcp.os.replace
+
+    def fail_on_rename(src, dst):
+        if dst == staged:
+            raise OSError("rename failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(collect_mcp.os, "replace", fail_on_rename)
+    out = collect_mcp.collect(repo, staging, claude_json_path=local, base_dir=base_dir)
+    assert out["status"] == "ok"
+    assert out["base_staging"] == "failed"
+    assert repo_servers(repo) == {"x": A}
+    assert not os.path.exists(staged)
