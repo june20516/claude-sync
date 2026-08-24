@@ -130,14 +130,29 @@ def no_hold(local, repo):
     return {"value": frozenset(), "action": frozenset()}
 
 
+def _normalized(mapping, normalize):
+    """normalize를 적용하되 키 집합이 보존됐는지 확인한다.
+
+    키 층위 제외는 전부 hold의 몫이다(spec 5.2). normalize가 키를 빼면
+    merge가 그것을 "로컬에서 삭제됨"(케이스 3)으로 읽어 레포에서 지운다.
+    조용히 통과시키면 이 개정이 없애려던 손실 경로가 그대로 부활한다.
+    """
+    out = normalize(mapping)
+    if set(out) != set(mapping):
+        raise ValueError("normalize가 키 집합을 바꿨다 — 키 층위 제외는 hold가 맡는다")
+    return out
+
+
 def diff(local, repo, *, normalize, hold):
     """상태 비교. 비교 직전 양쪽에 normalize를 적용한다.
 
     비밀 값은 로컬에 평문, 레포에 마스킹된 형태로 저장되므로 원본끼리 비교하면
     비밀을 가진 항목이 영구히 "변경됨"으로 보고된다(미수렴).
     값 보류 키는 세 버킷 어디에도 넣지 않고 held에만 넣는다.
+    normalize는 값 층위 변환만 허용된다 — 키를 지우면 _normalized가 ValueError를
+    던진다. 키 층위 제외(동기화하지 않을 키를 고르는 일)는 hold의 몫이다(spec 5.2).
     """
-    local, repo = normalize(local), normalize(repo)
+    local, repo = _normalized(local, normalize), _normalized(repo, normalize)
     value_held = set(hold(local, repo)["value"])
     return {
         "only_local": sorted(set(local) - set(repo) - value_held),

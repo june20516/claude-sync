@@ -197,7 +197,8 @@ def test_diff_buckets_are_sorted():
     쓰면 set 순회 순서가 우연히 정렬 순서와 같아져 sorted를 list로 바꾼 변조(변조 6)를
     놓칠 수 있다. 10개 키를 삽입 순서와 다르게 넣어 우연히 일치할 확률을 무시할 수준으로
     낮춘다 — sorted(...)를 list(...)로 바꾸면 이 네 단언 중 최소 하나는 거의 모든 실행에서
-    FAIL한다(자세한 재현은 self-review에서 5회 반복 실행으로 확인했다).
+    FAIL한다. 재현: `PYTHONHASHSEED=<n> pytest -k buckets_are_sorted`를 여러 시드로
+    돌려 확인한다.
     """
     keys = ["j", "h", "f", "d", "b", "i", "g", "e", "c", "a"]
     expected = sorted(keys)
@@ -214,3 +215,44 @@ def test_diff_buckets_are_sorted():
 
     held = ks.diff({k: 1 for k in keys}, {}, normalize=lambda m: m, hold=hold_keys(value=keys))
     assert held["held"] == expected
+
+
+def recording_hold(seen):
+    """hold가 받은 인자를 그대로 기록하는 훅."""
+    def _hold(local, repo):
+        seen.append((dict(local), dict(repo)))
+        return {"value": frozenset(), "action": frozenset()}
+    return _hold
+
+
+def test_diff_gives_hold_normalized_local_and_repo_in_that_order():
+    """hold는 정규화된 입력을 (local, repo) 순서로 정확히 한 번 받는다(훅 계약).
+
+    plugin_config의 hold 넷은 좌우 대칭이 아니다 — H3는 '레포 값'을, H1·H2는 로컬을 본다.
+    순서가 뒤집히거나 미정규화 값이 넘어가면 보류 판정이 조용히 반대로 선다(spec 7.3).
+    """
+    seen = []
+    ks.diff({"a": "x "}, {"b": " y"},
+            normalize=trim_whitespace, hold=recording_hold(seen))
+    # seen == [...] 단일 원소 리스트 동등이므로 값(정규화됨)·순서(local, repo)·
+    # 호출 횟수(정확히 1회)를 한 번에 고정한다. value_held를 정규화 전 값으로 계산하거나
+    # hold(repo, local)로 좌우를 뒤집으면 이 줄이 FAIL한다.
+    assert seen == [({"a": "x"}, {"b": "y"})]
+
+
+def test_diff_rejects_normalize_that_drops_keys():
+    """키 층위 제외를 normalize로 하면 merge가 그것을 케이스 3(삭제)으로 읽는다(spec 5.2)."""
+    with pytest.raises(ValueError):
+        ks.diff({"a": 1, "b": 1}, {"a": 1},
+                normalize=lambda m: {k: v for k, v in m.items() if k != "b"},
+                hold=ks.no_hold)
+
+
+def test_diff_reports_held_key_absent_from_both_sides():
+    """보류 훅이 어느 쪽에도 없는 키를 지목해도 held에 그대로 실린다(merge와 같은 형태).
+
+    held를 value_held & (set(local) | set(repo))로 좁히면 "ghost"가 걸러져 이 줄이 FAIL한다.
+    """
+    out = ks.diff({"a": 1}, {"a": 1}, normalize=lambda m: m,
+                  hold=hold_keys(value=("ghost",)))
+    assert out["held"] == ["ghost"]
