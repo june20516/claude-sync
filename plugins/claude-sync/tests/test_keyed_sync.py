@@ -258,6 +258,17 @@ def test_diff_reports_held_key_absent_from_both_sides():
     assert out["held"] == ["ghost"]
 
 
+def test_diff_ignores_the_action_axis_of_hold():
+    """행동 보류는 restore_plan 전용이다. diff에 영향을 주면 축 분리가 무너진다(spec 5.3).
+
+    value_held = set(hold(...)["value"]) | set(hold(...)["action"])로 축을 합치면
+    action만 보류된 "a"가 held로 새어 changed에서 빠진다.
+    """
+    out = ks.diff({"a": 1}, {"a": 2}, normalize=lambda m: m, hold=hold_keys(action=("a",)))
+    assert out["held"] == []
+    assert out["changed"] == ["a"]
+
+
 def test_next_base_advances_only_where_local_agrees():
     """타 기기가 추가·변경한 값을 base에 기록하면 다음 백업이 '내가 삭제했다'로 오독한다."""
     out = ks.next_base({"mine": 1}, {"mine": 1, "theirs": 0}, {"mine": 1, "theirs": 9},
@@ -462,3 +473,46 @@ def test_merge_removes_value_held_key_from_next_base():
                  normalize=lambda m: m, hold=hold_keys(value=("h",)))
     assert "h" not in r["next_base"]
     assert r["next_base"]["n"] == 1
+
+
+def test_merge_gives_hold_normalized_local_and_repo_in_that_order():
+    """hold는 정규화된 입력을 (local, repo) 순서로 정확히 한 번 받는다(훅 계약).
+
+    hold는 좌우 대칭이 아니다 — 순서가 뒤집히면 plugin_config의 보류 판정이
+    조용히 반대로 선다. MCP는 no_hold라 Task 8 게이트가 이것을 잡지 못한다.
+    """
+    seen = []
+    ks.merge({"a": "x "}, {"b": " y"}, {}, normalize=trim_whitespace, hold=recording_hold(seen))
+    assert seen == [({"a": "x"}, {"b": "y"})]      # 값·순서·호출 횟수를 한 줄로 고정
+
+
+def test_merge_ignores_the_action_axis_of_hold():
+    """행동 보류는 restore_plan 전용이다. merge에 영향을 주면 축 분리가 무너진다(spec 5.3)."""
+    r = ks.merge({"a": 1}, {"a": 2}, {"a": 1},
+                 normalize=lambda m: m, hold=hold_keys(action=("a",)))
+    assert r["held"] == []
+    assert r["repo_ahead"] == ["a"] and r["merged"]["a"] == 2   # 케이스 8을 정상적으로 탄다
+
+
+def test_merge_empty_base_is_not_the_none_degrade():
+    """{}(이력이 비어 있었다)와 None(이력을 읽을 수 없다)은 다르다 — 합치면 타 기기 변경을
+    경고 없이 되돌린다. base={}는 첫 백업 직후에 실제로 나오는 값이다(spec 3.2)."""
+    r = ks.merge({"x": 1}, {"x": 2}, {}, normalize=lambda m: m, hold=ks.no_hold)
+    assert r["conflicts"] == ["x"] and r["merged"]["x"] == 2
+    d = ks.merge({"x": 1}, {"x": 2}, None, normalize=lambda m: m, hold=ks.no_hold)
+    assert d["conflicts"] == [] and d["merged"]["x"] == 1
+
+
+def test_merge_buckets_are_exact_not_membership():
+    """판정표 테스트는 멤버십만 봐서 '과다 분류' 변조를 놓친다. 다섯 버킷을 정확 등호로 건다.
+
+    기존 test_merge_covers_decision_table을 고치지 않고 별도 테스트로 둔다 — 판정표
+    테스트의 실패 원인이 가려지지 않도록 한다.
+    """
+    local = {"c1": 1, "c4": 1, "c5": 2, "c6": 1, "c7": 2, "c8": 1, "c9": 2}
+    repo = {"c2": 1, "c3": 1, "c6": 1, "c7": 1, "c8": 2, "c9": 3}
+    base = {"c3": 1, "c4": 1, "c5": 1, "c7": 1, "c8": 1, "c9": 1, "c10": 1}
+    r = ks.merge(local, repo, base, normalize=lambda m: m, hold=ks.no_hold)
+    assert r["conflicts"] == ["c5", "c9"]
+    assert r["repo_ahead"] == ["c2", "c8"]
+    assert sorted(r["merged"]) == ["c1", "c2", "c6", "c7", "c8", "c9"]
