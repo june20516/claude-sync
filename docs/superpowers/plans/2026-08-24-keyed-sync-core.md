@@ -1422,6 +1422,7 @@ Task 1의 두 리뷰가 범위 밖으로 판정했지만 기록해 둔 것들이
 | **`SKILL.md:397` 주석 근거 교체** | 현재: "collect_mcp.py가 status=ok일 때만 쓰므로, 파일 존재가 곧 'skip 아님'이다". 결론은 이제 참이지만 근거가 낡았다. spec 7.4가 docstring과 **함께** 고치라고 지목했고 docstring만 고쳤다 | spec 7.4 / quality review M3 |
 | **`reason` 키 이름 충돌** | `status:"ok"` payload에 `reason`이 실린다. `reason`은 `SKILL.md:292`가 skipped 경로의 필드로 문서화한 이름이다. 배선을 붙일 때 `base_staging_reason` 등으로 정할 것 | quality review M6 |
 | **스테이징 위생의 근거가 코드 밖에 있다** | `os.replace` 실패 시 남는 `.tmp`가 무해한 이유는 호출부(`SKILL.md:285`, `sync-restore/SKILL.md:369`)가 실행마다 `rm -rf`하기 때문이다. spec 7.4의 미래 배선이 `BASE_STAGING`을 공유하고 `rm -rf`를 앞으로 옮기므로, "실행당 한 번 비운다"가 유지되어야 이 성질이 산다. docstring에 전제로 한 줄 남길 것 | quality review M4 |
+| **`chmod(0)` 기반 권한 테스트가 root에서 판별력을 잃는다** | `test_keyed_sync.py`의 `test_load_backup_propagates_permission_error`, `test_downgrade.py:137`, `test_compat.py:134,153`이 모두 이 관행을 쓴다. root는 권한 비트를 무시하므로 정상 구현에서도 `DID NOT RAISE`로 **거짓 실패**한다 — 조용히 통과하는 것이 아니라 상시 빨간 테스트가 되고, 누군가 skip 처리하면 그 시점부터 보호가 사라진다. 현재 root로 도는 CI 설정은 없다. 다루려면 저장소 전역으로 `os.getuid() == 0`일 때 skip | Task 3 quality r2 N-1 |
 | **`apply_base`와의 패턴 비대칭** | `plan_mcp.apply_base:73-74`는 여전히 최종 이름으로 직접 쓴다. 앞에 "레포 쓰기"가 없어 같은 결함이 성립하지 않는 **정당한 비대칭**이지만, 두 스크립트가 다른 패턴을 쓰게 됐으니 근거를 한 줄 남길 것 | quality review 교차 패스 |
 
 **이 plan이 끝나야 다음 plan을 쓸 수 있다.** Task 8의 결과가 코어 시그니처를 확정하고, 다음 plan의 모든 task가 그 시그니처에 의존한다.
