@@ -1294,12 +1294,22 @@ def restore_plan(local, backed, base):
 
 **`merge`·`diff`의 반환 dict에 `held`를, `restore_plan`의 반환 dict에 `value_held`·`action_held`를 넣지 않는다.** 공개 계약을 넓히지 않기 위해서다 — MCP에서 보류는 항상 비어 있으므로 정보도 없다.
 
-**이 화이트리스트는 장식이 아니라 기존 테스트가 강제하는 요구사항이다.** `compare_mcp.py:28`이
-`out.update(mc.diff(local, repo))`로 **반환 dict를 통째로 사용자 JSON에 펼치므로**, 어댑터가
-`held`를 걸러내지 않으면 status 출력에 없던 필드가 생긴다. 그리고 `test_mcp_scripts.py:150`이
-`assert out == {"status": "ok", "only_local": [], "only_repo": [], "changed": []}`로 **정확한
-dict 동등**을 보므로, 화이트리스트를 빼먹으면 그 테스트가 FAIL한다. 나중에 누가 이것을
-"불필요한 복사"로 오해해 지우지 않도록 여기 적어 둔다.
+**`diff`의 화이트리스트는 기존 테스트가 강제한다. `restore_plan`의 것은 아니었다 — 그래서
+게이트를 새로 넣었다.**
+
+`compare_mcp.py:28`이 `out.update(mc.diff(local, repo))`로, `plan_mcp.py:39`가
+`out.update(plan)`으로 **반환 dict를 통째로 사용자 JSON에 펼친다.** 어댑터가 보류 키를
+걸러내지 않으면 출력에 없던 필드가 생기고, `sync-status`·`sync-restore`의 SKILL.md가
+그 JSON을 읽어 사용자에게 보고한다.
+
+- `diff` 쪽은 `test_mcp_scripts.py:150`이 `assert out == {"status": "ok", "only_local": [],
+  "only_repo": [], "changed": []}`로 **정확한 dict 동등**을 보므로 빠뜨리면 FAIL한다.
+- `restore_plan` 쪽은 **대응 테스트가 없었다.** Task 7 quality review가 화이트리스트 없이
+  위임을 시뮬레이션해 **441 passed, 실패 0**임을 실측했다. (이 문단의 초판이 `diff`의 근거를
+  `restore_plan`까지 일반화해 적은 것이 틀렸다.) Task 7이
+  `test_restore_plan_exposes_exactly_nine_buckets`를 `test_mcp_config.py`에 넣어 닫았다.
+
+나중에 누가 화이트리스트를 "불필요한 복사"로 오해해 지우지 않도록 여기 적어 둔다.
 
 - [ ] **Step 4: 전체 회귀 확인 — 이 task의 합격 기준**
 
@@ -1574,7 +1584,11 @@ git commit -m "test: 상태 기계 시나리오를 어댑터·값 픽스처 주�
 ## 완료 정의
 
 - [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q` → **Task 8 Step 1의 기준선 +1(Step 4.5의 어댑터 가드), 0 failed**
-- [ ] `git diff --stat main..HEAD -- plugins/claude-sync/tests/test_mcp_config.py plugins/claude-sync/tests/test_mcp_cycle.py` → **출력 없음** (두 파일을 고치지 않았다)
+- [ ] `git diff --stat main..HEAD -- plugins/claude-sync/tests/test_mcp_cycle.py` → **출력 없음**
+- [ ] `test_mcp_config.py`의 변경은 **의도적으로 추가한 가드 둘뿐이다** — Task 3의
+  `PARSE_BACKUP_CALL` 정규식 확장(`ks|keyed_sync`)과 Task 7의
+  `test_restore_plan_exposes_exactly_nine_buckets`. 둘 다 **코어 추출이 새로 낸 구멍을 닫는
+  것**이라 "기존 테스트 무수정" 원칙의 정당한 예외다. 그 외 변경이 있으면 추출이 계약을 바꾼 것이다
 - [ ] `lib/mcp_config.py`에서 `_BROKEN`·`_decode`·`_claims_newer_schema`·`_fingerprint`가 사라졌고, 예외 두 클래스가 `keyed_sync`의 것을 가리킨다
 - [ ] `python3 -c "import sys; sys.path.insert(0,'plugins/claude-sync/lib'); import mcp_config as m, keyed_sync as k; assert m.UnknownBackupSchema is k.UnknownBackupSchema"` → 조용히 종료
 - [ ] `test_mcp_state_machine.py`의 테스트 10개가 `[mcp]` 파라미터로 돈다
