@@ -352,7 +352,7 @@ def no_hold(local, repo):
 - [ ] **Step 4: test를 실행하여 통과를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_keyed_sync.py -v`
-기대: 5 passed
+기대: 신규 테스트가 전부 통과. **절대 개수를 적지 않는다** — 리뷰 후속 커밋이 테스트를 더하므로 계획 시점 숫자는 항상 어긋난다. 전체 스위트로 확인한다
 
 - [ ] **Step 5: Commit**
 
@@ -485,7 +485,7 @@ def parse_backup(data, recognize):
 - [ ] **Step 4: test를 실행하여 통과를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_keyed_sync.py -v`
-기대: 10 passed
+기대: 신규 테스트가 전부 통과. **절대 개수를 적지 않는다** — 리뷰 후속 커밋이 테스트를 더하므로 계획 시점 숫자는 항상 어긋난다. 전체 스위트로 확인한다
 
 - [ ] **Step 5: Commit**
 
@@ -599,7 +599,7 @@ def diff(local, repo, *, normalize, hold):
 - [ ] **Step 4: test를 실행하여 통과를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_keyed_sync.py -v`
-기대: 13 passed
+기대: 신규 테스트가 전부 통과. **절대 개수를 적지 않는다** — 리뷰 후속 커밋이 테스트를 더하므로 계획 시점 숫자는 항상 어긋난다. 전체 스위트로 확인한다
 
 - [ ] **Step 5: Commit**
 
@@ -702,7 +702,7 @@ def next_base(local, base, merged, *, normalize, value_held=frozenset()):
 - [ ] **Step 4: test를 실행하여 통과를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_keyed_sync.py -v`
-기대: 18 passed
+기대: 신규 테스트가 전부 통과. **절대 개수를 적지 않는다** — 리뷰 후속 커밋이 테스트를 더하므로 계획 시점 숫자는 항상 어긋난다. 전체 스위트로 확인한다
 
 - [ ] **Step 5: Commit**
 
@@ -781,6 +781,53 @@ def test_merge_removes_value_held_key_from_next_base():
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_keyed_sync.py -k merge -v`
 기대: `AttributeError: module 'keyed_sync' has no attribute 'merge'`로 5개 FAIL
 
+- [ ] **Step 2b: `next_base`의 본체를 `_next_base_normalized`로 뽑아낸다**
+
+**근거:** Task 5 quality review I2-②
+
+`merge`는 `local`·`base`를 이미 `_normalized`로 통과시키고 `merged`를 그 값들로 조립한다.
+그 상태로 공개 `next_base`를 부르면 정규화가 **두 번** 적용된다. 코어는 멱등성을 집행하지
+않기로 했으므로(spec 5.2), 비멱등 훅에서는 그 이중 적용이 base를 과전진시키거나 base와
+레포를 즉시 어긋나게 만든다. `merge` 경로에서 그 의존 자체를 없앤다.
+
+`keyed_sync.py`의 `next_base`를 아래 두 함수로 가른다. **루프 본문은 한 글자도 바꾸지 않는다** —
+옮기기만 한다.
+
+```python
+def _next_base_normalized(local, old, merged, value_held):
+    """이미 정규화된 세 매핑으로 다음 base를 만든다. next_base의 본체다.
+
+    merge는 세 인자를 모두 정규화해 넘기므로 공개 next_base를 부르면 정규화가 두 번
+    적용된다. 코어는 멱등성을 집행하지 않으므로(spec 5.2) 비멱등 훅에서는 그 이중 적용이
+    base를 과전진시킬 수 있다. merge가 이 함수를 직접 불러 그 의존을 없앤다.
+    단독 호출자(restore)는 공개 next_base를 쓴다.
+    """
+    out = {}
+    for name in sorted(set(old) | set(merged)):
+        if name in value_held:
+            continue                                    # 값 보류 → base에서 제거
+        if name in merged and name in local and same(merged[name], local[name]):
+            out[name] = copy.deepcopy(merged[name])     # 로컬이 동의 → 전진
+        elif name not in merged and name not in local:
+            continue                                    # 양쪽에서 사라짐 → 제거
+        elif name in old:
+            out[name] = copy.deepcopy(old[name])        # 동의 안 함 → 이전 base 유지
+    return out
+
+
+def next_base(local, base, merged, *, normalize, value_held=frozenset()):
+    """(기존 docstring 유지 — 정규화를 내부 적용하는 이유와 멱등 요구를 그대로 둔다.)"""
+    return _next_base_normalized(
+        _normalized(local, normalize),
+        _normalized(base, normalize) if base else {},
+        _normalized(merged, normalize),
+        value_held,
+    )
+```
+
+**확인:** 이 추출만으로 Task 5의 테스트가 **전부 그대로 통과해야 한다.** 하나라도 깨지면
+옮기는 과정에서 의미가 바뀐 것이므로 되돌린다.
+
 - [ ] **Step 3: 구현**
 
 ```python
@@ -848,15 +895,35 @@ def merge(local, repo, base, *, normalize, hold):
         "local_stale": local_stale,
         "repo_ahead": repo_ahead,
         "held": sorted(value_held),
-        "next_base": next_base(local, base, merged,
-                               normalize=normalize, value_held=value_held),
+        # 공개 next_base가 아니라 내부 함수를 부른다 — local·base·merged가 이미
+        # 정규화돼 있으므로 다시 정규화하면 멱등성에 의존하게 된다(Task 5 리뷰 I2).
+        "next_base": _next_base_normalized(local, base or {}, merged, value_held),
     }
 ```
 
 - [ ] **Step 4: test를 실행하여 통과를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_keyed_sync.py -v`
-기대: 23 passed
+기대: 신규 테스트가 전부 통과. **절대 개수를 적지 않는다** — 리뷰 후속 커밋이 테스트를 더하므로 계획 시점 숫자는 항상 어긋난다. 전체 스위트로 확인한다
+
+- [ ] **Step 4b: 변조 확인 (필수)**
+
+Task 2~5에서 **매번** SURVIVE가 나왔다. 성실성이 아니라 제도로 막는다. 임시 복사본에서
+아래를 각각 적용하고 대응 테스트가 FAIL하는지 확인한다. 원본 작업 트리를 오염시키지 말 것.
+
+이 task가 도입한 **가드 절을 하나씩** 뒤집는다:
+- 판정표 열 갈래의 `elif` 조건을 하나씩 앞 갈래로 흡수 (특히 케이스 4↔5, 7↔8, 9)
+- `base is None` degrade 갈래에서 `if in_l ... elif in_r`의 우선순위를 뒤집기 (**로컬이 이겨야 한다**)
+- `value_held` 조기 `continue`에서 `if name in repo: merged[name] = repo[name]`을 지우기
+- `repo_ahead.append(name)`를 케이스 2·8 중 하나에서 지우기
+- `_next_base_normalized(local, base or {}, ...)`를 공개 `next_base(...)`로 되돌리기
+- `same(local[name], base[name])`과 `same(repo[name], base[name])`을 서로 바꾸기 (**케이스 7↔8 반전**)
+
+`merge`가 만드는 `next_base`를 **케이스 8·9에 대해 직접 단언한다** — 현재 블록은
+`test_merge_removes_value_held_key_from_next_base` 한 곳에서만 본다. Task 5의 C1과
+중복 방어를 이룬다.
+
+**SURVIVE하면 구현이 아니라 테스트를 보강한다.** 보강한 줄 옆에 어떤 변조를 잡는지 주석으로 남긴다.
 
 - [ ] **Step 5: Commit**
 
@@ -1019,7 +1086,21 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
 - [ ] **Step 4: test를 실행하여 통과를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_keyed_sync.py -v`
-기대: 29 passed
+기대: 신규 테스트가 전부 통과. **절대 개수를 적지 않는다** — 리뷰 후속 커밋이 테스트를 더하므로 계획 시점 숫자는 항상 어긋난다. 전체 스위트로 확인한다
+
+- [ ] **Step 4b: 변조 확인 (필수)**
+
+임시 복사본에서 아래를 각각 적용하고 대응 테스트가 FAIL하는지 확인한다.
+원본 작업 트리를 오염시키지 말 것.
+
+- `if name in action_held` 갈래를 `value_held` 갈래 **뒤로** 옮기기 (**두 축의 우선순위가 계약이다**)
+- `route_new`의 `restorable`/`secret_keys` 호출 순서 바꾸기
+- `route_new`에서 `not restorable(...)` 갈래를 지우기
+- `value_held`인데 로컬에 있는 경우를 `value_held` 버킷 대신 판정표로 보내기
+- 케이스 7·8의 `same(repo[name], known[name])`과 `same(local[name], known[name])` 바꾸기
+- `elif name in known` (케이스 4·5) 갈래를 `else`로 바꾸기
+
+**SURVIVE하면 구현이 아니라 테스트를 보강한다.**
 
 - [ ] **Step 5: Commit**
 

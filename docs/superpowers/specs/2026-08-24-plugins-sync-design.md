@@ -346,9 +346,16 @@ lib/plugin_config.py  ← 플러그인 어댑터 (신규)
 | `parse_backup(data, recognize)` | 관대한 읽기. 실패는 빈 매핑 |
 | `same(a, b)` | 키 정렬 JSON 지문 비교 (정규화를 받지 않는다) |
 | `diff(local, repo, *, normalize, hold)` | `only_local`/`only_repo`/`changed`/**`held`** |
-| `next_base(local, base, merged, *, normalize, hold)` | 로컬이 동의한 키만 전진. **값 보류 키는 base에서 제거한다**(5.3) |
+| `next_base(local, base, merged, *, normalize, value_held=frozenset())` | 로컬이 동의한 키만 전진. **값 보류 키는 base에서 제거한다**(5.3) |
 | `merge(local, repo, base, *, normalize, hold)` | 판정표 케이스 1~10 + `held` 처리 |
 | `restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)` | 버킷 9개 + `value_held` + **`action_held`** |
+
+**`next_base`만 `hold` 콜러블이 아니라 이미 계산된 `value_held` 집합을 받는다.** `hold`는
+`(local, repo)`가 필요한데 이 함수의 인자에는 `repo`가 없고 `merged`뿐이기 때문이다.
+`merge`가 한 번 계산해 넘기고, 단독 호출자(restore)는 스스로 계산해 넘긴다.
+(15장 오픈이슈 1이 이 결정을 plan에 맡겼고, plan이 이 형태로 확정했다. 표를 갱신하지 않으면
+spec을 진실로 삼는 다음 소비자가 `hold` 콜러블을 넘긴다 — 2차 개정이 5.3만 고치고 계약표를
+안 고쳐 같은 사고를 낸 적이 있다.)
 
 `normalize`·`hold`·`restorable`·`secret_keys`는 **필수 키워드 인자다. 기본값을 두지 않는다.**
 초판은 `restorable`의 기본값을 `True`로 뒀는데, 그것은 이 프로젝트가 아홉 번 반복해서 고친
