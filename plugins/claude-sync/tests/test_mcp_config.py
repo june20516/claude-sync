@@ -1,6 +1,6 @@
+import ast
 import json
 import os
-import re
 
 import pytest
 
@@ -665,7 +665,49 @@ def test_parse_backup_degrades_higher_schema_version():
 
 PLUGIN_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 PROD_DIRS = (os.path.join(PLUGIN_ROOT, "lib"), os.path.join(PLUGIN_ROOT, "skills"))
-PARSE_BACKUP_CALL = re.compile(r"\b(?:mc|mcp_config|ks|keyed_sync)\.parse_backup\s*\(")
+
+
+class ParseBackupCallFinder(ast.NodeVisitor):
+    """parse_backup을 부르는 위치를 모으되, 같은 이름의 공개 정의부 안은 세지 않는다.
+
+    잡는 형태 세 가지 —
+      ks.parse_backup(...) / mc.parse_backup(...) 등 속성 호출
+      parse_backup(...)  from-import로 들여온 이름 호출
+      getattr(어떤것, "parse_backup")(...)  문자열 스캔을 피해 가는 동적 조회
+    모듈 최상위 호출도 offender다(감싸는 함수가 없으므로 예외 조건을 만족하지 못한다).
+    """
+
+    def __init__(self):
+        self.scope = []          # 지금 감싸고 있는 함수 이름들(바깥→안쪽)
+        self.offenders = []
+
+    def visit_FunctionDef(self, node):
+        self.scope.append(node.name)
+        self.generic_visit(node)
+        self.scope.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Call(self, node):
+        if self._calls_parse_backup(node) and not self._is_public_delegation():
+            self.offenders.append(node.lineno)
+        self.generic_visit(node)
+
+    def _is_public_delegation(self):
+        """모듈 최상위의 parse_backup 정의부인가. 중첩 def는 예외가 아니다."""
+        return self.scope == ["parse_backup"]
+
+    @staticmethod
+    def _calls_parse_backup(node):
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "parse_backup":
+            return True
+        if isinstance(func, ast.Name) and func.id == "parse_backup":
+            return True
+        return (isinstance(func, ast.Name) and func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value == "parse_backup")
 
 
 def test_no_production_code_calls_parse_backup():
@@ -675,17 +717,33 @@ def test_no_production_code_calls_parse_backup():
     parse_backup만 알아볼 수 없는 문서를 {}로 degrade하므로, 게이트가 한 곳에 있어도
     이 함수를 통과하는 경로만은 fail-open이다. **프로덕션에 호출부가 하나도 없다는
     사실 자체가 계약이다** — 새 호출부가 생기면 여기서 걸린다.
+
+    단 하나의 예외는 어댑터의 공개 parse_backup 정의부다. 코어에 같은 이름으로 얇게
+    위임하는 그 한 줄까지 막으면 어댑터는 위임 대신 관대한 해석을 스스로 재구현해야
+    하고, 그 중복이야말로 이 추출이 없애려던 것이다. 그 정의부는 읽기 경로가 아니다 —
+    프로덕션에 호출부가 없다는 사실을 이 테스트가 계속 보장하므로, 아무도 그 경로를
+    타지 않는다.
+
+    **문자열 스캔이 아니라 AST로 보는 이유**: 정규식은 "어디에 있는 호출인지"를 모른다.
+    호출부와 위임 정의부를 구별하지 못해 정상 위임을 거짓 양성으로 막았고, 그 압박이
+    getattr 난독화를 부른다 — 그러면 가드가 진짜 오용까지 놓친다. AST는 감싸는 함수를
+    보므로 둘을 가르고, 동적 조회 형태도 같이 잡는다. **정규식으로 되돌리지 말 것.**
     """
     offenders = []
     for root_dir in PROD_DIRS:
         for root, _, files in os.walk(root_dir):
-            for name in files:
+            for name in sorted(files):
                 if not name.endswith(".py"):
                     continue
                 path = os.path.join(root, name)
                 with open(path, encoding="utf-8") as f:
-                    if PARSE_BACKUP_CALL.search(f.read()):
-                        offenders.append(os.path.relpath(path, PLUGIN_ROOT))
+                    tree = ast.parse(f.read(), filename=path)
+                finder = ParseBackupCallFinder()
+                finder.visit(tree)
+                offenders.extend(
+                    "%s:%d" % (os.path.relpath(path, PLUGIN_ROOT), line)
+                    for line in finder.offenders
+                )
     assert not offenders, (
         "parse_backup 호출부가 생겼다: %s — 레포는 load_backup, base는 parse_base다"
         % sorted(offenders)

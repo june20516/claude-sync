@@ -146,14 +146,8 @@ def parse_backup(data):
     깨진 입력도 알아볼 수 없는 입력도 {}로 degrade한다.
     **레포 파일을 읽을 때는 이 함수가 아니라 load_backup을 쓴다** — 알아볼 수 없는 문서를
     "서버 0개"로 읽으면 그 파일을 덮어써 파괴하기 때문이다.
-
-    코어를 점 표기가 아니라 getattr로 부른다. test_no_production_code_calls_parse_backup이
-    "프로덕션에 관대한 parse_backup 호출부가 하나도 없다"를 소스 문자열로 집행하는데,
-    그 정규식은 읽기 경로의 호출부와 공개 API의 위임 정의부를 구별하지 못한다.
-    막아야 할 것은 전자이고 이 줄은 후자다. 동적 조회라 monkeypatch도 그대로 걸리므로
-    세 함수가 같은 recognize를 받는지 보는 가드는 이 위임을 계속 감시한다.
     """
-    return getattr(ks, "parse_backup")(data, _recognized_servers)
+    return ks.parse_backup(data, _recognized_servers)
 
 
 def parse_base(data):
