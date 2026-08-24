@@ -578,6 +578,26 @@ def test_restore_plan_value_held_installs_when_absent_locally():
     assert plan["value_held"] == [] and plan["action_held"] == []
 
 
+def test_restore_plan_value_held_new_key_still_goes_through_route_new():
+    """값 보류라도 로컬에 없으면 restorable·secret_keys를 반드시 거친다.
+
+    route_new는 두 곳에서 불린다("레포에만 있는" 갈래와 "값 보류인데 로컬엔 없는" 갈래).
+    위 test_restore_plan_value_held_installs_when_absent_locally는 always_restorable·
+    no_secrets만 써서 add 하나만 밟는다 — value_held 갈래가 route_new를 건너뛰고
+    곧장 add에 넣는 변조를 못 잡는다. 그 계약이 무너지면 비밀이 필요한 항목이
+    비밀 없이 설치되거나(needs_secret 누락), 복원 불가 항목이 실패할 CLI 명령으로
+    제시된다(unrestorable 누락).
+    """
+    plan = ks.restore_plan({}, {"ok": 1, "sec": 2, "bad": 3}, {}, normalize=lambda m: m,
+                           hold=hold_keys(value=("ok", "sec", "bad")),
+                           restorable=lambda k, v: k != "bad",
+                           secret_keys=lambda v: ["k"] if v == 2 else [])
+    assert plan["add"] == ["ok"]
+    assert plan["needs_secret"] == ["sec"]
+    assert plan["unrestorable"] == ["bad"]
+    assert plan["value_held"] == []
+
+
 def test_restore_plan_value_held_uses_own_bucket_when_present_locally():
     """이미 설치돼 있으면 전용 버킷 — 케이스 9로 부르면 금지된 문구가 나간다."""
     plan = ks.restore_plan({"h": True}, {"h": ["1.0.0"]}, {}, normalize=lambda m: m,
@@ -650,13 +670,8 @@ def test_restore_plan_buckets_are_exact_not_membership():
     assert plan["action_held"] == []
 
 
-HOLD_CONSUMER = re.compile(r"^def (\w+)\(.*\bhold\b", re.M)
-
-
-def _test_body_for(tests, name):
-    """`def test_<name>_...`로 시작하는 모든 테스트 본문을 이어 붙여 돌려준다."""
-    pattern = re.compile(r"^def test_%s_.*?(?=^def |\Z)" % re.escape(name), re.M | re.S)
-    return "\n".join(pattern.findall(tests))
+HOLD_CONSUMER = re.compile(r"^def (\w+)\((.*?)\):\s*$", re.M | re.S)
+HOLD_TEST = "def test_%s_gives_hold_normalized_local_and_repo_in_that_order("
 
 
 def test_every_hold_consuming_function_has_a_recording_hold_test():
@@ -664,11 +679,12 @@ def test_every_hold_consuming_function_has_a_recording_hold_test():
 
     MCP는 no_hold뿐이라 호출 계약이 틀려도 기존 테스트 게이트가 잡지 못한다 —
     plugin_config가 붙는 순간에야 발현한다(spec 7.3의 H1~H4는 좌우 비대칭이다).
+    파라미터 목록에서 찾으므로 줄바꿈에 무관하고, 접두사가 아니라 정확한 테스트
+    이름 규약을 요구하므로 이름 충돌·문자열 언급만으로는 통과하지 못한다.
     """
     source = open(os.path.join(LIB_DIR, "keyed_sync.py"), encoding="utf-8").read()
-    consumers = {name for name in HOLD_CONSUMER.findall(source)
-                 if not name.startswith("_") and name != "no_hold"}
+    consumers = {name for name, params in HOLD_CONSUMER.findall(source)
+                 if re.search(r"\bhold\b", params) and not name.startswith("_")}
     tests = open(__file__, encoding="utf-8").read()
-    missing = [name for name in sorted(consumers)
-               if "recording_hold" not in _test_body_for(tests, name)]
+    missing = [name for name in sorted(consumers) if HOLD_TEST % name not in tests]
     assert missing == [], "recording_hold 테스트가 없는 hold 소비 함수: %s" % missing

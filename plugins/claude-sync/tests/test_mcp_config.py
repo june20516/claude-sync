@@ -604,6 +604,20 @@ def test_restore_plan_without_base_degrades_to_both_changed_and_local_only():
     assert plan["local_stale"] == []
 
 
+def test_restore_plan_exposes_exactly_nine_buckets():
+    """held 축은 MCP 공개 계약이 아니다 — plan_mcp가 이 dict를 사용자 JSON에 펼친다.
+
+    keyed_sync.restore_plan은 value_held·action_held를 포함해 11개 버킷을 낸다.
+    Task 8이 mcp_config.restore_plan을 keyed_sync 위임으로 바꿀 때 그 두 버킷을
+    걸러내지 않으면 plan_mcp.py의 출력 JSON에 held 축이 새로 나타나는데, 이 테스트가
+    없으면 아무도 못 잡는다(Task 7 리뷰에서 화이트리스트 없이 위임을 시뮬레이션했더니
+    기존 게이트가 전부 통과했다).
+    """
+    assert sorted(mc.restore_plan({}, {}, None)) == [
+        "add", "both_changed", "in_sync", "local_ahead", "local_only",
+        "local_stale", "needs_secret", "repo_ahead", "unrestorable"]
+
+
 FUTURE_V3 = b'{"version": 3, "scope": "user", "entries": {"x": {"command": "a"}}}'
 
 
