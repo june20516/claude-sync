@@ -6,6 +6,7 @@ import re
 import pytest
 
 import keyed_sync as ks
+import mcp_config as mc
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
 
@@ -688,3 +689,27 @@ def test_every_hold_consuming_function_has_a_recording_hold_test():
     tests = open(__file__, encoding="utf-8").read()
     missing = [name for name in sorted(consumers) if HOLD_TEST % name not in tests]
     assert missing == [], "recording_hold 테스트가 없는 hold 소비 함수: %s" % missing
+
+
+def test_mcp_adapter_passes_one_recognize_hook_to_all_three(tmp_path, monkeypatch):
+    """어댑터가 세 함수에 같은 recognize를 넘겨야 한다.
+
+    코어는 훅을 파라미터로 받으므로 공유를 강제할 수 없다. 갈리면 "이력은 못 믿는데
+    레포는 믿는" 비대칭이 생기고 상위 버전 백업이 파괴된다(spec 4.4).
+    """
+    seen = []
+
+    def capture(*args):
+        seen.append(args[-1])   # 세 코어 함수 모두 recognize가 마지막 위치 인자다
+        return {}
+
+    monkeypatch.setattr(mc.ks, "parse_base", capture)
+    monkeypatch.setattr(mc.ks, "load_backup", capture)
+    monkeypatch.setattr(mc.ks, "parse_backup", capture)
+
+    mc.parse_base(b'{"version": 2, "scope": "user", "servers": {}}')
+    mc.load_backup(str(tmp_path / "none.json"))
+    mc.parse_backup(b'{"version": 2, "scope": "user", "servers": {}}')
+
+    assert len(seen) == 3
+    assert len({id(hook) for hook in seen}) == 1
