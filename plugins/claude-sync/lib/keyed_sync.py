@@ -163,3 +163,35 @@ def diff(local, repo, *, normalize, hold):
         ),
         "held": sorted(value_held),
     }
+
+
+def next_base(local, base, merged, *, normalize, value_held=frozenset()):
+    """다음 base 매핑. base[key]는 로컬이 그 값에 동의할 때만 전진한다.
+
+    로컬이 동의하지 않은 값(타 기기가 추가·변경한 항목, 충돌 중인 항목)을 base에 기록하면
+    다음 백업이 그 차이를 "로컬이 바뀌었다"로 오독해, 타 기기의 항목을 삭제하거나
+    타 기기의 변경을 되돌린다.
+
+    **값 보류 키는 base에서 제거한다.** base의 의미는 "이 기기가 마지막으로 동의한 값"인데
+    보류 키는 정의상 이 기기가 동의하지 않기로 한 키다. 남기면 보류가 풀리는 순간
+    얼어붙은 base로 케이스 3(삭제)이 난다.
+
+    hold 콜러블이 아니라 이미 계산된 집합을 받는다 — hold는 (local, repo)가 필요한데
+    이 함수의 인자에는 repo가 없기 때문이다. merge가 한 번 계산해 넘기고,
+    단독 호출자(restore)는 스스로 계산해 넘긴다.
+
+    반환값은 입력의 어떤 nested 객체도 공유하지 않는다(deepcopy).
+    """
+    local, merged = _normalized(local, normalize), _normalized(merged, normalize)
+    old = _normalized(base, normalize) if base else {}
+    out = {}
+    for name in sorted(set(old) | set(merged)):
+        if name in value_held:
+            continue                                    # 값 보류 → base에서 제거
+        if name in merged and name in local and same(merged[name], local[name]):
+            out[name] = copy.deepcopy(merged[name])     # 로컬이 동의 → 전진
+        elif name not in merged and name not in local:
+            continue                                    # 양쪽에서 사라짐 → 제거
+        elif name in old:
+            out[name] = copy.deepcopy(old[name])        # 동의 안 함 → 이전 base 유지
+    return out

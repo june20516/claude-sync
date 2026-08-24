@@ -256,3 +256,79 @@ def test_diff_reports_held_key_absent_from_both_sides():
     out = ks.diff({"a": 1}, {"a": 1}, normalize=lambda m: m,
                   hold=hold_keys(value=("ghost",)))
     assert out["held"] == ["ghost"]
+
+
+def test_next_base_advances_only_where_local_agrees():
+    """타 기기가 추가·변경한 값을 base에 기록하면 다음 백업이 '내가 삭제했다'로 오독한다."""
+    out = ks.next_base({"mine": 1}, {"mine": 1, "theirs": 0}, {"mine": 1, "theirs": 9},
+                       normalize=lambda m: m)
+    assert out["mine"] == 1      # 로컬이 동의 → 전진
+    assert out["theirs"] == 0    # 로컬이 동의 안 함 → 이전 base 유지
+
+
+def test_next_base_drops_keys_absent_from_both_sides():
+    out = ks.next_base({}, {"gone": 1}, {}, normalize=lambda m: m)
+    assert "gone" not in out
+
+
+def test_next_base_keeps_old_only_keys_when_local_still_has_them():
+    """old(base)에는 있고 merged에는 없지만 local은 여전히 갖고 있는 키는 "이전 base 유지" 갈래를 탄다.
+
+    (예: 타 기기 삭제를 아직 로컬에 반영하기 전.) 순회 대상을 `sorted(set(merged))`로
+    좁히면(변조 10) 이 키가 애초에 순회에 안 잡혀 조용히 사라진다 — 위
+    test_next_base_drops_keys_absent_from_both_sides는 local도 비어 있어 결과가 "드롭"으로
+    우연히 같아 이 차이를 못 잡는다.
+    """
+    out = ks.next_base({"stale": 1}, {"stale": 1}, {}, normalize=lambda m: m)
+    assert out["stale"] == 1
+
+
+def test_next_base_removes_value_held_keys():
+    """값 보류 키를 base에 남기면 해제 시 케이스 3(삭제)이 난다."""
+    out = ks.next_base({"h": 1, "n": 1}, {"h": 1, "n": 1}, {"h": 1, "n": 1},
+                       normalize=lambda m: m, value_held={"h"})
+    assert "h" not in out
+    assert out["n"] == 1
+
+
+def test_next_base_applies_normalize_so_secrets_do_not_leak():
+    """restore가 평문 로컬을 넘겨도 base 블롭에 평문이 기록되면 안 된다."""
+    out = ks.next_base({"a": {"secret": "plain"}}, None, {"a": {"secret": "<X>"}},
+                       normalize=mask_secret)
+    assert out["a"]["secret"] == "<X>"
+
+
+def test_next_base_applies_normalize_to_merged_side_too():
+    """merged만 정규화를 건너뛰어도 위 mask_secret 테스트는 통과해버린다.
+
+    mask_secret이 멱등이라 위 테스트의 merged={"secret": "<X>"}가 이미 정규화된 형태와 같기
+    때문이다. trim_whitespace로 양쪽 다 미정규화 상태인 값을 써서 merged 쪽 정규화 누락도
+    changed 취급(= 이전 base 유지로 새어 KeyError)으로 드러나게 한다.
+    """
+    # local, merged = _normalized(local, normalize), merged (변조: merged 정규화 생략)로 바꾸면
+    # merged["a"]==" value"가 local의 정규화된 "value"와 달라 same()이 거짓이 되고, old={}(base=None)라
+    # "a"가 out에 실리지 않아 아래 줄이 KeyError로 FAIL한다.
+    out = ks.next_base({"a": "value "}, None, {"a": " value"}, normalize=trim_whitespace)
+    assert out["a"] == "value"
+
+
+def test_next_base_does_not_share_nested_objects_with_inputs():
+    """반환값을 호출부가 가공해도 원본이 오염되면 안 된다."""
+    merged = {"a": {"n": [1]}}
+    out = ks.next_base({"a": {"n": [1]}}, None, merged, normalize=lambda m: m)
+    out["a"]["n"].append(2)
+    assert merged["a"]["n"] == [1]
+
+
+def test_next_base_does_not_share_nested_objects_with_base_either():
+    """"이전 base 유지" 경로도 deepcopy를 써야 한다.
+
+    merged 경로(위 테스트, copy.deepcopy(merged[name]))와는 별개의 코드 경로다
+    (copy.deepcopy(old[name])). old[name]을 그대로 참조하면(`out[name] = old[name]`)
+    반환값을 호출부가 가공할 때 base 원본이 오염된다.
+    """
+    base = {"theirs": {"n": [1]}}
+    # local에 "theirs"가 없으므로 로컬 동의 조건이 성립하지 않아 "이전 base 유지" 갈래를 탄다.
+    out = ks.next_base({}, base, {"theirs": {"n": [9]}}, normalize=lambda m: m)
+    out["theirs"]["n"].append(2)
+    assert base["theirs"]["n"] == [1]
