@@ -104,8 +104,10 @@ MCP는 `no_hold`뿐이라 이 실수가 Task 8 게이트를 정상 통과한 뒤
 `diff`는 `sorted()`를 직접 쓰고, `merge`·`restore_plan`은 `sorted(...)`를 순회하며 append하므로
 결과가 정렬된다. 이 목록들은 **사용자에게 그대로 보고되는 것**이므로 순서가 결정론적이어야 한다.
 테스트는 멤버십이 아니라 **정확 등호**로 건다 — 멤버십만 보면 "과다 분류"(정상 항목이 충돌
-버킷에도 실리는) 변조가 통과한다. (반환 dict 자체의 키 순서는 계약이 아니다 — 디스크
-직렬화가 `sort_keys=True`다.)
+버킷에도 실리는) 변조가 통과한다. (반환 dict 자체의 키 순서는 계약이 아니다. 다만 근거는 디스크 직렬화가 아니다 —
+`dump_backup`은 `sort_keys=True`지만 사용자에게 나가는 stdout JSON은 그렇지 않아 dict의 키
+순서가 그대로 보인다. 계약이 아닌 진짜 이유는 **SKILL.md가 필드를 이름으로 읽기 때문**이고,
+따라서 순서 차이는 미용 문제에 그친다.)
 
 **버킷 이름 `held`가 뜻하는 것.** `diff`·`merge`의 `held`는 **값 보류**다. `restore_plan`만
 두 축이 같은 dict에 함께 나타나므로 거기서는 `value_held`와 **`action_held`**로 이름을 갈랐다
@@ -1132,7 +1134,7 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
 `hold`를 소비하는 함수는 이제 셋이다(`diff`·`merge`·`restore_plan`). MCP 어댑터는 `no_hold`만
 주입하므로 **호출 계약이 틀려도 Task 8의 기존 테스트 게이트가 절대 잡지 못한다.** 다음 plan의
 `plugin_config`가 붙는 순간에야 발현한다. 소스 스캔 가드로 못박는다 —
-`test_mcp_config.py:654`가 이미 같은 형태(`PARSE_BACKUP_CALL`)를 쓴다.
+`test_mcp_config.py`의 `parse_backup` 호출 가드가 이미 같은 형태(프로덕션 소스 전수 스캔)를 쓴다.
 
 `tests/test_keyed_sync.py`에 추가한다.
 
@@ -1585,10 +1587,15 @@ git commit -m "test: 상태 기계 시나리오를 어댑터·값 픽스처 주�
 
 - [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q` → **Task 8 Step 1의 기준선 +1(Step 4.5의 어댑터 가드), 0 failed**
 - [ ] `git diff --stat main..HEAD -- plugins/claude-sync/tests/test_mcp_cycle.py` → **출력 없음**
-- [ ] `test_mcp_config.py`의 변경은 **의도적으로 추가한 가드 둘뿐이다** — Task 3의
-  `PARSE_BACKUP_CALL` 정규식 확장(`ks|keyed_sync`)과 Task 7의
-  `test_restore_plan_exposes_exactly_nine_buckets`. 둘 다 **코어 추출이 새로 낸 구멍을 닫는
-  것**이라 "기존 테스트 무수정" 원칙의 정당한 예외다. 그 외 변경이 있으면 추출이 계약을 바꾼 것이다
+- [ ] `test_mcp_config.py`의 변경은 **의도적으로 추가한 가드 넷뿐이다.** 전부 **코어 추출이
+  새로 낸 구멍(또는 그것이 만든 거짓 양성)을 닫는 것**이라 "기존 테스트 무수정" 원칙의 정당한
+  예외다. 그 외 변경이 있으면 추출이 계약을 바꾼 것이다
+  - Task 3 — `parse_backup` 호출 가드를 코어 이름(`ks`)까지 보도록 확장
+  - Task 7 — `test_restore_plan_exposes_exactly_nine_buckets` (9버킷 화이트리스트 게이트)
+  - Task 8 — 그 호출 가드를 **정규식에서 AST로 교체**. 정규식이 어댑터의 얇은 위임 정의부와
+    읽기 경로의 호출부를 구별하지 못해 거짓 양성을 냈고, 그 거짓 양성이 `getattr` 난독화
+    우회를 불렀다. AST는 "모듈 최상위 `parse_backup` 정의부 안"만 예외로 두고 난독화도 잡는다
+  - Task 8 — `test_adapter_whitelists_track_every_core_bucket` (코어 버킷 증가를 강제 인지)
 - [ ] `lib/mcp_config.py`에서 `_BROKEN`·`_decode`·`_claims_newer_schema`·`_fingerprint`가 사라졌고, 예외 두 클래스가 `keyed_sync`의 것을 가리킨다
 - [ ] `python3 -c "import sys; sys.path.insert(0,'plugins/claude-sync/lib'); import mcp_config as m, keyed_sync as k; assert m.UnknownBackupSchema is k.UnknownBackupSchema"` → 조용히 종료
 - [ ] `test_mcp_state_machine.py`의 테스트 10개가 `[mcp]` 파라미터로 돈다
