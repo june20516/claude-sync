@@ -26,7 +26,8 @@ class UnknownBackupSchema(Exception):
 
     상위 버전이 쓴 문서일 수 있으므로 "항목 0개"로 읽어서는 안 된다. 그렇게 읽으면
     merge가 레포를 빈 것으로 보고 이 기기의 로컬만 남긴 결과를 덮어써 상위 버전의
-    백업을 파괴한다.
+    백업을 파괴한다. 옛 버전이 v2 문서에 저지른 사고와 같은 형태다.
+    LocalConfigUnavailable이 로컬 쪽에서 하는 역할을 레포 쪽에서 한다(불변식 2).
     """
 
 
@@ -307,7 +308,9 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
 
     케이스 7·8·9를 한 버킷으로 뭉치지 않는다 — 처방이 서로 다르고, 특히 케이스 7에
     "레포 값 채택"을 제시하면 아직 백업되지 않은 로컬 변경이 파괴된다.
-    local_stale은 케이스 4와 5를 모두 담는다 — 담지 않으면 케이스 5가 탈출구 없는 상태가 된다.
+    조건식은 merge가 판정표의 7·8·9행에서 쓰는 것과 같다.
+    local_stale은 케이스 4와 5를 모두 담는다(merge.local_stale ⊆ restore_plan.local_stale) —
+    담지 않으면 케이스 5가 탈출구 없는 상태가 된다.
 
     보류 키는 두 축으로 갈린다(spec 5.3):
       행동 보류        → action_held 버킷에만. 어떤 CLI 명령의 대상도 되지 않는다

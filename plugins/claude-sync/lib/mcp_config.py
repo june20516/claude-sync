@@ -212,6 +212,10 @@ def next_base(local, base, servers):
     코어가 입력에 redact를 적용한다 — restore는 read_local_servers()의 원본(비밀 평문)을
     넘기게 되는데, 그 적용이 없으면 same(레포의 <REDACTED>, 로컬 평문)이 거짓이 되어
     비밀을 가진 서버의 base가 전진하지 않고, 평문 키가 base 블롭에 새 사본으로 기록된다.
+
+    MCP에는 보류가 없으므로 value_held를 넘기지 않는다(코어 기본값 frozenset()).
+    **보류가 있는 어댑터는 restore 경로에서 반드시 스스로 계산해 넘겨야 한다** —
+    안 넘기면 보류 키가 base에 얼어붙어, 보류가 풀리는 순간 케이스 3(삭제)이 난다.
     """
     return ks.next_base(local, base, servers, normalize=redact)
 

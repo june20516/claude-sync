@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+import keyed_sync as ks
 import mcp_config as mc
 
 SERVER_A = {"command": "a"}
@@ -618,6 +619,21 @@ def test_restore_plan_exposes_exactly_nine_buckets():
         "local_stale", "needs_secret", "repo_ahead", "unrestorable"]
 
 
+def test_adapter_whitelists_track_every_core_bucket():
+    """코어가 버킷을 추가하면 여기서 걸린다. 화이트리스트는 조용히 빠뜨리기 때문이다.
+
+    빠뜨리면 그 버킷으로 분류된 항목이 사용자 JSON에서 통째로 사라진다 —
+    9버킷 게이트는 '있는 것'만 보므로 이것을 못 잡는다(실측: 443 passed).
+    """
+    assert set(ks.BUCKETS) - set(mc.restore_plan({}, {}, None)) == {"value_held", "action_held"}
+    core_diff = set(ks.diff({}, {}, normalize=mc.redact, hold=ks.no_hold))
+    assert core_diff - set(mc.diff({}, {})) == {"held"}
+    core_merge = set(ks.merge({}, {}, None, normalize=mc.redact, hold=ks.no_hold))
+    adapter_merge = set(mc.merge({}, {}, None))
+    assert core_merge - adapter_merge == {"held", "merged"}
+    assert adapter_merge - core_merge == {"servers"}   # merged→servers 개명을 기계로 고정한다
+
+
 FUTURE_V3 = b'{"version": 3, "scope": "user", "entries": {"x": {"command": "a"}}}'
 
 
@@ -675,10 +691,12 @@ class ParseBackupCallFinder(ast.NodeVisitor):
       parse_backup(...)  from-import로 들여온 이름 호출
       getattr(어떤것, "parse_backup")(...)  문자열 스캔을 피해 가는 동적 조회
     모듈 최상위 호출도 offender다(감싸는 함수가 없으므로 예외 조건을 만족하지 못한다).
+    클래스 본문도 스코프로 센다 — 클래스 안의 parse_backup은 모듈 최상위 공개 함수가
+    아니라 메서드이고, 그 뒤에 읽기 경로를 숨길 수 있기 때문이다.
     """
 
     def __init__(self):
-        self.scope = []          # 지금 감싸고 있는 함수 이름들(바깥→안쪽)
+        self.scope = []          # 지금 감싸고 있는 함수·클래스 이름들(바깥→안쪽)
         self.offenders = []
 
     def visit_FunctionDef(self, node):
@@ -687,6 +705,7 @@ class ParseBackupCallFinder(ast.NodeVisitor):
         self.scope.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
+    visit_ClassDef = visit_FunctionDef
 
     def visit_Call(self, node):
         if self._calls_parse_backup(node) and not self._is_public_delegation():
@@ -694,7 +713,7 @@ class ParseBackupCallFinder(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _is_public_delegation(self):
-        """모듈 최상위의 parse_backup 정의부인가. 중첩 def는 예외가 아니다."""
+        """모듈 최상위의 parse_backup 정의부인가. 중첩 def도 메서드도 예외가 아니다."""
         return self.scope == ["parse_backup"]
 
     @staticmethod
