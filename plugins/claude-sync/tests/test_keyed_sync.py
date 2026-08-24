@@ -12,6 +12,9 @@ def test_claims_newer_schema_blocks_float_bypass():
 def test_claims_newer_schema_ignores_bool_and_string():
     """True는 int의 인스턴스지만 버전 주장이 아니다. 문자열은 손으로 고친 문서를 막지 않는다."""
     assert ks.claims_newer_schema(True, 2) is False
+    # bool 가드가 없으면 True(==1) > 0이 참이 되어 여기서 실제로 FAIL한다.
+    # schema_version=2 조합은 1 > 2가 우연히 거짓이라 가드 삭제를 잡지 못한다.
+    assert ks.claims_newer_schema(True, 0) is False
     assert ks.claims_newer_schema("3", 2) is False
     assert ks.claims_newer_schema(None, 2) is False
 
