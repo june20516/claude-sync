@@ -6,6 +6,9 @@
 
 **어댑터와 값 픽스처를 주입받는다.** 플러그인 어댑터가 추가되면 ADAPTERS에
 한 줄을 더해 같은 열 개의 시나리오를 그대로 돌린다 — 상태 기계를 복사하지 않기 위해서다.
+단, 값이 둘뿐인 섹션(enabledPlugins의 불리언)과 값 보류가 걸리는 섹션은 이 시나리오
+집합을 그대로 쓸 수 없다 — 케이스 9가 세 개의 서로 다른 값을 요구하고, 보류 키는
+판정표를 타지 않기 때문이다. 보류 시나리오는 아직 없다.
 """
 import pytest
 
@@ -13,13 +16,24 @@ import mcp_config as mc
 
 
 class Adapter:
-    """상태 기계 테스트가 어댑터에 요구하는 최소 표면."""
+    """상태 기계 테스트가 어댑터에 요구하는 최소 표면.
 
-    def __init__(self, name, merge, next_base, values):
-        self.name = name
-        self.merge = merge
-        self.next_base = next_base
+    merge(local, repo, base)와 next_base(local, base, merged)를 **위치 인자 셋**으로
+    부른다 — normalize·hold는 어댑터가 클로저로 닫아 넣는다(spec 5.5의 위치 인자 순서).
+    merge는 병합 결과를 merged_key에, 다음 base를 "next_base"에 담아 돌려줘야 한다.
+
+    values는 (A, B, ORIG)이고 **셋이 서로 달라야 한다.** 판정표 케이스 9(양쪽 변경)가
+    local·repo·base 세 값이 모두 다를 것을 요구하기 때문이다. 값이 둘뿐인 도메인
+    (예: enabledPlugins의 불리언)은 이 시나리오 집합을 그대로 쓸 수 없다.
+    """
+
+    def __init__(self, name, merge, next_base, values, merged_key="servers"):
+        self.name, self.merge, self.next_base = name, merge, next_base
+        self.merged_key = merged_key
         self.A, self.B, self.ORIG = values
+        pairs = ((self.A, self.B), (self.B, self.ORIG), (self.A, self.ORIG))
+        assert not any(mc.same(x, y) for x, y in pairs), (
+            "%s: A·B·ORIG가 서로 달라야 한다 — 케이스 9를 표현할 수 없다" % name)
 
 
 ADAPTERS = [
@@ -36,17 +50,17 @@ def adapter(request):
 def backup_round(adapter, local, repo, base):
     """푸시에 성공한 backup 1회를 흉내낸다: 레포 ← 병합 결과, base ← next_base."""
     result = adapter.merge(local, repo, base)
-    merged = result.get("servers", result.get("merged"))
+    merged = result[adapter.merged_key]
     return result, merged, result["next_base"]
 
 
 def repeat_backup(adapter, local, repo, base, rounds=3):
     """같은 로컬로 backup을 rounds회 반복하고 매 회차의 (보고, 레포, base)를 모은다."""
     snapshots = []
+    exclude = (adapter.merged_key, "next_base")
     for _ in range(rounds):
         result, repo, base = backup_round(adapter, local, repo, base)
-        report = {k: v for k, v in result.items()
-                  if k not in ("servers", "merged", "next_base")}
+        report = {k: v for k, v in result.items() if k not in exclude}
         snapshots.append((report, repo, base))
     return snapshots
 
@@ -73,7 +87,7 @@ def test_after_restore_removed_backup_converges_without_stale(adapter):
     """restore '제거' 경로: X가 L·R·S 어디에도 없는 상태로 안정된다."""
     A = adapter.A
     local = {"y": A}
-    base = adapter.next_base(local, {"X": A, "y": A}, {"y": A})
+    base = adapter.next_base(local, {"X": A, "y": A}, {"y": A})   # restore의 base 갱신(①)
     assert "X" not in base
     snapshots = repeat_backup(adapter, local, {"y": A}, base)
     for report, repo, _ in snapshots:
@@ -87,7 +101,7 @@ def test_after_restore_kept_backup_pushes_entry_back(adapter):
     A = adapter.A
     local = {"X": A, "y": A}
     base = adapter.next_base(local, {"X": A}, {"y": A})
-    base.pop("X", None)
+    base.pop("X", None)                                     # override ② (7.4)
     snapshots = repeat_backup(adapter, local, {"y": A}, base)
     assert sorted(snapshots[0][1]) == ["X", "y"]
     for report, _, _ in snapshots:
@@ -99,7 +113,7 @@ def test_after_restore_deferred_backup_keeps_case4(adapter):
     """restore '나중에' 경로: 아무것도 바뀌지 않고 케이스 4가 반복된다."""
     A = adapter.A
     local = {"X": A, "y": A}
-    base = adapter.next_base(local, {"X": A}, {"y": A})
+    base = adapter.next_base(local, {"X": A}, {"y": A})           # override 없음
     assert base["X"] == A
     snapshots = repeat_backup(adapter, local, {"y": A}, base)
     for report, repo, _ in snapshots:
