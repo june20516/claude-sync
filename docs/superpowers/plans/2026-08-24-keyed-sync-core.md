@@ -1586,7 +1586,13 @@ git commit -m "test: 상태 기계 시나리오를 어댑터·값 픽스처 주�
 ## 완료 정의
 
 - [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q` → **Task 8 Step 1의 기준선 +1(Step 4.5의 어댑터 가드), 0 failed**
-- [ ] `git diff --stat main..HEAD -- plugins/claude-sync/tests/test_mcp_cycle.py` → **출력 없음**
+- [ ] `git diff --stat c2a0cd7..HEAD -- plugins/claude-sync/tests/test_mcp_cycle.py` → **출력 없음**
+  (`main..HEAD`가 아니다 — 이 테스트 파일들은 `main`에 아직 존재하지 않아 전부 신규 추가로 잡힌다.
+  `c2a0cd7`은 이 plan을 커밋한 지점이다)
+- [ ] `test_mcp_scripts.py`의 변경은 **Task 1이 추가한 회귀 테스트 둘뿐이다** —
+  `test_collect_does_not_stage_when_repo_write_fails`와
+  `test_collect_keeps_repo_write_when_staging_rename_fails`. spec 5.5가 지목한 세 파일 중
+  하나이므로 함께 추적한다
 - [ ] `test_mcp_config.py`의 변경은 **의도적으로 추가한 가드 넷뿐이다.** 전부 **코어 추출이
   새로 낸 구멍(또는 그것이 만든 거짓 양성)을 닫는 것**이라 "기존 테스트 무수정" 원칙의 정당한
   예외다. 그 외 변경이 있으면 추출이 계약을 바꾼 것이다
@@ -1608,6 +1614,33 @@ git commit -m "test: 상태 기계 시나리오를 어댑터·값 픽스처 주�
 | `lib/compat.py` shape 확장, `detect_downgrade.py`, `generate_metadata.py` | spec 11장 |
 | 문서 정정 열 곳 | spec 13장 |
 | `test_plugin_cycle.py`와 CLI 에뮬레이터 | spec 5.6, 14.3 |
+| **보류 상태 기계 시나리오** — 아래 참조 | spec 7.3, 0.2 / Task 9 quality review I2 |
+
+**보류의 다회차 커버리지가 0이다. 이것을 다음 plan의 명시적 task로 박는다.**
+
+Task 9가 `test_mcp_state_machine.py`를 어댑터 주입 형태로 바꿨지만, **열 개 시나리오 어디에도
+보류 키가 없다.** MCP는 `no_hold`라 정상이지만 플러그인은 보류가 네 종류다(spec 7.3).
+실측: 가짜 플러그인 어댑터를 붙이고 **코어의 "보류 키는 레포 값을 그대로 싣는다"를 지워도
+20 passed 그대로**였다(전체 스위트는 `test_keyed_sync.py`가 2건 잡는다).
+
+**왜 다회차여야 하는가.** 단발 테스트가 잡는 것은 1회차다. *"레포가 그 키를 잃은 채로
+고정점에 든다"* 는 다회차 결과를 보는 것이 그 파일의 존재 이유이고, 그 결함 계열이 정확히
+이 개정이 없애려던 "타 기기의 항목 전멸"이다. 게다가 spec 7.3이 스스로 경고한
+**H3 탈출구의 착지 지점**(해제하면 케이스 9가 아니라 케이스 7이어야 한다)은 **정의상 회차
+사이에 상태가 변해야** 표현되는 성질인데, 현재 `repeat_backup`은 회차마다 같은 `local`과
+같은 `hold`를 넘기므로 **구조적으로 표현할 수 없다.**
+
+다음 plan이 반드시 포함할 것:
+1. 보류 시나리오 최소 셋 — 보류 유지 / 보류 해제 후 착지 / 보류 키가 레포에서 사라졌을 때
+2. `repeat_backup`에 **회차별 상태 오버라이드 훅** (회차 사이 `local`·`hold`를 바꿀 수 있어야 한다)
+3. **`enabledPlugins` 전용 값 도메인** — 아래 참조
+
+**`ADAPTERS`에 한 줄만 더하면 된다는 것은 사실이 아니다.** Task 9 리뷰가 실측으로 반증했다 —
+`pluginConfigs`·`extraKnownMarketplaces`는 그대로 돌지만(20 passed), **`enabledPlugins`는
+불리언이든 배열이든 돌지 않는다**(각각 3 failed / 5 failed). 불리언은 값이 둘뿐이라 판정표
+케이스 9(양쪽 변경)를 표현할 수 없고, 배열이면 H3로 전부 보류된다. 그리고 훅이 섹션마다
+다른 클로저이므로 실제로는 "한 줄"이 아니라 **섹션당 한 줄 × 3 + 클로저 구성**이다.
+"테스트 파라미터화는 이미 끝났다"로 넘기면 정확히 이 자리가 빈다.
 
 ### 실행 중 발견된 인계 항목
 
