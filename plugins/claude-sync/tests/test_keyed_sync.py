@@ -90,6 +90,33 @@ def test_load_backup_degrades_broken_syntax_to_empty(tmp_path):
     assert ks.load_backup(str(path), only_dict_with_items) == {}
 
 
+def test_load_backup_propagates_permission_error(tmp_path):
+    """FileNotFoundError만 {}로 접는다. 다른 OSError를 접으면 못 읽은 백업이
+    "항목 0개"가 되고, merge가 그 레포를 덮어써 파괴한다."""
+    path = tmp_path / "backup.json"
+    path.write_text(json.dumps({"items": {"a": 1}}), encoding="utf-8")
+    path.chmod(0)
+    try:
+        # except FileNotFoundError를 except OSError로 넓히면 PermissionError가
+        # {}로 접혀 이 raises가 FAIL한다.
+        with pytest.raises(PermissionError):
+            ks.load_backup(str(path), only_dict_with_items)
+    finally:
+        path.chmod(0o644)
+
+
+def test_load_backup_reads_file_as_bytes_so_invalid_utf8_degrades_to_empty(tmp_path):
+    """"rb"가 아니면 잘못된 UTF-8이 파일을 여는 시점에 UnicodeDecodeError로
+    전파된다. 바이너리로 읽어야 decode()가 그 바이트를 받아 BROKEN으로 판정하고
+    {}로 degrade한다.
+    """
+    path = tmp_path / "backup.json"
+    path.write_bytes(b"\xff")
+    # open(path, "rb")를 open(path, "r")로 바꾸면 f.read()에서 UnicodeDecodeError가
+    # 그대로 터져 이 assert에 도달하지 못하고 이 테스트가 FAIL한다.
+    assert ks.load_backup(str(path), only_dict_with_items) == {}
+
+
 def test_parse_backup_is_lenient():
     assert ks.parse_backup(b"{oops", only_dict_with_items) == {}
     assert ks.parse_backup(b'{"nope": 1}', only_dict_with_items) == {}

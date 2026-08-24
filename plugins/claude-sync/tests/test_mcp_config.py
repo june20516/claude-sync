@@ -651,7 +651,7 @@ def test_parse_backup_degrades_higher_schema_version():
 
 PLUGIN_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 PROD_DIRS = (os.path.join(PLUGIN_ROOT, "lib"), os.path.join(PLUGIN_ROOT, "skills"))
-PARSE_BACKUP_CALL = re.compile(r"\b(?:mc|mcp_config)\.parse_backup\s*\(")
+PARSE_BACKUP_CALL = re.compile(r"\b(?:mc|mcp_config|ks|keyed_sync)\.parse_backup\s*\(")
 
 
 def test_no_production_code_calls_parse_backup():
