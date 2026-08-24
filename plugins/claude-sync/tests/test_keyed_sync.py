@@ -1,9 +1,13 @@
 """값 무관 코어의 단위 테스트. 도메인 지식은 전부 훅으로 들어온다."""
 import json
+import os
+import re
 
 import pytest
 
 import keyed_sync as ks
+
+LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
 
 
 def test_claims_newer_schema_blocks_float_bypass():
@@ -516,3 +520,155 @@ def test_merge_buckets_are_exact_not_membership():
     assert r["conflicts"] == ["c5", "c9"]
     assert r["repo_ahead"] == ["c2", "c8"]
     assert sorted(r["merged"]) == ["c1", "c2", "c6", "c7", "c8", "c9"]
+
+
+def always_restorable(key, value):
+    return True
+
+
+def no_secrets(value):
+    return []
+
+
+def test_restore_plan_separates_cases_7_8_9():
+    """세 케이스를 한 버킷으로 뭉치면 안 된다 — 처방이 다르다."""
+    local = {"c7": 2, "c8": 1, "c9": 2}
+    repo = {"c7": 1, "c8": 2, "c9": 3}
+    base = {"c7": 1, "c8": 1, "c9": 1}
+    plan = ks.restore_plan(local, repo, base, normalize=lambda m: m, hold=ks.no_hold,
+                           restorable=always_restorable, secret_keys=no_secrets)
+    assert plan["local_ahead"] == ["c7"]
+    assert plan["repo_ahead"] == ["c8"]
+    assert plan["both_changed"] == ["c9"]
+
+
+def test_restore_plan_local_stale_holds_cases_4_and_5():
+    """케이스 5를 담지 않으면 탈출구 없는 상태가 된다."""
+    plan = ks.restore_plan({"c4": 1, "c5": 2}, {}, {"c4": 1, "c5": 1},
+                           normalize=lambda m: m, hold=ks.no_hold,
+                           restorable=always_restorable, secret_keys=no_secrets)
+    assert plan["local_stale"] == ["c4", "c5"]
+
+
+def test_restore_plan_routes_add_needs_secret_and_unrestorable():
+    plan = ks.restore_plan({}, {"ok": 1, "sec": 1, "bad": 1}, {},
+                           normalize=lambda m: m, hold=ks.no_hold,
+                           restorable=lambda k, v: k != "bad",
+                           secret_keys=lambda v: ["k"] if v == 1 else [])
+    assert plan["unrestorable"] == ["bad"]
+    assert plan["needs_secret"] == ["ok", "sec"]
+    assert plan["add"] == []
+
+
+def test_restore_plan_action_held_goes_to_its_own_bucket_only():
+    """행동 보류 키는 어떤 CLI 명령의 대상도 되지 않는다."""
+    plan = ks.restore_plan({}, {"h": 1}, {}, normalize=lambda m: m,
+                           hold=hold_keys(value=("h",), action=("h",)),
+                           restorable=always_restorable, secret_keys=no_secrets)
+    assert plan["action_held"] == ["h"]
+    assert plan["add"] == [] and plan["value_held"] == []
+
+
+def test_restore_plan_value_held_installs_when_absent_locally():
+    """값 보류지만 행동 보류가 아니면 설치 대상이다 (H3)."""
+    plan = ks.restore_plan({}, {"h": ["1.0.0"]}, {}, normalize=lambda m: m,
+                           hold=hold_keys(value=("h",)),
+                           restorable=always_restorable, secret_keys=no_secrets)
+    assert plan["add"] == ["h"]
+    assert plan["value_held"] == [] and plan["action_held"] == []
+
+
+def test_restore_plan_value_held_uses_own_bucket_when_present_locally():
+    """이미 설치돼 있으면 전용 버킷 — 케이스 9로 부르면 금지된 문구가 나간다."""
+    plan = ks.restore_plan({"h": True}, {"h": ["1.0.0"]}, {}, normalize=lambda m: m,
+                           hold=hold_keys(value=("h",)),
+                           restorable=always_restorable, secret_keys=no_secrets)
+    assert plan["value_held"] == ["h"]
+    assert plan["both_changed"] == [] and plan["add"] == []
+
+
+def test_restore_plan_gives_hold_normalized_local_and_repo_in_that_order():
+    """hold는 정규화된 입력을 (local, repo) 순서로 정확히 한 번 받는다(훅 계약).
+
+    MCP는 no_hold뿐이라 Task 8 게이트는 이 계약을 잡지 못한다 — plugin_config가
+    붙는 순간에야 발현한다(spec 7.3의 H1~H4는 좌우 비대칭이다).
+    """
+    seen = []
+    ks.restore_plan({"a": "x "}, {"b": " y"}, {}, normalize=trim_whitespace,
+                     hold=recording_hold(seen), restorable=always_restorable,
+                     secret_keys=no_secrets)
+    assert seen == [({"a": "x"}, {"b": "y"})]
+
+
+def test_restore_plan_keeps_the_two_hold_axes_disjoint():
+    """value_held·action_held에 서로 다른 키를 넣어 두 축을 동시에 비어 있지 않게 한다.
+
+    이 픽스처가 없으면 두 축을 합치거나(합집합) 서로 바꾸는 변조가 조용히 통과한다 —
+    기존 테스트들은 매번 한쪽 축만 채우거나 같은 키를 양쪽에 넣어 구별이 안 된다.
+    """
+    plan = ks.restore_plan({"v": True}, {"v": ["1.0.0"], "a": 1}, {},
+                           normalize=lambda m: m,
+                           hold=hold_keys(value=("v",), action=("a",)),
+                           restorable=always_restorable, secret_keys=no_secrets)
+    assert plan["value_held"] == ["v"]
+    assert plan["action_held"] == ["a"]
+    assert plan["add"] == [] and plan["local_only"] == [] and plan["both_changed"] == []
+
+
+def test_restore_plan_base_none_does_not_crash_and_matches_empty_base():
+    """base=None(이력을 못 믿음)은 known={}로 degrade한다 — base={}와 결과가 같아야 하고
+    크래시가 나면 안 된다. 주어진 테스트들은 모두 base={} 또는 비어 있지 않은 base만
+    쓰므로, None 경로 자체는 이 테스트가 없으면 한 번도 실행되지 않는다.
+    """
+    plan = ks.restore_plan({"c9": 2}, {"c9": 3}, None, normalize=lambda m: m,
+                           hold=ks.no_hold, restorable=always_restorable,
+                           secret_keys=no_secrets)
+    assert plan["both_changed"] == ["c9"]
+    assert plan["local_ahead"] == [] and plan["repo_ahead"] == []
+
+
+def test_restore_plan_buckets_are_exact_not_membership():
+    """열한 버킷 전부를 정확 등호로 건다 — 멤버십만 보면 과다 분류 변조가 통과한다."""
+    local = {"c1": 1, "c4": 1, "c5": 2, "c6": 1, "c7": 2, "c8": 1, "c9": 2}
+    repo = {"c2": 1, "c3": 1, "c6": 1, "c7": 1, "c8": 2, "c9": 3, "new": 1}
+    base = {"c3": 1, "c4": 1, "c5": 1, "c7": 1, "c8": 1, "c9": 1, "c10": 1}
+    plan = ks.restore_plan(local, repo, base, normalize=lambda m: m, hold=ks.no_hold,
+                           restorable=always_restorable, secret_keys=no_secrets)
+    # c3은 base·repo에 있고 local에는 없다(merge의 케이스 3 형태) — restore는 merge와
+    # 달리 이런 항목도 "레포에만 있음"으로 보고 add 후보에 넣는다. base 이력 유무로
+    # add/local_stale을 가르지 않는다 — 그건 local이 그 항목을 가졌는지 여부의 몫이다.
+    assert plan["add"] == ["c2", "c3", "new"]
+    assert plan["needs_secret"] == []
+    assert plan["unrestorable"] == []
+    assert plan["in_sync"] == ["c6"]
+    assert plan["local_ahead"] == ["c7"]
+    assert plan["repo_ahead"] == ["c8"]
+    assert plan["both_changed"] == ["c9"]
+    assert plan["local_stale"] == ["c4", "c5"]
+    assert plan["local_only"] == ["c1"]
+    assert plan["value_held"] == []
+    assert plan["action_held"] == []
+
+
+HOLD_CONSUMER = re.compile(r"^def (\w+)\(.*\bhold\b", re.M)
+
+
+def _test_body_for(tests, name):
+    """`def test_<name>_...`로 시작하는 모든 테스트 본문을 이어 붙여 돌려준다."""
+    pattern = re.compile(r"^def test_%s_.*?(?=^def |\Z)" % re.escape(name), re.M | re.S)
+    return "\n".join(pattern.findall(tests))
+
+
+def test_every_hold_consuming_function_has_a_recording_hold_test():
+    """hold를 받는 코어 함수는 인자·순서·정규화 여부를 거는 테스트를 하나씩 가져야 한다.
+
+    MCP는 no_hold뿐이라 호출 계약이 틀려도 기존 테스트 게이트가 잡지 못한다 —
+    plugin_config가 붙는 순간에야 발현한다(spec 7.3의 H1~H4는 좌우 비대칭이다).
+    """
+    source = open(os.path.join(LIB_DIR, "keyed_sync.py"), encoding="utf-8").read()
+    consumers = {name for name in HOLD_CONSUMER.findall(source)
+                 if not name.startswith("_") and name != "no_hold"}
+    tests = open(__file__, encoding="utf-8").read()
+    missing = [name for name in sorted(consumers)
+               if "recording_hold" not in _test_body_for(tests, name)]
+    assert missing == [], "recording_hold 테스트가 없는 hold 소비 함수: %s" % missing

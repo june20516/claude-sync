@@ -293,3 +293,68 @@ def merge(local, repo, base, *, normalize, hold):
         # 정규화돼 있으므로 다시 정규화하면 멱등성에 의존하게 된다(Task 5 리뷰 I2).
         "next_base": _next_base_normalized(local, base or {}, merged, value_held),
     }
+
+
+BUCKETS = (
+    "add", "needs_secret", "unrestorable", "in_sync", "local_ahead",
+    "repo_ahead", "both_changed", "local_stale", "local_only",
+    "value_held", "action_held",
+)
+
+
+def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys):
+    """복원 계획. diff·merge와 마찬가지로 비교 직전 양쪽에 normalize를 적용한다.
+
+    케이스 7·8·9를 한 버킷으로 뭉치지 않는다 — 처방이 서로 다르고, 특히 케이스 7에
+    "레포 값 채택"을 제시하면 아직 백업되지 않은 로컬 변경이 파괴된다.
+    local_stale은 케이스 4와 5를 모두 담는다 — 담지 않으면 케이스 5가 탈출구 없는 상태가 된다.
+
+    보류 키는 두 축으로 갈린다(spec 5.3):
+      행동 보류        → action_held 버킷에만. 어떤 CLI 명령의 대상도 되지 않는다
+      값 보류(행동 아님) → 로컬에 없으면 add(설치 대상), 있으면 value_held 전용 버킷
+    value_held를 판정표에 태우면 케이스 9로 분류되어 "양쪽이 모두 바뀌었습니다"가 뜨는데,
+    그것은 사실이 아니고 "레포 따르기"를 실행할 수단도 없다.
+    """
+    local, repo = _normalized(local, normalize), _normalized(repo, normalize)
+    known = _normalized(base, normalize) if base else {}
+    held = hold(local, repo)
+    value_held, action_held = set(held["value"]), set(held["action"])
+
+    plan = {key: [] for key in BUCKETS}
+
+    def route_new(name, value):
+        """레포에만 있는 항목을 add/needs_secret/unrestorable로 보낸다."""
+        if not restorable(name, value):
+            plan["unrestorable"].append(name)
+        elif secret_keys(value):
+            plan["needs_secret"].append(name)
+        else:
+            plan["add"].append(name)
+
+    for name in sorted(set(local) | set(repo)):
+        if name in action_held:
+            plan["action_held"].append(name)
+            continue
+        if name in value_held:
+            if name in local:
+                plan["value_held"].append(name)
+            elif name in repo:
+                route_new(name, repo[name])
+            continue
+        in_local, in_repo = name in local, name in repo
+        if in_repo and not in_local:
+            route_new(name, repo[name])
+        elif in_local and in_repo:
+            if same(local[name], repo[name]):                        # 6
+                plan["in_sync"].append(name)
+            elif name in known and same(repo[name], known[name]):    # 7
+                plan["local_ahead"].append(name)
+            elif name in known and same(local[name], known[name]):   # 8
+                plan["repo_ahead"].append(name)
+            else:                                                    # 9
+                plan["both_changed"].append(name)
+        elif name in known:                                          # 4·5
+            plan["local_stale"].append(name)
+        else:                                                        # 1
+            plan["local_only"].append(name)
+    return plan
