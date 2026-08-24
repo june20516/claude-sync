@@ -16,7 +16,7 @@
 |---|---|
 | `lib/keyed_sync.py` 신규 | `lib/plugin_config.py`, `collect_plugins.py` 등 플러그인 본체 |
 | `lib/mcp_config.py` 어댑터화 | `lib/compat.py` shape 확장, `detect_downgrade.py` |
-| `collect_mcp.py`의 스테이징 결함 수정 | 세 `SKILL.md`, README 등 문서 정정 |
+| `collect_mcp.py`의 스테이징 결함 수정 | **spec 7.4 배선 구현** + 세 `SKILL.md`·README 문서 정정 |
 | `test_mcp_state_machine.py` 파라미터화 | 플러그인 테스트 전부 |
 
 **근거 절 표기.** 각 task 머리에 `**근거:** spec N.M` 을 적었다. spec의 그 절이 바뀌면 그 task는 무효다 — 폭발 반경을 기계적으로 식별하기 위한 장치이고, 이 plan을 재생성할 때 어디부터 다시 쓸지를 정한다.
@@ -1328,5 +1328,19 @@ git commit -m "test: 상태 기계 시나리오를 어댑터·값 픽스처 주�
 | `lib/compat.py` shape 확장, `detect_downgrade.py`, `generate_metadata.py` | spec 11장 |
 | 문서 정정 열 곳 | spec 13장 |
 | `test_plugin_cycle.py`와 CLI 에뮬레이터 | spec 5.6, 14.3 |
+
+### 실행 중 발견된 인계 항목
+
+Task 1의 두 리뷰가 범위 밖으로 판정했지만 기록해 둔 것들이다. 다음 plan을 쓸 때
+"문서 정정"으로 뭉뚱그리면 조용히 누락되는 자리다.
+
+| 항목 | 무엇 | 근거 |
+|---|---|---|
+| **`dump_backup` 비원자성** | `lib/mcp_config.py:228-234`가 `open(path,"w")`로 먼저 truncate한다. 쓰기 도중 실패(ENOSPC/EIO)하면 레포 파일이 잘린 채 남고, 다음 백업이 그것을 `{}`로 degrade해 **모든 서버를 케이스 4로 판정**한다 → restore가 "다른 기기가 삭제했습니다"를 띄운다. Task 1이 막은 것과 **같은 거짓 문구로 가는 두 번째 문**이다. `detect_downgrade`는 `shape=broken`을 분기하지 않아 조용하다. tmp+`os.replace` 4줄. `plan_mcp.apply_base:74`·`sync_state.write_base:47-58`도 같은 형태 | Task 1 quality review I1 |
+| **`base_staging:"failed"` 보고 배선** | `collect_mcp.py`가 이 키를 반환만 하고 소비하는 곳이 없다. `SKILL.md:290-292`의 `status` 분기는 `skipped`일 때만 `reason`을 보고한다. spec 7.4는 "보고한다"고 썼다 | spec 7.4 / quality review P1 |
+| **`SKILL.md:397` 주석 근거 교체** | 현재: "collect_mcp.py가 status=ok일 때만 쓰므로, 파일 존재가 곧 'skip 아님'이다". 결론은 이제 참이지만 근거가 낡았다. spec 7.4가 docstring과 **함께** 고치라고 지목했고 docstring만 고쳤다 | spec 7.4 / quality review M3 |
+| **`reason` 키 이름 충돌** | `status:"ok"` payload에 `reason`이 실린다. `reason`은 `SKILL.md:292`가 skipped 경로의 필드로 문서화한 이름이다. 배선을 붙일 때 `base_staging_reason` 등으로 정할 것 | quality review M6 |
+| **스테이징 위생의 근거가 코드 밖에 있다** | `os.replace` 실패 시 남는 `.tmp`가 무해한 이유는 호출부(`SKILL.md:285`, `sync-restore/SKILL.md:369`)가 실행마다 `rm -rf`하기 때문이다. spec 7.4의 미래 배선이 `BASE_STAGING`을 공유하고 `rm -rf`를 앞으로 옮기므로, "실행당 한 번 비운다"가 유지되어야 이 성질이 산다. docstring에 전제로 한 줄 남길 것 | quality review M4 |
+| **`apply_base`와의 패턴 비대칭** | `plan_mcp.apply_base:73-74`는 여전히 최종 이름으로 직접 쓴다. 앞에 "레포 쓰기"가 없어 같은 결함이 성립하지 않는 **정당한 비대칭**이지만, 두 스크립트가 다른 패턴을 쓰게 됐으니 근거를 한 줄 남길 것 | quality review 교차 패스 |
 
 **이 plan이 끝나야 다음 plan을 쓸 수 있다.** Task 8의 결과가 코어 시그니처를 확정하고, 다음 plan의 모든 task가 그 시그니처에 의존한다.
