@@ -32,6 +32,14 @@
 FAIL하는지 임시 복사본에서 확인한다.** Task 5의 `next_base` deepcopy와 Task 6의 판정표
 10케이스가 특히 "단언은 참인데 그 참이 구현의 가드에서 나오지 않는" 형태가 되기 쉽다.
 
+**I/O 층도 변조 대상이다.** Task 3에서 구현자가 돌린 변조 다섯은 전부 순수 함수 층이었고
+전부 CAUGHT였는데, 리뷰어가 파일 읽기 층을 건드리자 **둘이 SURVIVED**했다 —
+`except FileNotFoundError`를 `except OSError`로 넓혀도, `open(path, "rb")`를 `"r"`로
+바꿔도 전체가 통과했다. 앞의 것은 **권한이 없어 못 읽은 백업을 "항목 0개"로 만드는** 변조인데
+docstring이 그러지 않겠다고 명시적으로 약속한 자리였다. 순수 함수에만 시선이 가는 것이
+자연스러운 사각지대이므로 **`open` 모드·`except` 절·파일 부재 처리를 반드시 변조 목록에
+넣는다.**
+
 **실행 중 확정된 것.**
 
 | 결정 | 근거 |
@@ -59,11 +67,24 @@ FAIL하는지 임시 복사본에서 확인한다.** Task 5의 `next_base` deepc
 ## 코어의 훅 계약 (Task 2~7이 공유한다)
 
 ```python
+recognize(obj)      -> mapping | None   # 알아볼 수 있으면 매핑(비었으면 {}), 아니면 None
 normalize(mapping) -> mapping      # 값 층위 변환만. 멱등. 키를 더하거나 빼지 않는다
 hold(local, repo)   -> {"value": set[str], "action": set[str]}   # 정규화된 입력을 받는다
 restorable(key, value) -> bool
 secret_keys(value)  -> list        # 복원 시 사용자에게 물어야 하는 항목
 ```
+
+**`recognize`의 두 갈래를 헷갈리면 곧바로 파괴로 이어진다.** spec 4.4가 정한 규약이다 —
+인식된 문서에서 **없는 섹션은 `{}`**("이력이 비어 있었다"), **문서 자체를 인식하지 못하면
+`None`**. "유효한데 항목 0개"에 `None`을 돌려주면 `load_backup`이 정상 문서에
+`UnknownBackupSchema`를 던져 **모든 백업이 영구히 막힌다.** 반대로 "알아볼 수 없음"에
+`{}`를 돌려주면 상위 버전 백업이 파괴된다. 그리고 `parse_base`·`load_backup`·`parse_backup`
+세 함수가 **반드시 같은 훅을 받아야 한다** — 갈리면 "이력은 못 믿는데 레포는 믿는" 비대칭이
+생기고, 코어는 파라미터로 받으므로 그 공유를 강제할 수 없다(어댑터 측에서 가드해야 한다).
+
+(이 절은 처음에 `recognize`를 빠뜨렸다. Task 3이 오직 그 훅만 도입하는 task인데도 그랬고,
+그 결과 `mcp_config._recognized_servers`에 있던 공통 기준 설명이 추출 과정에서 어느 쪽에도
+남지 않고 증발했다 — Task 3 quality review가 잡았다.)
 
 **`next_base`만 `hold` 콜러블이 아니라 `value_held` 집합을 받는다.** `hold`는 `(local, repo)`가 필요한데 `next_base`의 인자에는 `repo`가 없고 `merged`뿐이기 때문이다. `merge`가 한 번 계산해 넘기고, 단독 호출자(restore)는 스스로 계산해 넘긴다. spec 15장 오픈이슈 1이 이 결정을 plan에 맡겼다.
 
@@ -995,8 +1016,9 @@ git commit -m "feat(core): restore_plan — 버킷 열한 개와 두 축의 보�
 테스트를 추가하면 계획 시점의 숫자는 항상 어긋난다(실제로 어긋났다: 기준선은 383이
 아니라 385였다).
 
-**여기서 나온 숫자를 적어 두고 Step 4에서 같은 숫자가 나오는지 본다.** Task 8은
-테스트를 한 개도 더하지 않으므로 두 숫자는 반드시 같아야 한다.
+**여기서 나온 숫자를 적어 두고 Step 4에서 같은 숫자가 나오는지 본다.** Step 4까지는
+테스트를 한 개도 더하지 않으므로 두 숫자는 반드시 같아야 한다. (그 뒤 Step 4.5가
+어댑터 가드 하나를 더하므로 최종 개수는 +1이다.)
 
 - [ ] **Step 2: `mcp_config.py`의 판정·인식 부분을 코어 호출로 교체**
 
@@ -1107,7 +1129,46 @@ def restore_plan(local, backed, base):
 기대: **Step 1에서 적어 둔 숫자와 동일.** 하나라도 실패하면 추출이 틀린 것이므로 되돌리고 원인을 찾는다.
 
 실행: `git diff --stat plugins/claude-sync/tests/`
-기대: **출력 없음** (테스트를 한 줄도 고치지 않았다)
+기대: **출력 없음** (기존 테스트를 한 줄도 고치지 않았다. Step 4.5가 더하는 새 테스트는 이 확인 **뒤에** 넣는다)
+
+- [ ] **Step 4.5: 세 함수가 같은 `recognize`를 받는지 어댑터에서 가드한다**
+
+**근거:** spec 4.4 / Task 3 quality review 권고 3
+
+코어는 `recognize`를 파라미터로 받으므로 **셋이 같은 훅인지 강제할 수 없다.** 어댑터가
+셋에 다른 훅을 넘겨도 코어는 막지 못하고, 그것이 spec 4.4가 파괴 요인으로 지목한
+"이력은 못 믿는데 레포는 믿는" 비대칭이다. 어댑터 쪽에서 걸어야 한다.
+
+`tests/test_keyed_sync.py` 끝에 추가한다(`import mcp_config as mc`를 파일 상단
+`import keyed_sync as ks` 옆에 함께 둔다).
+
+```python
+def test_mcp_adapter_passes_one_recognize_hook_to_all_three(tmp_path, monkeypatch):
+    """어댑터가 세 함수에 같은 recognize를 넘겨야 한다.
+
+    코어는 훅을 파라미터로 받으므로 공유를 강제할 수 없다. 갈리면 "이력은 못 믿는데
+    레포는 믿는" 비대칭이 생기고 상위 버전 백업이 파괴된다(spec 4.4).
+    """
+    seen = []
+
+    def capture(*args):
+        seen.append(args[-1])   # 세 코어 함수 모두 recognize가 마지막 위치 인자다
+        return {}
+
+    monkeypatch.setattr(mc.ks, "parse_base", capture)
+    monkeypatch.setattr(mc.ks, "load_backup", capture)
+    monkeypatch.setattr(mc.ks, "parse_backup", capture)
+
+    mc.parse_base(b'{"version": 2, "scope": "user", "servers": {}}')
+    mc.load_backup(str(tmp_path / "none.json"))
+    mc.parse_backup(b'{"version": 2, "scope": "user", "servers": {}}')
+
+    assert len(seen) == 3
+    assert len({id(hook) for hook in seen}) == 1
+```
+
+**변조 확인:** 임시 복사본에서 어댑터의 `parse_backup`이 다른 훅(예: `lambda obj: obj`)을
+넘기도록 바꾸고 이 테스트가 FAIL하는지 본다.
 
 - [ ] **Step 5: Commit**
 
@@ -1321,7 +1382,7 @@ def test_new_machine_without_base_does_not_delete_others_on_second_round(adapter
 - [ ] **Step 3: 전체 회귀 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests -q`
-기대: **Task 8 Step 1에서 적어 둔 숫자와 동일** (Task 9는 테스트를 재작성할 뿐 개수를 바꾸지 않는다)
+기대: **Task 8 종료 시점의 개수와 동일** (Task 9는 테스트를 재작성할 뿐 개수를 바꾸지 않는다)
 
 - [ ] **Step 4: Commit**
 
@@ -1334,7 +1395,7 @@ git commit -m "test: 상태 기계 시나리오를 어댑터·값 픽스처 주�
 
 ## 완료 정의
 
-- [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q` → **Task 8 Step 1의 기준선과 동일한 개수, 0 failed**
+- [ ] `uv run --with pytest pytest plugins/claude-sync/tests -q` → **Task 8 Step 1의 기준선 +1(Step 4.5의 어댑터 가드), 0 failed**
 - [ ] `git diff --stat main..HEAD -- plugins/claude-sync/tests/test_mcp_config.py plugins/claude-sync/tests/test_mcp_cycle.py` → **출력 없음** (두 파일을 고치지 않았다)
 - [ ] `lib/mcp_config.py`에서 `_BROKEN`·`_decode`·`_claims_newer_schema`·`_fingerprint`가 사라졌고, 예외 두 클래스가 `keyed_sync`의 것을 가리킨다
 - [ ] `python3 -c "import sys; sys.path.insert(0,'plugins/claude-sync/lib'); import mcp_config as m, keyed_sync as k; assert m.UnknownBackupSchema is k.UnknownBackupSchema"` → 조용히 종료
