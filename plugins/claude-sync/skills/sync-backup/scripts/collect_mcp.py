@@ -77,7 +77,9 @@ def main():
     # 한쪽만 traceback으로 죽는다.
     # ValueError를 잡는 이유: 코어(keyed_sync)가 normalize 계약 위반 — 훅이 키 집합을
     # 바꾼 경우 — 을 ValueError로 던진다. 어댑터 훅의 결함 하나로 backup 흐름 전체가
-    # traceback으로 서는 것을 막는다. json.JSONDecodeError도 ValueError의 하위다.
+    # traceback으로 서는 것을 막는다. (이 스크립트에서 살아서 도달하는 ValueError는
+    # 그 계약 위반 하나뿐이다 — JSON 파싱 실패는 read_local_servers와 decode가
+    # 각각 LocalConfigUnavailable·BROKEN 센티널로 이미 흡수한다.)
     except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema, OSError, ValueError) as e:
         out = {"status": "skipped", "reason": str(e)}
         print("MCP 단계 건너뜀: %s" % e, file=sys.stderr)
