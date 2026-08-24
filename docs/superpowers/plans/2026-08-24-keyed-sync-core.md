@@ -99,6 +99,14 @@ MCP는 `no_hold`뿐이라 이 실수가 Task 8 게이트를 정상 통과한 뒤
 그래서 Task 4가 `recording_hold` 훅으로 **인자·순서·정규화 여부·호출 횟수**를 고정했다.
 **Task 6·7은 그 훅을 재사용한다.**
 
+**리스트 버킷의 순서는 계약이다.** `diff`·`merge`·`restore_plan`이 반환하는 리스트
+(`only_local`·`conflicts`·`deleted`·`local_stale`·`repo_ahead`·`held` …)는 전부 정렬 순서다 —
+`diff`는 `sorted()`를 직접 쓰고, `merge`·`restore_plan`은 `sorted(...)`를 순회하며 append하므로
+결과가 정렬된다. 이 목록들은 **사용자에게 그대로 보고되는 것**이므로 순서가 결정론적이어야 한다.
+테스트는 멤버십이 아니라 **정확 등호**로 건다 — 멤버십만 보면 "과다 분류"(정상 항목이 충돌
+버킷에도 실리는) 변조가 통과한다. (반환 dict 자체의 키 순서는 계약이 아니다 — 디스크
+직렬화가 `sort_keys=True`다.)
+
 **버킷 이름 `held`가 뜻하는 것.** `diff`·`merge`의 `held`는 **값 보류**다. `restore_plan`만
 두 축이 같은 dict에 함께 나타나므로 거기서는 `value_held`와 **`action_held`**로 이름을 갈랐다
 (`held`라는 이름을 쓰지 않는다). 즉 **`diff`/`merge`의 `held` = `restore_plan`의 `value_held`**다.
