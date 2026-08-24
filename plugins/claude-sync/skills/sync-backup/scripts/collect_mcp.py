@@ -73,7 +73,12 @@ def main():
         sys.exit(1)
     try:
         out = collect(sys.argv[1], sys.argv[2])
-    except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema, OSError) as e:
+    # 세 스크립트(collect_mcp·compare_mcp·plan_mcp)가 같은 튜플을 쓴다. 갈리면
+    # 한쪽만 traceback으로 죽는다.
+    # ValueError를 잡는 이유: 코어(keyed_sync)가 normalize 계약 위반 — 훅이 키 집합을
+    # 바꾼 경우 — 을 ValueError로 던진다. 어댑터 훅의 결함 하나로 backup 흐름 전체가
+    # traceback으로 서는 것을 막는다. json.JSONDecodeError도 ValueError의 하위다.
+    except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema, OSError, ValueError) as e:
         out = {"status": "skipped", "reason": str(e)}
         print("MCP 단계 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))

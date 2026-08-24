@@ -479,3 +479,45 @@ def test_collect_keeps_repo_write_when_staging_rename_fails(tmp_path, monkeypatc
     assert out["base_staging"] == "failed"
     assert repo_servers(repo) == {"x": A}
     assert not os.path.exists(staged)
+
+
+def drops_a_key(servers):
+    """키를 하나 지우는 normalize 훅. 코어의 키 보존 계약(spec 5.2)을 어긴다.
+
+    실제 redact는 키를 지우지 않으므로 MCP에서는 이 상황이 오지 않는다. 두 번째
+    어댑터(plugin_config)의 normalize가 키 하나를 떨어뜨리는 순간이 첫 발현이다.
+    """
+    return {name: cfg for name, cfg in servers.items() if name != "x"}
+
+
+def test_collect_cli_skips_when_normalize_drops_a_key(tmp_path, monkeypatch, capsys):
+    """normalize 계약 위반(ValueError)도 traceback이 아니라 skipped로 접힌다.
+
+    코어가 이 위반을 ValueError로 던지는데 main()의 except 튜플에서 빠지면,
+    어댑터 훅의 결함 하나가 backup 흐름 전체를 세운다(9장 안전장치 회귀).
+    """
+    local = write_local(tmp_path, {"x": A})
+    repo = write_repo(tmp_path, {"x": B})
+    monkeypatch.setattr(mc, "redact", drops_a_key)
+    monkeypatch.setattr(mc, "DEFAULT_CLAUDE_JSON", local)
+    # base 이력은 이 회귀와 무관하다. 실제 ~/.claude/.sync-state를 읽지 않도록 없는 것으로 둔다.
+    monkeypatch.setattr(collect_mcp.ss, "read_base", lambda *a, **k: None)
+    monkeypatch.setattr(sys, "argv", ["collect_mcp.py", repo, str(tmp_path / "staging")])
+    collect_mcp.main()
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "skipped"
+    assert out["reason"]
+
+
+def test_compare_cli_skips_when_normalize_drops_a_key(tmp_path, monkeypatch, capsys):
+    """status도 같은 계약 위반에서 접힌다 — 세 스크립트의 except 튜플이 갈리지 않게 한다."""
+    local = write_local(tmp_path, {"x": A})
+    repo = write_repo(tmp_path, {"x": B})
+    monkeypatch.setattr(mc, "redact", drops_a_key)
+    monkeypatch.setattr(mc, "DEFAULT_CLAUDE_JSON", local)
+    monkeypatch.setattr(sys, "argv",
+                        ["compare_mcp.py", os.path.join(repo, mc.BACKUP_RELPATH)])
+    compare_mcp.main()
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "skipped"
+    assert out["reason"]

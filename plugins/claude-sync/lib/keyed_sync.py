@@ -126,6 +126,17 @@ def parse_backup(data, recognize):
     return {} if recognized is None else recognized
 
 
+# hold(local, repo) -> {"value": set[str], "action": set[str]}
+#   diff·merge·restore_plan이 공유하는 훅의 계약이다.
+#   **정규화된 입력을 받는다** — 코어가 normalize를 적용한 뒤에 부르므로, 훅이 원본
+#   값(예: 비밀 평문)을 볼 것이라고 가정하면 안 된다.
+#   **좌우 비대칭이다** — 보류 판정이 레포 값을 보는지 로컬 쪽 사실을 보는지가 훅마다
+#   다르다(spec 7.3: H3는 레포 값을, H1·H2는 로컬 쪽 사실을 본다). (local, repo) 순서가
+#   뒤집히면 예외도 빈 결과도 나지 않고 판정이 조용히 반대로 선다.
+#   두 축은 다른 연산이다: value = 레포에 push하지 않는다, action = CLI 명령을 실행하지 않는다.
+#   **action 축은 restore_plan만 소비한다** — diff·merge·next_base는 value 축만 본다.
+#   행동 보류는 "복원할 때 명령을 실행하지 않는다"는 뜻이라, 레포 내용을 정하는
+#   diff·merge·next_base에는 바꿀 판정이 없기 때문이다(의도적 무시, 누락 아님).
 def no_hold(local, repo):
     """보류가 없는 도메인을 위한 기본 훅. MCP 어댑터가 쓴다."""
     return {"value": frozenset(), "action": frozenset()}
@@ -158,6 +169,7 @@ def diff(local, repo, *, normalize, hold):
     비밀 값은 로컬에 평문, 레포에 마스킹된 형태로 저장되므로 원본끼리 비교하면
     비밀을 가진 항목이 영구히 "변경됨"으로 보고된다(미수렴).
     값 보류 키는 세 버킷 어디에도 넣지 않고 held에만 넣는다.
+    **hold의 value 축만 쓴다** — 행동 보류(action)는 restore_plan 전용이다(의도적 무시).
     normalize는 값 층위 변환만 허용된다 — 키를 지우면 _normalized가 ValueError를
     던진다. 키 층위 제외(동기화하지 않을 키를 고르는 일)는 hold의 몫이다(spec 5.2).
     """
@@ -206,6 +218,14 @@ def next_base(local, base, merged, *, normalize, value_held=frozenset()):
     보류 키는 정의상 이 기기가 동의하지 않기로 한 키다. 남기면 보류가 풀리는 순간
     얼어붙은 base로 케이스 3(삭제)이 난다.
 
+    **세 번째 인자(merged)가 무엇인지는 호출 경로마다 다르다.** merge 경로는 병합
+    결과를 넘기고, restore 경로(plan_mcp.apply_base)는 레포 매핑 전체를 넘긴다 —
+    그때 첫 인자 local은 "복원을 실행한 뒤 다시 읽은 로컬"이다. 이름이 merged인 것은
+    merge 경로를 기준으로 붙은 것이고, 계약은 "local과 merged가 같은 값을 갖는 키만
+    전진"이므로 두 경로 모두 성립한다 — restore 경로에서는 그 교집합이 곧 "실제로
+    복원에 성공한 항목"이 되어, 실패했거나 사용자가 건너뛴 항목은 로컬에 없으니
+    자동으로 빠진다. 여기에 "복원을 시도한 목록"을 넘기면 그 안전장치가 사라진다.
+
     hold 콜러블이 아니라 이미 계산된 집합을 받는다 — hold는 (local, repo)가 필요한데
     이 함수의 인자에는 repo가 없기 때문이다. merge가 한 번 계산해 넘기고,
     단독 호출자(restore)는 스스로 계산해 넘긴다.
@@ -239,6 +259,8 @@ def merge(local, repo, base, *, normalize, hold):
     conflicts에는 케이스 5(로컬 수정 vs 리모트 삭제)와 케이스 9(양쪽 변경)가 함께
     들어가는데 결과가 다르다 — 9는 merged에 레포 값이 남고 5는 merged에서 아예 빠진다.
     "name in result['merged']"로 둘을 구분할 수 있다.
+
+    **hold의 value 축만 쓴다** — 행동 보류(action)는 restore_plan 전용이다(의도적 무시).
     """
     local, repo = _normalized(local, normalize), _normalized(repo, normalize)
     base = None if base is None else _normalized(base, normalize)
@@ -303,6 +325,19 @@ BUCKETS = (
 )
 
 
+# restorable(key, value) -> bool
+#   restore_plan만 쓰는 훅이다. 레포에만 있는 항목을 이 도구가 재현할 수 있는가를 묻는다 —
+#   거짓이면 unrestorable 버킷으로 가고 어떤 복원 명령의 대상도 되지 않는다.
+#   값뿐 아니라 키 이름도 받는 것은, 값은 멀쩡한데 이름이 CLI 규칙을 어겨 재현할 수 없는
+#   경우가 있기 때문이다.
+#
+# secret_keys(value) -> list
+#   restore_plan만 쓰는 훅이다. 복원하려면 사용자에게 값을 되물어야 하는 항목의 목록을
+#   돌려준다(없으면 빈 리스트). 비어 있지 않으면 needs_secret 버킷으로 간다 — 레포에는
+#   마스킹된 값만 있으므로 그대로 등록하면 동작하지 않는 항목이 설치된다.
+#   **route_new가 restorable → secret_keys 순으로 부르는 것이 계약이다** — 애초에 재현할
+#   수 없는 항목의 비밀을 사용자에게 묻지 않기 위해서다. 따라서 secret_keys는
+#   restorable이 참인 값만 받는다.
 def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys):
     """복원 계획. diff·merge와 마찬가지로 비교 직전 양쪽에 normalize를 적용한다.
 
