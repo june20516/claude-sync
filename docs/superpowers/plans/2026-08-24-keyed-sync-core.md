@@ -1093,6 +1093,21 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
 임시 복사본에서 아래를 각각 적용하고 대응 테스트가 FAIL하는지 확인한다.
 원본 작업 트리를 오염시키지 말 것.
 
+**세 축은 템플릿이다 — 매 task마다 반드시 넣는다.** Task 6에서 이 셋이 변조 목록에 없었고,
+성실히 목록을 따른 구현자가 정확히 그 자리에 착지했다(구현자가 돌린 9종은 전부 CAUGHT였고
+목록 밖 15종에서만 구멍이 나왔다). `restore_plan`은 **두 축이 같은 dict에 함께 나타나는
+유일한 함수**라 축 혼동의 폭발 반경이 가장 크다.
+
+1. **`hold` 호출 계약** — `hold`를 정규화 **전** 값으로 부르기, `hold(repo, local)`로 좌우 뒤집기.
+   `recording_hold`로 잡는다. MCP는 `no_hold`뿐이라 **Task 8 게이트를 정상 통과한 뒤
+   다음 plan에서야 발현한다.**
+2. **축 분리** — `value_held`와 `action_held`를 합치기(`set(held["value"]) | set(held["action"])`),
+   그리고 서로 바꾸기. 두 축이 **동시에 비어 있지 않은** 픽스처가 반드시 있어야 잡힌다.
+3. **`{}` vs `None`** — `base` 인자에 `{}`를 넣는 경로가 없으면 degrade 판정이 미고정이다.
+   `base={}`는 **첫 백업 직후에 실제로 나오는 값**이다.
+
+그 위에 이 task 고유의 것들:
+
 - `if name in action_held` 갈래를 `value_held` 갈래 **뒤로** 옮기기 (**두 축의 우선순위가 계약이다**)
 - `route_new`의 `restorable`/`secret_keys` 호출 순서 바꾸기
 - `route_new`에서 `not restorable(...)` 갈래를 지우기
@@ -1101,6 +1116,42 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
 - `elif name in known` (케이스 4·5) 갈래를 `else`로 바꾸기
 
 **SURVIVE하면 구현이 아니라 테스트를 보강한다.**
+
+- [ ] **Step 4c: `hold` 소비 함수 전수 가드를 넣는다**
+
+**근거:** Task 6 quality review — "예고된 위험을 예고만 하고 게이트를 안 걸었다"
+
+`hold`를 소비하는 함수는 이제 셋이다(`diff`·`merge`·`restore_plan`). MCP 어댑터는 `no_hold`만
+주입하므로 **호출 계약이 틀려도 Task 8의 기존 테스트 게이트가 절대 잡지 못한다.** 다음 plan의
+`plugin_config`가 붙는 순간에야 발현한다. 소스 스캔 가드로 못박는다 —
+`test_mcp_config.py:654`가 이미 같은 형태(`PARSE_BACKUP_CALL`)를 쓴다.
+
+`tests/test_keyed_sync.py`에 추가한다.
+
+```python
+HOLD_CONSUMER = re.compile(r"^def (\w+)\(.*\bhold\b", re.M)
+
+
+def test_every_hold_consuming_function_has_a_recording_hold_test():
+    """hold를 받는 코어 함수는 인자·순서·정규화 여부를 거는 테스트를 하나씩 가져야 한다.
+
+    MCP는 no_hold뿐이라 호출 계약이 틀려도 기존 테스트 게이트가 잡지 못한다 —
+    plugin_config가 붙는 순간에야 발현한다(spec 7.3의 H1~H4는 좌우 비대칭이다).
+    """
+    source = open(os.path.join(LIB_DIR, "keyed_sync.py"), encoding="utf-8").read()
+    consumers = {name for name in HOLD_CONSUMER.findall(source)
+                 if not name.startswith("_") and name != "no_hold"}
+    tests = open(__file__, encoding="utf-8").read()
+    missing = [name for name in sorted(consumers)
+               if "recording_hold" not in _test_body_for(tests, name)]
+    assert missing == [], "recording_hold 테스트가 없는 hold 소비 함수: %s" % missing
+```
+
+`_test_body_for(tests, name)`는 `def test_<name>_...`로 시작하는 모든 테스트 본문을 이어
+붙여 돌려주는 헬퍼다. 이 파일 상단에 `import os`·`import re`와 `LIB_DIR` 상수가 필요하면 함께 더한다.
+
+**변조 확인:** `merge`의 `recording_hold` 테스트를 임시로 지우고 이 가드가 FAIL하는지,
+지우지 않았을 때 오탐 0인지 확인한다.
 
 - [ ] **Step 5: Commit**
 
