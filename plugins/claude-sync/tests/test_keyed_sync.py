@@ -24,11 +24,24 @@ def test_decode_distinguishes_broken_from_falsy():
     assert ks.decode(b"null") is None
     assert ks.decode(b"0") == 0
     assert ks.decode(b"{oops") is ks.BROKEN
+    # 센티널이 None이면 이 줄이 FAIL한다. 위 세 줄만으로는 BROKEN = None을 못 잡는다.
+    assert ks.decode(b"null") is not ks.BROKEN
+    # 유효하지 않은 UTF-8도 BROKEN이어야 한다. except에서 UnicodeDecodeError를 빼면 이 줄이 FAIL한다.
+    assert ks.decode(b"\xff") is ks.BROKEN
 
 
 def test_same_ignores_key_order():
     assert ks.same({"a": 1, "b": 2}, {"b": 2, "a": 1}) is True
     assert ks.same({"a": 1}, {"a": 2}) is False
+    # 지문 비교라야 잡히는 차이. same을 `a == b`로 바꾸면 아래 두 줄이 FAIL한다.
+    # 레포 파일을 다른 도구(jq 등)가 쓰면 1이 1.0으로 바뀌어 들어올 수 있다.
+    assert ks.same(1, 1.0) is False
+    assert ks.same(1, True) is False
+
+
+def test_fingerprint_keeps_non_ascii_literal():
+    """ensure_ascii=False가 살아 있어야 지문이 디스크 표현과 같은 옵션을 쓴다는 주장이 참이 된다."""
+    assert ks.fingerprint({"k": "한"}) == '{"k": "한"}'
 
 
 def test_no_hold_returns_two_empty_sets():

@@ -53,7 +53,12 @@ def decode(data):
 
 
 def fingerprint(value):
-    """키 정렬 JSON 문자열. 디스크 표현과 같은 직렬화 옵션을 쓴다."""
+    """값을 키 정렬 JSON 문자열로 만들어 비교 가능한 형태로 바꾼다.
+
+    어댑터의 디스크 직렬화와 같은 옵션(sort_keys, ensure_ascii=False)을 쓴다 —
+    디스크 표현이 같으면 same()도 같다고 판정하도록 맞춘 것이다.
+    (들여쓰기·봉투 구조는 공유하지 않으므로 결과 문자열이 파일 내용과 같지는 않다.)
+    """
     return json.dumps(value, sort_keys=True, ensure_ascii=False)
 
 
