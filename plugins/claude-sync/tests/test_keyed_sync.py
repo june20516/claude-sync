@@ -1,4 +1,8 @@
 """값 무관 코어의 단위 테스트. 도메인 지식은 전부 훅으로 들어온다."""
+import json
+
+import pytest
+
 import keyed_sync as ks
 
 
@@ -48,3 +52,45 @@ def test_no_hold_returns_two_empty_sets():
     """어댑터가 '보류 없음'을 표현하는 기본 훅."""
     h = ks.no_hold({"x": 1}, {"y": 2})
     assert h["value"] == frozenset() and h["action"] == frozenset()
+
+
+def only_dict_with_items(obj):
+    """테스트용 recognize 훅 — {"items": {...}} 만 인정한다."""
+    if isinstance(obj, dict) and isinstance(obj.get("items"), dict):
+        if ks.claims_newer_schema(obj.get("version"), 2):
+            return None
+        return dict(obj["items"])
+    return None
+
+
+def test_parse_base_returns_none_for_untrusted_history():
+    """이력을 못 믿으면 {}가 아니라 None이다. {}는 삭제 판정의 근거가 된다."""
+    assert ks.parse_base(None, only_dict_with_items) is None
+    assert ks.parse_base(b"{oops", only_dict_with_items) is None
+    assert ks.parse_base(b'{"nope": 1}', only_dict_with_items) is None
+    assert ks.parse_base(b'{"items": {}}', only_dict_with_items) == {}
+
+
+def test_load_backup_raises_on_unrecognized_document(tmp_path):
+    """알아볼 수 없는 문서는 {}로 degrade하지 않는다 — 덮어쓰면 파괴한다."""
+    path = tmp_path / "backup.json"
+    path.write_text(json.dumps({"version": 3, "items": {"a": 1}}), encoding="utf-8")
+    with pytest.raises(ks.UnknownBackupSchema):
+        ks.load_backup(str(path), only_dict_with_items)
+
+
+def test_load_backup_returns_empty_when_file_missing(tmp_path):
+    assert ks.load_backup(str(tmp_path / "none.json"), only_dict_with_items) == {}
+
+
+def test_load_backup_degrades_broken_syntax_to_empty(tmp_path):
+    """구문이 깨진 파일 하나가 백업 전체를 막지 않는다. 다음 백업이 되돌린다."""
+    path = tmp_path / "backup.json"
+    path.write_text("{oops", encoding="utf-8")
+    assert ks.load_backup(str(path), only_dict_with_items) == {}
+
+
+def test_parse_backup_is_lenient():
+    assert ks.parse_backup(b"{oops", only_dict_with_items) == {}
+    assert ks.parse_backup(b'{"nope": 1}', only_dict_with_items) == {}
+    assert ks.parse_backup(b'{"items": {"a": 1}}', only_dict_with_items) == {"a": 1}

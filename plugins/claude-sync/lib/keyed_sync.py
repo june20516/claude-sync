@@ -67,6 +67,57 @@ def same(a, b):
     return fingerprint(a) == fingerprint(b)
 
 
+def parse_base(data, recognize):
+    """base 블롭 전용 파싱. 이력을 신뢰할 수 없으면 None을 반환한다.
+
+    "이력이 비어 있었다"({})와 "이력을 읽을 수 없다"(None)를 반드시 구별해야 한다.
+    전자는 삭제·충돌 판정의 근거가 되지만, 후자는 근거가 될 수 없다.
+    """
+    if data is None:
+        return None
+    obj = decode(data)
+    if obj is BROKEN:
+        return None
+    return recognize(obj)
+
+
+def load_backup(path, recognize):
+    """레포의 백업 파일을 안전하게 읽는다. 파일이 없으면 {}.
+
+    구문이 깨진 파일은 {}로 degrade한다 — 레포 파일 하나가 깨졌다고 백업 전체를 막지
+    않으며, 다음 백업이 그 파일을 정상 내용으로 되돌린다.
+    구문은 유효한데 형식을 알아볼 수 없으면 UnknownBackupSchema를 던진다.
+    (PermissionError 등 그 외 OSError는 전파한다.)
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return {}
+    obj = decode(raw)
+    if obj is BROKEN:
+        return {}
+    recognized = recognize(obj)
+    if recognized is None:
+        raise UnknownBackupSchema(
+            "%s의 형식을 알아볼 수 없다 — 상위 버전이 쓴 백업일 수 있다" % path
+        )
+    return recognized
+
+
+def parse_backup(data, recognize):
+    """바이트/문자열에서 매핑을 읽는다(관대한 해석). 실패는 전부 {}.
+
+    **레포 파일을 읽을 때는 이 함수가 아니라 load_backup을 쓴다** — 알아볼 수 없는
+    문서를 "0개"로 읽으면 그 파일을 덮어써 파괴하기 때문이다.
+    """
+    obj = decode(data)
+    if obj is BROKEN:
+        return {}
+    recognized = recognize(obj)
+    return {} if recognized is None else recognized
+
+
 def no_hold(local, repo):
     """보류가 없는 도메인을 위한 기본 훅. MCP 어댑터가 쓴다."""
     return {"value": frozenset(), "action": frozenset()}
