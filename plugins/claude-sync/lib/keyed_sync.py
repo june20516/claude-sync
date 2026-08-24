@@ -173,6 +173,27 @@ def diff(local, repo, *, normalize, hold):
     }
 
 
+def _next_base_normalized(local, old, merged, value_held):
+    """이미 정규화된 세 매핑으로 다음 base를 만든다. next_base의 본체다.
+
+    merge는 세 인자를 모두 정규화해 넘기므로 공개 next_base를 부르면 정규화가 두 번
+    적용된다. 코어는 멱등성을 집행하지 않으므로(spec 5.2) 비멱등 훅에서는 그 이중 적용이
+    base를 과전진시킬 수 있다. merge가 이 함수를 직접 불러 그 의존을 없앤다.
+    단독 호출자(restore)는 공개 next_base를 쓴다.
+    """
+    out = {}
+    for name in sorted(set(old) | set(merged)):
+        if name in value_held:
+            continue                                    # 값 보류 → base에서 제거
+        if name in merged and name in local and same(merged[name], local[name]):
+            out[name] = copy.deepcopy(merged[name])     # 로컬이 동의 → 전진
+        elif name not in merged and name not in local:
+            continue                                    # 양쪽에서 사라짐 → 제거
+        elif name in old:
+            out[name] = copy.deepcopy(old[name])        # 동의 안 함 → 이전 base 유지
+    return out
+
+
 def next_base(local, base, merged, *, normalize, value_held=frozenset()):
     """다음 base 매핑. base[key]는 로컬이 그 값에 동의할 때만 전진한다.
 
@@ -196,16 +217,79 @@ def next_base(local, base, merged, *, normalize, value_held=frozenset()):
 
     반환값은 입력의 어떤 nested 객체도 공유하지 않는다(deepcopy).
     """
-    local, merged = _normalized(local, normalize), _normalized(merged, normalize)
-    old = _normalized(base, normalize) if base else {}
-    out = {}
-    for name in sorted(set(old) | set(merged)):
+    return _next_base_normalized(
+        _normalized(local, normalize),
+        _normalized(base, normalize) if base else {},
+        _normalized(merged, normalize),
+        value_held,
+    )
+
+
+def merge(local, repo, base, *, normalize, hold):
+    """키 단위 3-way 병합 (판정표 케이스 1~10).
+
+    base가 None이면 삭제 없이 합집합으로 degrade한다 — "타 기기 추가"와 "내 삭제"를
+    구별할 수 없기 때문이다. 단 **양쪽에 있는 키는 로컬 값이 레포를 덮는다.**
+
+    반환하는 next_base는 키 단위로 전진한다. 그래서 호출부가 conflicts 유무로 base 갱신을
+    전역으로 게이트할 필요가 없다 — 항목 하나가 충돌 중이어도 나머지 base는 계속 전진한다.
+    **전역 게이트를 되살리지 말 것.**
+
+    conflicts에는 케이스 5(로컬 수정 vs 리모트 삭제)와 케이스 9(양쪽 변경)가 함께
+    들어가는데 결과가 다르다 — 9는 merged에 레포 값이 남고 5는 merged에서 아예 빠진다.
+    "name in result['merged']"로 둘을 구분할 수 있다.
+    """
+    local, repo = _normalized(local, normalize), _normalized(repo, normalize)
+    base = None if base is None else _normalized(base, normalize)
+    held = hold(local, repo)
+    value_held = set(held["value"])
+
+    merged, conflicts, deleted, local_stale, repo_ahead = {}, [], [], [], []
+    for name in sorted(set(local) | set(repo) | set(base or {})):
         if name in value_held:
-            continue                                    # 값 보류 → base에서 제거
-        if name in merged and name in local and same(merged[name], local[name]):
-            out[name] = copy.deepcopy(merged[name])     # 로컬이 동의 → 전진
-        elif name not in merged and name not in local:
-            continue                                    # 양쪽에서 사라짐 → 제거
-        elif name in old:
-            out[name] = copy.deepcopy(old[name])        # 동의 안 함 → 이전 base 유지
-    return out
+            if name in repo:
+                merged[name] = repo[name]      # 레포 값 보존. 판정표를 타지 않는다
+            continue
+        in_l, in_r = name in local, name in repo
+        if base is None:
+            if in_l:
+                merged[name] = local[name]
+            elif in_r:
+                merged[name] = repo[name]
+            continue
+        in_s = name in base
+        if in_l and not in_r and not in_s:                  # 1 로컬 신규
+            merged[name] = local[name]
+        elif not in_l and in_r and not in_s:                # 2 타 기기 추가
+            merged[name] = repo[name]
+            repo_ahead.append(name)
+        elif not in_l and in_r and in_s:                    # 3 로컬에서 삭제
+            deleted.append(name)
+        elif in_l and not in_r and in_s:                    # 4·5
+            if same(local[name], base[name]):               # 4 타 기기 삭제, 로컬 잔존
+                local_stale.append(name)
+            else:                                           # 5 로컬 수정 vs 리모트 삭제
+                conflicts.append(name)
+        elif in_l and in_r:
+            if same(local[name], repo[name]):               # 6 in_sync
+                merged[name] = local[name]
+            elif in_s and same(repo[name], base[name]):     # 7 로컬만 변경
+                merged[name] = local[name]
+            elif in_s and same(local[name], base[name]):    # 8 타 기기 변경
+                merged[name] = repo[name]
+                repo_ahead.append(name)
+            else:                                           # 9 충돌
+                conflicts.append(name)
+                merged[name] = repo[name]
+        # (암묵) 케이스 10: base에만 존재 → 어느 리스트에도 넣지 않는다
+    return {
+        "merged": merged,
+        "conflicts": conflicts,
+        "deleted": deleted,
+        "local_stale": local_stale,
+        "repo_ahead": repo_ahead,
+        "held": sorted(value_held),
+        # 공개 next_base가 아니라 내부 함수를 부른다 — local·base·merged가 이미
+        # 정규화돼 있으므로 다시 정규화하면 멱등성에 의존하게 된다(Task 5 리뷰 I2).
+        "next_base": _next_base_normalized(local, base or {}, merged, value_held),
+    }

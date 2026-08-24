@@ -379,3 +379,86 @@ def test_next_base_does_not_share_nested_objects_with_base_either():
     out = ks.next_base({}, base, {"theirs": {"n": [9]}}, normalize=lambda m: m)
     out["theirs"]["n"].append(2)
     assert base["theirs"]["n"] == [1]
+
+
+def test_merge_covers_decision_table():
+    """케이스 1~10을 한 번에 건다."""
+    local = {"c1": 1, "c4": 1, "c5": 2, "c6": 1, "c7": 2, "c8": 1, "c9": 2}
+    repo = {"c2": 1, "c3": 1, "c6": 1, "c7": 1, "c8": 2, "c9": 3}
+    base = {"c3": 1, "c4": 1, "c5": 1, "c7": 1, "c8": 1, "c9": 1, "c10": 1}
+    r = ks.merge(local, repo, base, normalize=lambda m: m, hold=ks.no_hold)
+    assert r["merged"]["c1"] == 1                 # 1 로컬 신규
+    assert r["merged"]["c2"] == 1                 # 2 타 기기 추가
+    assert "c3" not in r["merged"]                # 3 로컬에서 삭제
+    assert r["deleted"] == ["c3"]
+    assert r["local_stale"] == ["c4"]             # 4 타 기기 삭제, 로컬 잔존
+    assert "c5" in r["conflicts"] and "c5" not in r["merged"]   # 5
+    assert r["merged"]["c6"] == 1                 # 6 in_sync
+    assert r["merged"]["c7"] == 2                 # 7 로컬만 변경
+    assert r["merged"]["c8"] == 2                 # 8 타 기기 변경
+    assert "c9" in r["conflicts"] and r["merged"]["c9"] == 3    # 9
+    assert "c10" not in r["merged"]               # 10 base에만 존재
+    assert sorted(r["repo_ahead"]) == ["c2", "c8"]
+    # next_base를 케이스 8·9에 대해 직접 단언한다(Task 5 리뷰 I2와 중복 방어).
+    # 로컬이 merged 값에 동의하지 않으므로(local="1"/"2" != merged="2"/"3") 이전
+    # base 값 1이 그대로 유지돼야 한다 — repo 값이 새면 다음 백업이 "로컬이 동의했다"로
+    # 오독해 아직 반영 안 된 타 기기 변경을 base에 확정해버린다.
+    assert r["next_base"]["c8"] == 1
+    assert r["next_base"]["c9"] == 1
+
+
+def halve_string_length(mapping):
+    """테스트 전용 비멱등 normalize 훅 — 문자열 값을 절반으로 자른다.
+
+    호출할 때마다 값이 계속 바뀌므로 실제 훅으로는 계약 위반이지만(spec 5.2 —
+    normalize는 멱등이어야 한다), 그 계약 위반이 발생했을 때 merge의 next_base 경로가
+    이중 정규화로부터 안전한지 드러내는 용도로만 쓴다.
+    """
+    return {k: (v[: len(v) // 2] if isinstance(v, str) else v) for k, v in mapping.items()}
+
+
+def test_merge_next_base_does_not_double_normalize():
+    """merge는 next_base를 만들 때 공개 next_base가 아니라 _next_base_normalized를
+    불러야 한다 — local·base·merged를 merge가 이미 정규화해 넘기므로, 공개 next_base를
+    부르면 비멱등 훅에서 정규화가 두 번 적용된다(Task 5 리뷰 I2, spec 5.2).
+
+    "aaaa"를 한 번 자르면 "aa"(단일 정규화, 올바른 경로). 두 번 자르면 "a"(이중 정규화,
+    회귀). merge 내부에서 local·repo·base가 이미 한 번 정규화된 뒤 next_base 계산에
+    다시 normalize가 걸리면 이 값이 "a"로 새어 아래 단언이 FAIL한다.
+    """
+    r = ks.merge({"x": "aaaa"}, {"x": "aaaa"}, {"x": "aaaa"},
+                 normalize=halve_string_length, hold=ks.no_hold)
+    assert r["merged"]["x"] == "aa"
+    assert r["next_base"]["x"] == "aa"
+
+
+def test_merge_degrades_to_union_when_base_is_none():
+    """base가 없으면 삭제 없이 합집합. 단 양쪽에 있는 키는 로컬이 이긴다."""
+    r = ks.merge({"a": 1, "both": 9}, {"b": 1, "both": 8}, None,
+                 normalize=lambda m: m, hold=ks.no_hold)
+    assert r["deleted"] == []
+    assert r["merged"] == {"a": 1, "b": 1, "both": 9}
+
+
+def test_merge_keeps_repo_value_for_value_held_keys():
+    """값 보류 키는 판정표를 타지 않고 레포 값이 그대로 실린다."""
+    r = ks.merge({"h": "local"}, {"h": "repo"}, {"h": "old"},
+                 normalize=lambda m: m, hold=hold_keys(value=("h",)))
+    assert r["merged"]["h"] == "repo"
+    assert r["conflicts"] == [] and r["deleted"] == [] and r["local_stale"] == []
+    assert r["held"] == ["h"]
+
+
+def test_merge_does_not_delete_value_held_key_missing_from_local():
+    """로컬에서 사라져도 보류 키는 케이스 3이 되지 않는다."""
+    r = ks.merge({}, {"h": "repo"}, {"h": "repo"},
+                 normalize=lambda m: m, hold=hold_keys(value=("h",)))
+    assert r["deleted"] == []
+    assert r["merged"]["h"] == "repo"
+
+
+def test_merge_removes_value_held_key_from_next_base():
+    r = ks.merge({"h": 1, "n": 1}, {"h": 1, "n": 1}, {"h": 1, "n": 1},
+                 normalize=lambda m: m, hold=hold_keys(value=("h",)))
+    assert "h" not in r["next_base"]
+    assert r["next_base"]["n"] == 1
