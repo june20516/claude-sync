@@ -130,6 +130,14 @@ def no_hold(local, repo):
     return {"value": frozenset(), "action": frozenset()}
 
 
+# normalize(mapping) -> mapping
+#   diff·next_base·merge·restore_plan이 공유하는 훅의 계약이다. 값 층위 변환만 허용된다 —
+#   키를 추가·제거해서는 안 된다(키 층위 제외는 hold의 몫, spec 5.2).
+#   멱등이어야 한다 — next_base는 merge 경로에서 이미 정규화된 local·base를 다시
+#   정규화하므로, 비멱등 훅은 호출될 때마다 값이 계속 바뀌어 base가 수렴하지 않는다.
+#   **코어는 키 보존만 집행한다**(아래 _normalized가 어긋나면 ValueError). 멱등성은
+#   집행하지 않는다 — 코어는 값을 모르므로 두 번 적용해 비교하는 것 외에 확인할 방법이
+#   없고, 그 비용을 매 호출에 물릴 이유가 없다. 멱등성은 어댑터 테스트가 책임진다.
 def _normalized(mapping, normalize):
     """normalize를 적용하되 키 집합이 보존됐는지 확인한다.
 
@@ -179,6 +187,12 @@ def next_base(local, base, merged, *, normalize, value_held=frozenset()):
     hold 콜러블이 아니라 이미 계산된 집합을 받는다 — hold는 (local, repo)가 필요한데
     이 함수의 인자에는 repo가 없기 때문이다. merge가 한 번 계산해 넘기고,
     단독 호출자(restore)는 스스로 계산해 넘긴다.
+
+    입력(local·base·merged)에 normalize를 내부 적용한다 — restore는 원본 로컬(비밀
+    평문)을 그대로 넘기게 되므로, 호출부가 아니라 이 함수가 정규화를 책임져야
+    same() 비교가 성립한다. merge 경로에서는 local·base가 이미 정규화된 채로 들어와
+    normalize가 두 번 적용되므로, normalize는 반드시 멱등이어야 한다(spec 5.2 계약 —
+    코어는 키 보존만 집행하고 멱등성은 집행하지 않는다).
 
     반환값은 입력의 어떤 nested 객체도 공유하지 않는다(deepcopy).
     """

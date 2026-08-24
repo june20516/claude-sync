@@ -266,9 +266,44 @@ def test_next_base_advances_only_where_local_agrees():
     assert out["theirs"] == 0    # 로컬이 동의 안 함 → 이전 base 유지
 
 
+def test_next_base_keeps_old_value_when_local_disagrees_with_merged_value():
+    """타 기기가 바꾼 값을 base에 기록하면 다음 백업이 케이스 7로 오독해 그 변경을 되돌린다.
+
+    위 test_next_base_advances_only_where_local_agrees의 "theirs"는 local에 아예 없는
+    키라 `name in local`만 남기고 `same(merged[name], local[name])`를 지워도(변조 1의
+    부분판) 우연히 같은 결과가 나온다. 여기서는 local·merged 둘 다 "x"를 갖되 값이
+    달라, 동의 검사를 지우면 값이 새는 것이 직접 드러난다.
+    """
+    out = ks.next_base({"x": 1}, {"x": 1}, {"x": 2}, normalize=lambda m: m)
+    # same() 동의 검사를 지우면(merged에 있고 local에도 있기만 하면 전진) 2가 되어 FAIL한다.
+    assert out["x"] == 1
+
+
 def test_next_base_drops_keys_absent_from_both_sides():
     out = ks.next_base({}, {"gone": 1}, {}, normalize=lambda m: m)
     assert "gone" not in out
+
+
+def test_next_base_omits_remote_added_key_the_local_never_had():
+    """base에 이력 없이 레포에만 생긴 항목. 넣으면 다음 백업이 케이스 3으로 읽어 레포에서 지운다.
+
+    old에 없는 키이므로 `elif name in old:`가 `else:`로 바뀌면(old[name] KeyError를
+    내지 않고 무조건 싣는) 이 키가 조용히 out에 실린다.
+    """
+    out = ks.next_base({}, None, {"theirs": 1}, normalize=lambda m: m)
+    # `elif name in old:`를 `else:`로 바꾸면 "theirs"가 실려 FAIL한다.
+    assert "theirs" not in out
+
+
+def test_next_base_omits_conflicting_key_absent_from_base():
+    """base에 이력이 없는 충돌 키는 어느 쪽 값도 기록하지 않는다.
+
+    old에 없는데 old[name]에 접근하면 KeyError가 나야 정상이다. `elif name in old:`를
+    `else:`로 바꾸면 크래시조차 없이 조용히 merged 값이 실려버린다 — 이 팔에 도달하는
+    테스트가 없으면 그 크래시조차 관측되지 않는다.
+    """
+    out = ks.next_base({"x": 1}, None, {"x": 2}, normalize=lambda m: m)
+    assert "x" not in out
 
 
 def test_next_base_keeps_old_only_keys_when_local_still_has_them():
@@ -309,6 +344,18 @@ def test_next_base_applies_normalize_to_merged_side_too():
     # merged["a"]==" value"가 local의 정규화된 "value"와 달라 same()이 거짓이 되고, old={}(base=None)라
     # "a"가 out에 실리지 않아 아래 줄이 KeyError로 FAIL한다.
     out = ks.next_base({"a": "value "}, None, {"a": " value"}, normalize=trim_whitespace)
+    assert out["a"] == "value"
+
+
+def test_next_base_applies_normalize_to_base_side_too():
+    """'이전 base 유지' 경로도 정규화된 값을 실어야 한다.
+
+    위 두 정규화 테스트는 base=None이라 `old = _normalized(base, normalize) if base
+    else {}` 줄 자체를 지나지 않는다. 여기서는 local이 merged와 동의하지 않는 값을 둬서
+    "이전 base 유지" 갈래를 타게 하고, base 쪽 값이 미정규화 상태이게 한다.
+    """
+    out = ks.next_base({"a": "local"}, {"a": "value "}, {}, normalize=trim_whitespace)
+    # base 정규화를 생략하면(`dict(base) if base else {}`) "value "로 FAIL한다.
     assert out["a"] == "value"
 
 
