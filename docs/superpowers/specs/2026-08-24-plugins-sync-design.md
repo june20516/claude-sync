@@ -1,7 +1,8 @@
 # plugins.json 동기화 설계
 
 - 작성: 2026-08-24
-- 개정: 2026-08-24 **2회** — 1차 리뷰 Critical 10건(0장), 2차 리뷰 Critical 4건(0.1장) 반영
+- 개정: 2026-08-24 **3회** — 1차 Critical 10건(0장), 2차 Critical 4건(0.1장), 3차 Critical 5건(0.2장) 반영
+- 상태: **3차 리뷰 두 건이 "4차 설계 라운드는 불필요, 다음은 plan"으로 판정했다.**
 - 브랜치: `feat/plugins-sync` (`release/3.0.0`에서 분기)
 - 근거 문서: `2026-08-20-plugins-sync-followup-BRIEF.md` (실측 1-b·1-c, 결정 D1~D3)
 - 선행 설계: `specs/2026-08-20-mcp-config-source-design.md` (판정표·base 규칙의 원본)
@@ -56,6 +57,28 @@
 | 11.2 | "v2.x 기기는 3.0.0 백업을 만나면 이미 차단된다" | **거짓.** 가드는 3.0.0에서 처음 도입됐다. 2.x에는 없다 |
 | 5.5 | "기존 367개 테스트" | **383개**이고, 5.4가 그중 한 파일의 수정을 요구해 자기모순이었다 |
 | 5.4 | "`test_mcp_cycle.py`를 파라미터화한다" | **불가능.** 스크립트 경로·로컬 파일 구조·CLI 의미론에 묶여 있다 |
+
+### 0.2 3차 리뷰가 잡은 것 (Critical 5건 — 전부 국소 수정 잔재)
+
+두 리뷰어가 **독립적으로 같은 두 지점**을 짚었고, 양쪽 다 *"이것만 닫으면 착수 가능,
+4차 라운드는 불필요"* 로 판정했다. 새 설계 결함은 없었다.
+
+손 시뮬레이션으로 **통과가 확인된 것**: 두 집합 `hold`의 `merge`·`next_base`·`diff` 정합,
+base 제거의 1회 수렴, H1 왕복 4라운드(`z`가 레포에 생존), `keep_stale` ↔ 값 보류 무충돌,
+인용 전수 정확. **2차 Critical의 뿌리는 실제로 뽑혔다.**
+
+| | 무엇이 남아 있었나 | 왜 위험했나 |
+|---|---|---|
+| 5.2 표 | `next_base`가 여전히 *"`held`는 이전 base 유지"* | 2차 개정이 **5.3만 고치고 계약표를 안 고쳤다.** 표는 docstring으로 옮겨지는 자리이므로, 그대로 구현하면 2차 Critical이 한 글자도 다르지 않게 되살아난다 |
+| 7.3 H3 탈출구 | 결과만 있고 **메커니즘이 없었다** | `hold`는 무상태인데 "한 번만 푼다"에는 상태가 필요하다. 게다가 해제만 하면 base에 키가 없어 **케이스 9로 착지** — 약속과 반대다. 그리고 H3 항목은 로컬에서 지워도 전파되지 않아 **restore가 매번 되살렸다** |
+| 5.3 ↔ 8.4 | 값 보류 키가 `restore_plan`에서 정상 버킷 | 케이스 9로 분류되어 **8.4가 금지한 문구**가 뜨고, "레포 따르기"는 배열을 쓸 CLI가 없어 실행 불가, "로컬 유지"는 base가 다시 제거되어 **미수렴** |
+| 9.1.1 | `hold` 계산이 **레포 읽기보다 앞** | H3·H4가 레포 값을 보는데 그 시점엔 없다 → 둘 다 **항상 빈 집합** → 버전 제약이 덮이고 6.4 탈출구가 무증상 사망 |
+| 7.5 | base pass-through만 규정 | skipped 섹션에 레포로 무엇을 쓰는지가 없어, 문언대로면 `{}`를 써서 **타 기기 항목 전량 소실**. 그것도 `status: "ok"` |
+
+그 밖에 `hold`가 아무도 안 쓰는 `base`를 받고 있었고(H1~H4 넷 다 쓰지 않는다),
+훅 넷이 **자기 섹션 밖 입력**을 필요로 하는데 시그니처에 없었으며(어댑터 클로저로 확정),
+`apply-base`에 `.tmp`+rename을 적용하면 **restore의 base가 영영 전진하지 않는다**는 것이 드러났다.
+11.6의 파급 범위도 `lib/compat.py`까지였다.
 
 ---
 
@@ -323,7 +346,7 @@ lib/plugin_config.py  ← 플러그인 어댑터 (신규)
 | `parse_backup(data, recognize)` | 관대한 읽기. 실패는 빈 매핑 |
 | `same(a, b)` | 키 정렬 JSON 지문 비교 (정규화를 받지 않는다) |
 | `diff(local, repo, *, normalize, hold)` | `only_local`/`only_repo`/`changed`/**`held`** |
-| `next_base(local, base, merged, *, normalize, hold)` | 로컬이 동의한 키만 전진. `held`는 이전 base 유지 |
+| `next_base(local, base, merged, *, normalize, hold)` | 로컬이 동의한 키만 전진. **값 보류 키는 base에서 제거한다**(5.3) |
 | `merge(local, repo, base, *, normalize, hold)` | 판정표 케이스 1~10 + `held` 처리 |
 | `restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)` | 버킷 9개 + **`held`** |
 
@@ -337,10 +360,6 @@ lib/plugin_config.py  ← 플러그인 어댑터 (신규)
 키 층위 제외는 전부 `hold`가 맡는다. 이 분리가 이 개정의 핵심이다(0장).
 
 ### 5.3 `held` — 판정 보류 키
-
-```
-hold(local, repo, base) -> set[str]
-```
 
 **의미:** *"레포의 값은 옳다. 이 기기의 로컬은 그것을 표현할 수 없거나, 표현하지 않기로 했다."*
 
@@ -357,8 +376,24 @@ hold(local, repo, base) -> set[str]
 `hold`는 두 집합을 돌려준다:
 
 ```
-hold(local, repo, base) -> {"value": set[str], "action": set[str]}
+hold(local, repo) -> {"value": set[str], "action": set[str]}
 ```
+
+**`base`를 받지 않는다.** H1~H4 넷 다 base를 쓰지 않고, 6.5가 그 성질에 기대어
+status를 base 없이 계산한다. `diff`도 base를 받지 않으므로 받으면 호출할 수 없다.
+
+**훅 넷은 섹션마다 다른 함수이고, 어댑터가 클로저로 만들어 넘긴다.**
+`hold`·`restorable`은 **자기 섹션 밖의 입력**을 필요로 하기 때문이다 —
+H1은 `auto_ids`(`installed_plugins.json`), H2는 **다른 섹션**인 `extraKnownMarketplaces`의 로컬 출처,
+H4는 `plugins-held.json`, 8.1의 `restorable`은 **레포의** `extraKnownMarketplaces`.
+코어가 보는 계약은 아래 둘뿐이고, 나머지는 `plugin_config`가 닫아 넣는다.
+
+```
+hold(local, repo) -> {"value": set[str], "action": set[str]}
+restorable(key, value) -> bool
+```
+
+이 규칙이 없으면 어댑터 API가 갈리고 `mcp_config` 회귀 금지(5.5)까지 위험해진다.
 
 **값 보류** 키 `k`에 대해:
 
@@ -371,7 +406,22 @@ hold(local, repo, base) -> {"value": set[str], "action": set[str]}
 | status 보고 | 종류별 문구로 보고하거나 침묵한다. `only_local`/`changed`에 넣지 않는다 |
 
 **행동 보류** 키는 `restore_plan`이 `held` 버킷에만 넣고 **어떤 CLI 명령의 대상도 되지 않는다.**
-행동 보류가 아닌 값 보류 키는 `add`·`in_sync` 같은 **정상 버킷**으로 가서 설치·활성화 대상이 된다.
+
+**행동 보류가 아닌 값 보류 키**(H3)는 `restore_plan`에서도 **판정표를 타지 않는다**(`merge`와 같다).
+대신 로컬 존재 여부로 갈린다:
+
+| 로컬 | 버킷 | 뜻 |
+|---|---|---|
+| 키가 **없다** | `add` | 설치 대상이다 |
+| 키가 **있다** | **`value_held`** (전용 버킷) | 설치돼 있다. 값만 레포를 따른다 |
+
+**`value_held`에는 `keep_local`·`keep_stale` 어느 override도 적용하지 않는다** —
+값 보류 키의 base는 `next_base`가 항상 제거하므로 override가 무효화되어
+**다음 restore에서 또 묻는 미수렴**이 된다.
+
+판정표를 태우면 `both_changed`(케이스 9)로 분류되어 *"양쪽이 모두 바뀌었습니다"* 가 뜨는데,
+그것은 **8.4가 사실이 아니라며 금지한 문구**이고, "레포 따르기"는 배열 값을 쓸 CLI가 없어
+**실행 불가능**하다.
 
 **MCP 어댑터의 `hold`는 두 집합 모두 항상 비어 있다.** 따라서 MCP 동작은 바뀌지 않는다.
 
@@ -597,9 +647,31 @@ MCP 7.7의 "로컬 유지"가 안전한 이유는 **그쪽은 로컬에 그 키�
 
 **H3의 탈출구.** 레포 값을 바꿀 수 있는 기기가 없으면 이 상태는 영원하다.
 따라서 restore가 선택지를 준다 — **"버전 제약을 포기하고 이 기기 값으로 통일한다"**.
-고르면 그 키가 한 번 값 보류에서 풀려 로컬 값(`true`)이 push되고, 레포 값이 불리언이 되므로
-**H3가 자연 해제된다.** 고르지 않으면 레포 값이 계속 보존된다.
-레포 파일을 손으로 고치는 경로도 안내한다(4.4와 같은 형태).
+
+`hold`는 무상태 판정이므로 **"한 번만 푼다"에는 상태가 필요하다.** 두 조각으로 구현한다.
+
+1. **해제 표식.** `plugins-held.json`에 `release` 섹션을 둔다.
+
+   ```json
+   { "pluginConfigs": { "delta@mkt": "<지문>" },
+     "release":       { "enabledPlugins": ["p@m"] } }
+   ```
+
+   `hold`가 `release.enabledPlugins`에 있는 키를 **H3 값 보류에서 뺀다.**
+   소유자는 6.4와 같이 `plan_plugins.py apply-base`이고 `collect_plugins.py`는 읽기만 한다.
+   **레포 값이 불리언이 되면 항목을 정리한다** — 조건이 사라지면 항목도 사라진다(H4의 지문 규칙과 같은 형태).
+
+2. **착지를 케이스 7로 만든다.** 해제만 하면 base에 그 키가 없어(5.3) **케이스 9로 떨어지고
+   레포 값이 그대로 남는다** — 약속과 반대다. 그래서 `apply-base`가 해제와 **동시에
+   `keep_local`(`base[k] ← 레포 값`)을 적용한다.** 그러면 다음 백업이 `same(repo, base)`이므로
+   **케이스 7(로컬만 변경) → 로컬 값 push** → 레포 값이 불리언 → **H3 자연 해제** → `release` 항목 정리.
+
+**지우고 싶을 때도 이 탈출구를 먼저 써야 한다.** H3의 조건은 **레포 값**이므로 로컬에서
+`uninstall`해도 값 보류가 유지되어 `merge`가 판정표를 타지 않고 **케이스 3이 원리적으로 발생하지 않는다.**
+레포에서 지워지지 않고 다음 restore가 `add` 버킷으로 **다시 설치한다.**
+→ **먼저 탈출구로 값을 불리언화한 뒤 `uninstall`해야 삭제가 전파된다.** 안내 문구에 이 순서를 적는다.
+
+레포 파일을 손으로 고치는 경로도 남는다(4.4와 같은 형태).
 
 ### 7.4 base 저장과 갱신 시점 — 스테이징 계약 (실제 배선 기준)
 
@@ -643,6 +715,9 @@ fi
 restore가 **"다른 기기가 지웠습니다"** 라는 거짓 문구를 띄운다.
 
 → **수집 스크립트가 스테이징을 `<rel>.tmp`로 쓰고, 레포 쓰기가 성공한 뒤에 `<rel>`로 rename한다.**
+rename 자체가 실패하면 **레포는 이미 갱신된 상태**이므로 `skipped`로 접지 않는다 —
+별도 `reason`("레포는 갱신됐으나 base 스테이징에 실패했다. 다음 백업이 복구한다")으로 보고한다.
+`skipped`의 표준 문구가 *"레포 파일은 손대지 않았다"* 이므로 그대로 쓰면 거짓이 된다.
 그러면 파일 존재가 실제로 "레포까지 반영됨"을 뜻하게 되어 게이트의 전제가 참이 된다.
 `collect_plugins.py`와 **`collect_mcp.py` 양쪽에 적용한다** — 현행 MCP 코드에 이미 있는
 잠재 결함이고, `collect_mcp.py:29`의 docstring과 `SKILL.md:397`의 주석이 둘 다
@@ -657,15 +732,25 @@ restore가 **"다른 기기가 지웠습니다"** 라는 거짓 문구를 띄운
 **"커밋할 변경 없음" 경로에서도 base를 갱신한다.** 그래야 restore 없이 backup만 하는 기기에서
 부트스트랩된다.
 
-### 7.5 섹션 단위 보류의 base 처리
+### 7.5 섹션 단위 skip의 base·레포 처리
 
-base 블롭은 하나인데 섹션 하나가 `skipped`일 수 있다(3.4). 그때
-`collect_plugins.py`는 **이전 base의 그 섹션을 그대로 실어 다시 써야 한다.**
+base 블롭도 레포 파일도 하나인데 섹션 하나가 `skipped`일 수 있다(3.4·6.4). 그때
+`collect_plugins.py`는 **양쪽 모두에서 그 섹션을 통과시켜야 한다.**
 
 ```
 next_base 문서 = { 판정한 섹션: 새 next_base,
                    skipped 섹션: 이전 base의 같은 섹션 (pass-through) }
+
+레포 문서     = { 판정한 섹션: merge 결과,
+                   skipped 섹션: **레포에서 읽은 원래 값 그대로** (pass-through) }
 ```
+
+**레포 쪽 pass-through를 빠뜨리면 전량 소실이다.** 4.3의 *"세 섹션 키를 항상 기록한다"* 를
+문언대로만 읽으면 skipped 섹션에 `{}`를 쓰게 되고, 그러면 타 기기의 플러그인과 설정 키 목록이
+**`status: "ok"`인 채로** 사라진다. G1 정면 위반이다.
+
+> 4.3의 "항상 기록한다"는 **"판정한 섹션이 비면 `{}`로 쓴다"**는 뜻이지
+> **"skipped 섹션을 `{}`로 덮는다"**는 뜻이 아니다.
 
 이것이 세 섹션이 서로 다른 정규화를 쓰는데 base 블롭이 하나인 조합의 **유일한 실질적 함정**이다.
 정규화가 값 층위로 한정되기만 하면 나머지는 섹션 독립으로 안전하다.
@@ -737,6 +822,7 @@ id가 `<plugin>@<marketplace>` 형태가 아니면 복원 불가.
 |---|---|---|
 | 로컬에 **이미 같은 값**이 있다 | 측정됨 — 배열 보존, 객체는 그 플러그인 install 시 평탄화 | 값이 같으면 push할 것이 없다 |
 | 로컬에 **키가 없다**(새 기기) | **미측정.** 14.3 에뮬레이터는 `true`로 가정한다 | **설치한다**(행동 보류 아님). 값은 push하지 않아 레포 값이 보존된다 |
+| 로컬에 **다른 값**(`true`)이 있다 | 복원 직후부터 | **복원 후 모든 기기의 정상 상태다.** `value_held` 버킷(5.3). 설치돼 있고 값만 레포를 따른다 |
 
 **설치는 하되 값은 밀지 않는다** — 이것이 값 보류와 행동 보류를 나눈 이유다(5.3).
 1차 개정은 이 두 요구를 한 `held`에 담아 자기모순이었다.
@@ -785,14 +871,19 @@ CLI가 이미 실행할 명령 전문과 승인 방법을 알려준다.
 ```
 1. 로컬 읽기 (3.2 규칙)      settings.json         → 세 섹션
                              installed_plugins.json → auto 집합
-2. hold 계산 (7.3)           plugins-held.json 포함
-3. 레포 읽기  load_backup()  → UnknownBackupSchema면 status: skipped
-4. 이력 읽기  parse_base()   → 못 믿으면 None (합집합 degrade)
+2. 레포 읽기  load_backup()  → UnknownBackupSchema면 status: skipped
+3. 이력 읽기  parse_base()   → 못 믿으면 None (합집합 degrade)
+4. hold 계산 (7.3)           로컬 + **레포** + plugins-held.json
 5. 섹션별 merge
 6. 정합성 검사 (7.6)         → orphaned 보고
 7. 스테이징에 next_base 기록  ← 먼저 (7.5의 pass-through 포함)
 8. 레포에 병합 결과 기록      ← 나중
 ```
+
+**4단계가 2단계보다 뒤인 것이 중요하다.** H3는 *"레포 값이 불리언이 아님"*, H4는
+*"지문이 현재 레포 값과 일치"* 이므로 **레포를 읽기 전에는 둘 다 계산할 수 없다.**
+순서를 뒤집으면 H3·H4가 항상 빈 집합이 되어, 레포의 버전 제약이 `true`로 덮이고
+6.4의 탈출구가 무증상으로 죽는다.
 
 7·8의 순서에는 **rename이 함께 필요하다.** 스테이징을 먼저 쓰기만 하면 레포 쓰기가 실패해도
 스테이징 파일이 남아 게이트를 통과하고 base가 전진한다(7.4).
@@ -804,7 +895,8 @@ CLI가 이미 실행할 명령 전문과 승인 방법을 알려준다.
 |---|---|
 | `settings.json` 읽기 실패 (3.2) | **전체** `status: skipped`. 레포·스테이징 모두 손대지 않는다 |
 | 레포 문서 인식 실패 (4.4) | **전체** `status: skipped` |
-| `installed_plugins.json` 판정 불가 (3.4) | `enabledPlugins`·`pluginConfigs` **두 섹션만** skipped. base는 pass-through(7.5) |
+| `installed_plugins.json` 판정 불가 (3.4) | `enabledPlugins`·`pluginConfigs` **두 섹션만** skipped. base·레포 모두 pass-through(7.5) |
+| `plugins-held.json` 깨짐 (6.4) | `pluginConfigs` **한 섹션만** skipped. base·레포 모두 pass-through(7.5) |
 
 어느 경우든 **종료 코드는 0**이다 (결함 C 해소, 불변식 2).
 
@@ -974,9 +1066,27 @@ restore도 base를 전진시킨다(`plan_mcp.py apply-base`가 그 본이다).
 next_base를 스테이징에 쓰고, SKILL.md가 `update_base.py`로 옮긴다.
 **스테이징 디렉토리와 게이트는 7.4와 같다.**
 
-`apply-base`가 받는 선택 결과는 **두 종류의 override**다 — `keep_stale`(케이스 4·5)과
-`keep_local`(케이스 8·9). 9.3.4의 표와 같다.
-`apply-base`는 **`plugins-held.json`도 쓴다**(6.4) — 이 파일의 소유자다.
+**`apply-base`는 `.tmp`+rename 규칙에서 제외된다.** 그 규칙은 "레포 쓰기 성공 후 rename"인데
+`apply-base`에는 **레포 쓰기가 없다.** 그대로 적용하면 rename 트리거가 영영 오지 않아
+게이트가 언제나 거짓이 되고 **restore 경로의 base가 전혀 전진하지 않는다** —
+`keep_stale`/`keep_local` 선택이 전부 무효가 되어 9.3.4·9.3.5의 탈출구가 통째로 죽는다.
+→ `apply-base`는 `<rel>`을 **직접 쓴다.** 여기서는 **파일 존재가 곧 "계산 성공"**이다.
+
+`apply-base`가 받는 선택 결과는 **override 세 종류**다 — `keep_stale`(케이스 4·5),
+`keep_local`(케이스 8·9), 그리고 H3 해제(7.3, `keep_local`을 동시 적용한다).
+**섹션 키로 중첩한다** — `enabledPlugins`와 `pluginConfigs`는 키가 같은 문자열이므로
+평면 목록이면 어느 섹션의 선택인지 구별할 수 없고 한쪽 선택이 다른 섹션 base까지 조작한다.
+
+```json
+{ "enabledPlugins":  { "keep_stale": [], "keep_local": [], "release": [] },
+  "extraKnownMarketplaces": { "keep_stale": [], "keep_local": [] },
+  "pluginConfigs":   { "keep_stale": [], "keep_local": [], "declined": [] } }
+```
+
+**이 JSON에 비밀 값을 담지 않는다.** 사용자가 입력한 `pluginConfigs` 값은 여기 실리지 않고
+`install --config`로 곧바로 전달된다 — 담으면 임시 파일에 평문 비밀이 남는다.
+
+`apply-base`는 **`plugins-held.json`도 쓴다**(6.4·7.3) — 이 파일의 소유자다.
 
 ---
 
@@ -989,6 +1099,14 @@ next_base를 스테이징에 쓰고, SKILL.md가 `update_base.py`로 옮긴다.
 ```json
 { "id": "...", "step": "marketplace_add|install|enable|disable|config",
   "command": "실행한 명령 전문", "exit": 1, "stderr": "CLI가 낸 문구 전문" }
+```
+
+실행되지 않은 항목(9.3.2의 `blocked`, 8장의 `unrestorable`)은 `command`도 `exit`도 없다.
+별도 형태를 쓴다:
+
+```json
+{ "id": "...", "step": "install", "blocked_by": "marketplace_add:<name>",
+  "reason": "마켓플레이스 등록이 실패해 건너뛰었습니다" }
 ```
 
 **stderr를 요약하지 않는다.** CLI의 문구가 가장 유용한 안내인 경우가 많다(8.5).
@@ -1061,6 +1179,15 @@ v1 문서(`version` 없음, 두 필드만)는 4.4의 인식 규칙을 통과한�
 현행 `detect_downgrade.py`는 **`mcp-servers.json` 전용**이다(*"레포의 mcp-servers.json이 v1 배열인데
 이 기기의 base는 v2 객체였다면"*). `plugins.json`도 같은 사고를 겪으므로 같은 보호가 필요하다.
 
+**형태 판정은 `detect_downgrade.py`가 아니라 `lib/compat.py`에 산다** — `shape_of`(객체는 무조건
+`SHAPE_V2_OBJECT`), `downgrade_suspected`(`repo == V1_ARRAY and base == V2_OBJECT` 하드코딩),
+`_SHAPES` frozenset. `plugins.json`의 "옛 형식 = 객체인데 `version` 없음"은 **새 shape 상수**를
+요구하고, `tests/test_compat.py`가 그 표를 잠근다.
+
+그리고 `detect()`의 출력(`downgrade_suspected`·`repo_shape`·`base_shape`·`candidate`·
+`newer_schema_seen`)은 **최상위 단일 값**이다. relpath 둘로 늘리면 **출력 스키마가 바뀌고**
+그것을 소비하는 세 SKILL.md의 대화 문단이 함께 바뀐다.
+
 `find_last_v2_commit`의 형태 판정 함수를 **relpath별로 파라미터화**한다(코어 추출과 같은 방향):
 
 | relpath | "옛 형식" 판정 |
@@ -1069,6 +1196,9 @@ v1 문서(`version` 없음, 두 필드만)는 4.4의 인식 규칙을 통과한�
 | `plugins.json` | 최상위가 객체인데 `version`이 없다 |
 
 탐지되면 **자동 복구하지 않고** 마지막 정상 백업 커밋을 제안한다 — 현행 동작과 같다.
+
+**`detect()`의 출력을 relpath 맵으로 바꿀지, 파일별 대화 문단을 가를지는 plan이 정한다.**
+어느 쪽이든 12장의 영향 파일과 13장의 문서 정정이 함께 움직여야 한다.
 
 이것이 없으면 다음 사고가 조용히 일어난다: 2.x 기기 C가 백업 → 기기 A가 백업하면
 B 전용 키는 `L없음/R없음/S있음`으로 **양쪽 삭제 확정**되어 영구 소실되고, A 자신의 키는
@@ -1104,7 +1234,9 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 | `skills/sync-status/SKILL.md` | 호출줄 + skipped 분기 문단 신규, 플러그인 절 갱신 |
 | `skills/sync-restore/scripts/plan_plugins.py` | **신규** (`apply-base` 포함) |
 | `skills/sync-restore/SKILL.md` | 5절 전면 교체, 스테이징 배선(7.4). **자기 업데이트 안내(206~212행)는 보존** |
+| `lib/compat.py` | `plugins.json`용 shape 상수 추가, `downgrade_suspected`의 하드코딩을 relpath별로 (11.6) |
 | `skills/sync-backup/scripts/detect_downgrade.py` | 형태 판정을 relpath별로 파라미터화, `plugins.json` 추가 (11.6) |
+| `tests/test_compat.py` | shape 표가 잠겨 있다. 새 상수에 맞춰 갱신 (11.6) |
 | `skills/sync-backup/scripts/collect_mcp.py` | 스테이징을 `<rel>.tmp`로 쓰고 레포 쓰기 성공 후 rename. 잘못된 docstring(`:29`) 정정 (7.4) |
 | `tests/test_metadata.py` | `test_schema_map_omits_plugins_json` → **포함 검사로 뒤집는다** (11.3) |
 | `tests/test_downgrade.py` | `plugins.json` 판정 추가 (11.6) |
@@ -1137,6 +1269,9 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 | `sync-backup/SKILL.md:42` | "매 백업마다 통째로 새로 생성되어 덮어쓰인다" | 키 단위 병합 |
 | `sync-status/SKILL.md:116·120` | MCP 호출·skipped 분기 문단 | 플러그인용 **호출줄과 skipped 분기 문단 신규** |
 | `sync-restore/SKILL.md:215` | "없는 것만 설치한다. 기존 플러그인은 제거하지 않는다" | 3상태·삭제 전파·`held` |
+| `sync-backup/SKILL.md:262-278` | 다운그레이드 3선택지 대화 — `mcp-servers.json` 문구·`git show` 명령이 리터럴 | `plugins.json`도 다루도록 (11.6) |
+| `sync-restore/SKILL.md:142·144·331-338` | 같은 대화의 restore 판 | 같음 |
+| `sync-status/SKILL.md:96` | 탐지 결과 보고 | 같음 |
 
 ### 2.x 배포 순서 경고 — 네 곳이 전부 MCP 전용이다
 
@@ -1160,7 +1295,8 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 - **로컬 디렉토리에서 등록한 마켓플레이스는 동기화되지 않으며, 그 소속 플러그인도 동기화되지 않는다** (H2)
 - **의존성으로 자동 설치된 플러그인은 백업하지 않는다** — 부모를 복원하면 따라온다 (H1)
 - **명령으로 설치되는 플러그인은 세션 안에서 복원할 수 없다** — 사용자 터미널이 필요하다 (8.5)
-- **객체 형태의 버전 제약은 이 기기에서 표현할 수 없어 레포 값을 보존만 한다** (H3)
+- **버전 제약(배열·객체)이 있는 플러그인은 설치는 되지만 그 값이 이 기기에 재현되지 않는다.**
+  레포의 값은 보존되며, 포기하려면 복원에서 "이 기기 값으로 통일"을 골라야 한다. **지우려면 그것이 먼저다** (H3·7.3)
 - **플러그인 설정 값은 마스킹되어 저장되며, 복원 시 다시 입력한다. 건너뛸 수 있다** (6장)
 - **보류 선택은 이 기기에만 남는다** (`~/.claude/.sync-state/plugins-held.json`).
   다른 기기에 전파되지 않으며, 지우면 다시 묻는다
@@ -1232,6 +1368,9 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
    `base/plugins.json`이 갱신되지 않았는지 확인한다 (7.4의 rename 계약).
 7. **부분 실패 후 재실행 수렴** — 마켓플레이스 하나를 실패시켜 restore를 돌린 뒤,
    원인을 없애고 다시 돌리면 남은 항목이 복원되는지 확인한다.
+8. **H3 탈출구 왕복** — 레포에 배열 값이 있는 상태에서 7.3의 탈출구를 실행 → backup 2회 →
+   **레포 값이 `true`가 되고**, 그 뒤 `uninstall`이 **케이스 3으로 전파**되는지 확인한다.
+   #4·#5 어느 것도 이 경로를 덮지 않는다. "지우려면 먼저 불리언화"가 실제로 성립하는지 여기서 판정된다.
 
 ### 14.3 CLI 에뮬레이터 계약
 
@@ -1272,7 +1411,8 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 ## 15. 오픈 이슈 (plan에서 확정)
 
 1. **`lib/keyed_sync.py`의 정확한 시그니처.** 훅 넷을 개별 키워드 인자로 둘지 정책 객체로 묶을지.
-   **위치 인자 순서는 현행 `mcp_config`를 따른다**(5.5)는 제약 안에서 정한다.
+   **위치 인자 순서는 현행 `mcp_config`를 따르고**(5.5), **어댑터가 섹션마다 클로저를 만들어
+   넘긴다**(5.2)는 제약 안에서 정한다.
 2. **섹션별 보고를 하나로 합칠지.** 세 섹션의 충돌을 각각 보고하면 출력이 길다.
 3. **`plugins-held.json`의 스키마.** 지문 알고리즘(대상은 6.4가 확정했다 — 레포 값, 마스킹 후)과
    항목의 정확한 JSON 형태. **없음/깨짐 처리와 소유자는 6.4가 확정했으므로 미결이 아니다.**
