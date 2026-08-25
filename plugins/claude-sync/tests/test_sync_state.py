@@ -136,3 +136,21 @@ def test_write_base_leaves_old_blob_intact_when_write_fails(tmp_path, monkeypatc
     monkeypatch.undo()
     assert ss.read_base("plugins.json", base_dir=base_dir) == b'{"version": 2}'
     assert os.listdir(base_dir) == ["plugins.json"]
+
+
+def test_write_base_removes_its_temp_file_on_non_oserror_failure(tmp_path):
+    """OSError가 아닌 실패(bytes가 아닌 값)도 .tmp를 지워야 한다.
+
+    open(tmp, "wb")는 성공하고, 그 뒤 f.write(data)가 bytes가 아닌 값에서 TypeError를
+    던진다 — open이 이미 성공한 뒤에 터져야 .tmp가 디스크에 남은 상태에서 정리 코드가
+    실제로 실행되는 경로를 검증한다. 위 테스트(open 이전에 실패)는 .tmp가 애초에
+    생성되지 않으므로 이 정리 경로를 잡지 못한다.
+    except를 OSError로 좁히면(X2) TypeError가 정리 코드를 우회해 .tmp가 남고,
+    os.remove(tmp)를 지우면(X1) 성공 여부와 무관하게 .tmp가 남는다.
+    """
+    base_dir = str(tmp_path / "base")
+    ss.write_base("plugins.json", b'{"version": 2}', base_dir=base_dir)
+    with pytest.raises(TypeError):
+        ss.write_base("plugins.json", "not bytes", base_dir=base_dir)
+    assert os.listdir(base_dir) == ["plugins.json"]
+    assert ss.read_base("plugins.json", base_dir=base_dir) == b'{"version": 2}'
