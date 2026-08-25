@@ -69,24 +69,39 @@ def same(a, b):
     return fingerprint(a) == fingerprint(b)
 
 
-def dump_json(payload, path):
-    """키 정렬 JSON을 원자적으로 쓴다 — 같은 디렉토리의 .tmp에 쓰고 os.replace한다.
+def dump_bytes(data, path):
+    """바이트를 원자적으로, 내구성 있게 쓴다 — 같은 디렉토리의 .tmp에 쓰고 os.replace한다.
 
-    직접 open(path, "w")하면 truncate가 먼저 일어나므로, 쓰기 도중 실패(ENOSPC/EIO)가
+    직접 open(path, "wb")하면 truncate가 먼저 일어나므로, 쓰기 도중 실패(ENOSPC/EIO)가
     **파일을 잘린 채로 남긴다.** 잘린 백업 파일은 다음 load_backup에서 구문 오류로 {}로
     degrade하고, 그러면 모든 항목이 케이스 4로 판정되어 restore가 "다른 기기가
     삭제했습니다"라는 거짓 문구를 띄운다. 이 프로젝트가 이미 한 번 고친 거짓 문구다.
 
     실패하면 임시 파일을 지운다 — 레포 디렉토리에 남으면 `git add -A`가 그것을 커밋한다.
 
-    직렬화 옵션은 fingerprint()와 맞춰져 있다(sort_keys, ensure_ascii=False).
+    쓰기 전에 flush + fsync한다 — os.replace의 rename 자체는 원자적이지만, tmp의
+    데이터 블록이 디스크에 내려갔음을 보장하지 않는다. rename과 writeback 사이에
+    크래시가 끼면 대상 파일이 0바이트나 쓰레기로 남는데, 그것은 이 함수가 막으려던
+    "잘린 백업 → 전 항목 케이스 4 → 거짓 삭제 문구"와 같은 상태다.
+    한계: 파일 데이터만 fsync하고 **디렉토리 엔트리는 fsync하지 않는다** — rename 자체의
+    durable 보장까지는 가지 않는다. 다만 "내용이 잘린 파일이 publish되는" 최악 케이스는
+    이것으로 사라진다. macOS(APFS)에서 os.fsync는 F_FULLFSYNC가 아니라 장치 캐시까지만
+    보장한다 — 앱 크래시·커널 패닉은 덮지만 급작스런 전원 차단은 덮지 못한다.
+
+    os.replace는 몇 가지 의미 변화를 동반한다: 기존 파일의 mode/owner가 보존되지
+    않고(새 tmp의 것, 0666 & ~umask로 교체된다) 대상이 심볼릭 링크면 이전에는 링크를
+    따라가 타깃에 썼지만 이제는 링크 자체가 정규 파일로 갈아치워진다. 이 저장소에는
+    대상 파일에 chmod하는 코드가 없고 레포 백업은 redact를 거쳐 실제 비밀을 담지
+    않으므로 실해는 없다 — 다음 사람을 위한 기록이다.
+
     두 어댑터가 각자 이 함수를 복사하면 다음 수정이 한쪽에만 반영된다.
     """
     tmp = path + ".tmp"
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=True, ensure_ascii=False)
-            f.write("\n")
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     except Exception:
         try:
@@ -94,6 +109,15 @@ def dump_json(payload, path):
         except OSError:
             pass
         raise
+
+
+def dump_json(payload, path):
+    """키 정렬 JSON을 원자적으로 쓴다. 원자적 교체·내구성은 dump_bytes에 위임한다.
+
+    직렬화 옵션은 fingerprint()와 맞춰져 있다(sort_keys, ensure_ascii=False).
+    """
+    text = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    dump_bytes(text.encode("utf-8"), path)
 
 
 # recognize(obj) -> mapping | None

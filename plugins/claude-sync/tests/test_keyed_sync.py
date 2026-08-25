@@ -728,7 +728,12 @@ def test_dump_json_leaves_old_file_intact_when_write_fails(tmp_path, monkeypatch
     def boom(*args, **kwargs):
         raise OSError("no space left on device")
 
-    monkeypatch.setattr(ks.json, "dump", boom)
+    # dump_json이 이제 json.dumps로 먼저 텍스트를 완성한 뒤 dump_bytes에 위임하므로
+    # (I1), "쓰기 도중 실패"는 더 이상 json.dump가 아니라 os.replace에서 흉내낸다.
+    # 이 선택이 fsync 유무(I2)에 우연히 결합되지 않도록 write/flush/fsync가 아니라
+    # replace를 표적으로 삼는다 — 그래야 fsync 줄을 지우는 변조와 무관하게 이 테스트가
+    # 계속 "쓰기 실패 → 이전 내용 보존"만 검증한다.
+    monkeypatch.setattr(ks.os, "replace", boom)
     with pytest.raises(OSError):
         ks.dump_json({"b": 2}, path)
     with open(path, encoding="utf-8") as f:
@@ -742,7 +747,8 @@ def test_dump_json_removes_its_temp_file_when_write_fails(tmp_path, monkeypatch)
     def boom(*args, **kwargs):
         raise OSError("no space left on device")
 
-    monkeypatch.setattr(ks.json, "dump", boom)
+    # os.replace를 표적으로 삼는 이유는 위 테스트와 같다(fsync 유무와 무관해야 한다).
+    monkeypatch.setattr(ks.os, "replace", boom)
     with pytest.raises(OSError):
         ks.dump_json({"b": 2}, path)
     assert os.listdir(str(tmp_path)) == []

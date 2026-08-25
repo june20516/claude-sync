@@ -817,15 +817,34 @@ def test_version_at_or_below_current_is_recognized(version, tmp_path):
 
 
 def test_dump_backup_is_atomic(tmp_path, monkeypatch):
-    """어댑터가 코어의 원자적 writer를 거쳐야 한다 — 두 벌이 되면 다음 수정이 한쪽만 간다."""
+    """쓰기 도중 실패해도 원자적이어야 한다 — 두 벌이 되면 다음 수정이 한쪽만 간다.
+
+    dump_json이 json.dumps로 텍스트를 완성한 뒤 dump_bytes에 위임하므로(I1), 실패는
+    os.replace에서 흉내낸다 — fsync 유무(I2)와 무관해야 이 테스트가 그 변조에
+    우연히 걸리지 않는다.
+    """
     path = str(tmp_path / mc.BACKUP_RELPATH)
     mc.dump_backup({"x": {"command": "a"}}, path)
 
     def boom(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(mc.ks.json, "dump", boom)
+    monkeypatch.setattr(mc.ks.os, "replace", boom)
     with pytest.raises(OSError):
         mc.dump_backup({"y": {"command": "b"}}, path)
     assert mc.load_backup(path) == {"x": {"command": "a"}}
     assert not os.path.exists(path + ".tmp")
+
+
+def test_dump_backup_routes_through_ks_dump_json(tmp_path, monkeypatch):
+    """dump_backup이 실제로 ks.dump_json을 거치는지 고정한다.
+
+    바로 위 테스트는 "원자적인가"만 본다 — 원자적 패턴을 어댑터가 직접 복사해도(X5)
+    통과한다. 그러면 dump_json의 docstring이 경고하는 "두 어댑터가 각자 복사하면
+    다음 수정이 한쪽에만 반영된다"가 조용히 재발해도 아무 테스트도 못 잡는다.
+    """
+    calls = []
+    monkeypatch.setattr(mc.ks, "dump_json", lambda payload, target: calls.append(target))
+    path = str(tmp_path / mc.BACKUP_RELPATH)
+    mc.dump_backup({"x": {"command": "a"}}, path)
+    assert calls == [path]

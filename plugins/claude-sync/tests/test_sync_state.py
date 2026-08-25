@@ -154,3 +154,17 @@ def test_write_base_removes_its_temp_file_on_non_oserror_failure(tmp_path):
         ss.write_base("plugins.json", "not bytes", base_dir=base_dir)
     assert os.listdir(base_dir) == ["plugins.json"]
     assert ss.read_base("plugins.json", base_dir=base_dir) == b'{"version": 2}'
+
+
+def test_write_base_routes_through_ks_dump_bytes(tmp_path, monkeypatch):
+    """write_base가 실제로 ks.dump_bytes를 거치는지 고정한다 — I1의 재발을 여기서 잡는다.
+
+    위 두 테스트는 "원자적인가"만 본다 — 원자적 패턴을 write_base가 직접 복사해도
+    통과한다. 라우팅 자체를 단정해야 dump_bytes의 docstring이 경고하는 "두 어댑터가
+    각자 복사하면 다음 수정이 한쪽에만 반영된다"는 재발을 이 파일에서도 잡는다.
+    """
+    calls = []
+    monkeypatch.setattr(ss.ks, "dump_bytes", lambda data, target: calls.append((data, target)))
+    base_dir = str(tmp_path / "base")
+    ss.write_base("plugins.json", b"payload", base_dir=base_dir)
+    assert calls == [(b"payload", ss.base_blob_path("plugins.json", base_dir))]
