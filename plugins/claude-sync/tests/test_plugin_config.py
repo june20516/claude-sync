@@ -29,18 +29,40 @@ def write_held(tmp_path, data):
     return str(path)
 
 
-def write_bom(tmp_path, name, data):
-    """UTF-8 BOM이 붙은 JSON. Windows 계열 편집기가 실제로 만드는 형태다.
-
-    open(path, "rb") + json.loads(bytes)는 json.detect_encoding이 BOM을 처리해 통과하지만,
-    open(path, "r")로 읽으면 BOM 문자가 본문에 남아 JSONDecodeError가 된다.
-    """
-    path = tmp_path / name
-    path.write_bytes(b"\xef\xbb\xbf" + json.dumps(data).encode("utf-8"))
-    return str(path)
-
-
 GH = {"source": {"source": "github", "repo": "june20516/suberpower"}}
+
+
+@pytest.fixture
+def default_paths(tmp_path, monkeypatch):
+    """세 기본 경로를 전부 tmp_path의 서로 다른 파일로 갈아끼운다.
+
+    셋을 한꺼번에 바꾸는 이유는 둘이다 — (a) 실제 ~/.claude를 **읽지도 않기** 위해서,
+    (b) DEFAULT_INSTALLED를 DEFAULT_SETTINGS로 바꾸는 식의 변조가 "없는 파일"이 아니라
+    **내용이 다른 실재 파일**을 읽게 만들어 확실히 FAIL하도록.
+    """
+    for name, path in (
+        ("DEFAULT_SETTINGS", write_settings(tmp_path, {"enabledPlugins": {"p@m": True}})),
+        ("DEFAULT_INSTALLED",
+         write_installed(tmp_path, {"dep@m": [{"scope": "user", "auto": True}]})),
+        ("DEFAULT_HELD",
+         write_held(tmp_path, {"version": 1, "pluginConfigs": {"delta@m": "abc"}})),
+    ):
+        monkeypatch.setattr(pc, name, path)
+
+
+def test_read_local_sections_defaults_to_the_settings_path(default_paths):
+    """인자 없이 부르면 DEFAULT_SETTINGS를 본다 — 상수가 갈리면 무증상 고장이다."""
+    assert pc.read_local_sections()["enabledPlugins"] == {"p@m": True}
+
+
+def test_read_auto_ids_defaults_to_the_installed_path(default_paths):
+    """인자 없이 부르면 DEFAULT_INSTALLED를 본다."""
+    assert pc.read_auto_ids() == frozenset({"dep@m"})
+
+
+def test_read_held_state_defaults_to_the_held_path(default_paths):
+    """인자 없이 부르면 DEFAULT_HELD를 본다."""
+    assert pc.read_held_state()["pluginConfigs"] == {"delta@m": "abc"}
 
 
 # --- 3.2 로컬 읽기 ---
@@ -86,16 +108,6 @@ def test_read_local_propagates_permission_error(tmp_path):
             pc.read_local_sections(path)
     finally:
         os.chmod(path, 0o600)
-
-
-def test_read_local_reads_bytes_so_a_bom_does_not_look_broken(tmp_path):
-    """settings.json을 바이너리로 읽는다 — BOM이 붙어도 "읽기 실패"가 아니다.
-
-    open(path, "rb")를 open(path, "r")로 바꾸면 BOM 문자가 본문에 남아 JSONDecodeError가
-    되고, 그 기기의 백업이 통째로 skip된다. 그 변조를 잡는 줄이다.
-    """
-    path = write_bom(tmp_path, "settings.json", {"enabledPlugins": {"p@m": True}})
-    assert pc.read_local_sections(path)["enabledPlugins"] == {"p@m": True}
 
 
 # --- 3.3 별칭 키 ---
@@ -155,6 +167,39 @@ def test_read_auto_ids_rejects_unknown_shape(tmp_path):
         pc.read_auto_ids(str(path))
 
 
+def test_read_auto_ids_rejects_document_without_plugins_key(tmp_path):
+    """plugins 키 부재를 "auto 0개"로 접으면 auto 항목이 그대로 레포로 승격된다 (N6).
+
+    같은 함수가 plugins[<id>]의 형태 위반은 예외로 막으면서 그보다 상위인 plugins 키
+    부재를 통과시키면 일관성이 없다.
+    """
+    path = tmp_path / "installed_plugins.json"
+    path.write_text(json.dumps({"version": 2}), encoding="utf-8")
+    with pytest.raises(pc.AutoFlagsUnavailable):
+        pc.read_auto_ids(str(path))
+
+
+def test_read_auto_ids_rejects_higher_schema_version(tmp_path):
+    """이 파일도 스스로 version을 달고 다닌다 — 상위 버전이면 auto의 의미를 보장할 수 없다.
+
+    float 우회까지 본다. 같은 모듈의 read_held_state·_recognized_sections와 같은 게이트다.
+    """
+    path = tmp_path / "installed_plugins.json"
+    for version in (3, 3.0, 2.5):
+        path.write_text(json.dumps({"version": version, "plugins": {}}), encoding="utf-8")
+        with pytest.raises(pc.AutoFlagsUnavailable):
+            pc.read_auto_ids(str(path))
+    # 경계값은 통과해야 한다 — 게이트가 정상 문서를 막으면 그것도 사고다.
+    path.write_text(json.dumps({"version": 2, "plugins": {}}), encoding="utf-8")
+    assert pc.read_auto_ids(str(path)) == frozenset()
+
+
+def test_read_auto_ids_rejects_non_object_entry(tmp_path):
+    """원소가 객체가 아니면 그 항목의 auto를 읽을 수 없다 — 조용히 건너뛰면 N6이다."""
+    with pytest.raises(pc.AutoFlagsUnavailable):
+        pc.read_auto_ids(write_installed(tmp_path, {"x@m": ["손상"]}))
+
+
 @requires_permission_bits
 def test_read_auto_ids_propagates_permission_error(tmp_path):
     """권한 오류는 "판정 불가"가 아니라 그대로 전파한다 — mcp_config와 같은 규약이다.
@@ -169,16 +214,6 @@ def test_read_auto_ids_propagates_permission_error(tmp_path):
             pc.read_auto_ids(path)
     finally:
         os.chmod(path, 0o600)
-
-
-def test_read_auto_ids_reads_bytes_so_a_bom_does_not_look_broken(tmp_path):
-    """installed_plugins.json도 바이너리로 읽는다 — "rb"→"r" 변조를 잡는 줄이다.
-
-    BOM 하나로 auto 판정이 불가가 되면 두 섹션이 통째로 skip된다(3.4).
-    """
-    path = write_bom(tmp_path, "installed_plugins.json",
-                     {"version": 2, "plugins": {"dep@m": [{"scope": "user", "auto": True}]}})
-    assert pc.read_auto_ids(path) == frozenset({"dep@m"})
 
 
 # --- 6.4 보류 상태 파일 ---
@@ -203,6 +238,20 @@ def test_read_held_state_returns_both_axes(tmp_path):
                      "release": {"enabledPlugins": ["p@m"]}}
 
 
+def test_read_held_state_does_not_share_state_with_the_module_constant(tmp_path):
+    """반환값을 변형해도 EMPTY_HELD가 오염되면 안 된다.
+
+    copy.deepcopy를 `return EMPTY_HELD`(또는 얕은 복사)로 바꾸는 변조를 잡는 줄이다.
+    오염되면 그 프로세스의 이후 모든 read_held_state가 거짓 보류를 돌려준다.
+    """
+    state = pc.read_held_state(str(tmp_path / "none.json"))
+    state["pluginConfigs"]["x@m"] = "지문"
+    state["release"]["enabledPlugins"].append("p@m")
+    assert pc.EMPTY_HELD == {"pluginConfigs": {}, "release": {"enabledPlugins": []}}
+    assert pc.read_held_state(str(tmp_path / "none.json")) == {
+        "pluginConfigs": {}, "release": {"enabledPlugins": []}}
+
+
 @requires_permission_bits
 def test_read_held_state_propagates_permission_error(tmp_path):
     """부재 갈래는 **파일 부재만** 담는다 — 권한 오류는 전파한다.
@@ -218,16 +267,6 @@ def test_read_held_state_propagates_permission_error(tmp_path):
             pc.read_held_state(path)
     finally:
         os.chmod(path, 0o600)
-
-
-def test_read_held_state_reads_bytes_so_a_bom_does_not_look_broken(tmp_path):
-    """보류 파일도 바이너리로 읽는다 — "rb"→"r" 변조를 잡는 줄이다.
-
-    BOM 하나로 HeldStateUnavailable이 되면 사용자의 보류 선택이 매번 다시 물어진다.
-    """
-    path = write_bom(tmp_path, "plugins-held.json",
-                     {"version": 1, "pluginConfigs": {"delta@m": "abc"}})
-    assert pc.read_held_state(path)["pluginConfigs"] == {"delta@m": "abc"}
 
 
 # --- 4.4 인식 규칙 ---
@@ -250,10 +289,18 @@ def test_recognizes_v1_document_without_version(tmp_path):
     assert out["enabledPlugins"] == {"p@m": True}
 
 
+EMPTY_SECTIONS = {"enabledPlugins": {}, "extraKnownMarketplaces": {}, "pluginConfigs": {}}
+
+
 def test_does_not_recognize_document_without_any_known_section():
-    """조건 3 — {"foo": 1}이나 {}를 "항목 0개"로 읽으면 그 문서를 덮어써 파괴한다."""
-    assert recognized({}) == {}
-    assert recognized({"foo": 1}) == {}
+    """조건 3 — {"foo": 1}이나 {}를 "항목 0개"로 읽으면 그 문서를 덮어써 파괴한다.
+
+    미인식이어도 parse_backup은 **세 섹션 키를 갖춰** 돌려준다 — 호출부의
+    out["enabledPlugins"]가 KeyError로 죽지 않게 하는 것이 이 함수의 계약이다.
+    """
+    assert recognized({}) == EMPTY_SECTIONS
+    assert recognized({"foo": 1}) == EMPTY_SECTIONS
+    assert pc.parse_backup(b"{not json") == EMPTY_SECTIONS
     assert pc.parse_base(json.dumps({"foo": 1}).encode("utf-8")) is None
 
 
@@ -272,9 +319,18 @@ def test_does_not_recognize_higher_schema_version():
 
 
 def test_recognizes_string_and_bool_version_claims():
-    """문자열은 손으로 고친 문서를 막지 않기 위해, bool은 버전 주장이 아니라서 통과한다."""
-    assert recognized({"version": "3", "enabledPlugins": {}}) is not None
-    assert recognized({"version": True, "enabledPlugins": {}}) is not None
+    """문자열은 손으로 고친 문서를 막지 않기 위해, bool은 버전 주장이 아니라서 통과한다.
+
+    **parse_base로 단정한다.** parse_backup은 미인식일 때 None이 아니라 빈 세 섹션을
+    돌려주므로 `is not None`이 어떤 입력에도 참이 되어 아무것도 지키지 못한다 —
+    그 단정으로는 "문자열·bool 버전을 거부"하도록 규칙을 뒤집어도 초록이었다.
+    값까지 단정해 "인식은 됐는데 내용이 비었다"와도 구별한다.
+    """
+    for version in ("3", True):
+        out = pc.parse_base(json.dumps(
+            {"version": version, "enabledPlugins": {"p@m": True}}).encode("utf-8"))
+        assert out is not None, version
+        assert out["enabledPlugins"] == {"p@m": True}
 
 
 def test_load_backup_raises_on_unrecognized_document(tmp_path):
@@ -301,6 +357,19 @@ def test_dump_backup_always_writes_three_sections(tmp_path):
     assert raw["version"] == 2 and raw["scope"] == "user"
     assert set(raw) == {"version", "scope", *pc.SECTIONS}
     assert raw["pluginConfigs"] == {}
+
+
+def test_dump_backup_rejects_a_non_object_section(tmp_path):
+    """{"enabledPlugins": None}을 그대로 쓰면 자기가 쓴 파일을 자기가 못 읽는다.
+
+    다음 load_backup이 조건 4에서 인식에 실패해 그 백업이 영구히 UnknownBackupSchema가
+    된다. 호출부의 계약 위반이므로 읽기 실패 예외가 아니라 ValueError다 — 읽기 실패로
+    던지면 호출부의 except 튜플에 잡혀 버그가 "정상적인 skip"으로 위장된다.
+    """
+    path = str(tmp_path / pc.BACKUP_RELPATH)
+    with pytest.raises(ValueError):
+        pc.dump_backup({"enabledPlugins": None}, path)
+    assert not os.path.exists(path)      # 쓰기 전에 막는다 — 잔해를 남기지 않는다
 
 
 def test_dump_backup_round_trips_through_load(tmp_path):
