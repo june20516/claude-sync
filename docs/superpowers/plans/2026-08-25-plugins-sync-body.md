@@ -2419,6 +2419,8 @@ def read_hold_inputs(installed_path=None, held_path=None):
     return auto_ids, held_state, skipped
 
 
+# **주: `held_context`는 Task 5가 이미 만들었다**(quality review I-1로 앞당겼다).
+# 아래 정의는 참고용이고, 실제로 더할 것은 `read_hold_inputs` 하나다.
 def held_context(local, repo, *, auto_ids, held_state):
     """hold 훅과 held_kinds가 **같은 입력에서 같은 값**을 보게 하는 컨텍스트.
 
@@ -5385,6 +5387,7 @@ git commit -m "docs: plugins.json이 키 단위로 병합된다는 사실을 여
 | 고정 `.tmp` 이름은 동시 실행에서 원자성이 무력화된다. 코드베이스에 락이 하나도 없어(전수 grep 0건) 동시 실행을 전제하지 않는 설계와는 일관된다. `mkstemp`로 바꾸면 잔존 파일 이름이 무작위가 되어 `.gitignore` 대응이 어려워지는 역효과가 있다 | Task 1 quality review M3 |
 | `sync_state.write_base`의 `data is None` 삭제 분기가 `<path>.tmp`를 지우지 않는다. base 디렉토리를 walk하는 코드가 없어 현재 영향은 없다 | Task 1 quality review M4 |
 | 백업 레포에 `.gitignore`가 없다(`bootstrap.sh`가 만들지 않는다). `*.tmp` 한 줄이 값싼 보험이다 | Task 1 quality review |
+| 보류 종류를 하나 더하려면 네 곳(`_make_hold`의 `if` / `HELD_KINDS` / `held_kinds`의 `if` / 배선)을 동시에 고쳐야 하고 어긋나면 런타임 `ValueError`로만 드러난다. 그 `ValueError`가 fail-closed 가드로 설계된 것이고 다섯 번째 종류는 계획에 없어 YAGNI로 미뤘다 | Task 5 quality review I-2 |
 | `test_keyed_sync.py`의 `RECOGNIZE_HOOK_CALL`이 별칭 `ks.`를 하드코딩한다. `NON_ADAPTER_KEYED_SYNC_IMPORTERS`의 모듈이 **별칭을 바꾸면서** 세 함수를 부르기 시작하면 자기검증이 우회된다(이중 변경이라 실현 가능성은 낮고, `test_sync_state.py`의 `ss.ks` 몽키패치가 그 별칭을 못박고 있다). 면제 목록이 커지면 AST로 올릴 것 | Task 3 quality review M-1 |
 | `test_mcp_state_machine.py`의 이름이 더 이상 내용과 맞지 않는다 | Task 11 |
 
