@@ -117,6 +117,12 @@ plan ①의 실행에서 Task 2~7 **매번** SURVIVE가 나왔고 대부분 plan
 
 **SURVIVE하면 구현이 아니라 테스트를 보강한다.** 보강한 줄 옆에 어떤 변조를 잡는지 주석으로 남긴다.
 
+**변조 하네스 자체가 거짓말을 할 수 있다.** Task 5 실행에서 실측됐다 — 두 변조가 **같은 크기의
+파일을 같은 초에** 쓰면 `__pycache__`의 `.pyc`가 재사용되어(pyc 헤더는 mtime을 **초 단위**로
+저장한다) 앞 변조의 코드가 그대로 돌고, 결과가 엉뚱한 테스트에 잡힌 것처럼 나온다.
+**임시 복사본에서 변조를 돌릴 때는 `PYTHONDONTWRITEBYTECODE=1`을 주고 매회 `__pycache__`를
+지운다.** 이 함정에 빠지면 CAUGHT/SURVIVED 판정이 통째로 무의미해진다.
+
 ---
 
 ### Task 1: 원자적 쓰기 — 잘린 백업 파일이 거짓 삭제로 가는 두 번째 문을 막는다
@@ -1312,7 +1318,7 @@ def test_secret_keys_lists_option_names_for_plugin_configs():
         {"options": {"region": "x", "apiKey": "y"}}) == ["apiKey", "region"]
 
 
-def test_secret_keys_is_empty_when_there_is_nothing_to_ask(section=None):
+def test_secret_keys_is_empty_when_there_is_nothing_to_ask():
     """options가 비었거나 없으면 물어볼 것이 없다 — add 버킷으로 간다 (6.2)."""
     ask = pc.SECTION_SECRET_KEYS["pluginConfigs"]
     assert ask({"options": {}}) == [] and ask({}) == [] and ask("x") == []
