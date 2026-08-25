@@ -5354,6 +5354,10 @@ git commit -m "docs: plugins.json이 키 단위로 병합된다는 사실을 여
 | 2.x 배포 순서 경고 **네 곳** — 전부 `mcp-servers.json` 전용이다 | spec 13장 두 번째 표 |
 | 실환경 스모크 — 확장 포맷의 의도된 형태, 객체 평탄화의 성격, `install`의 기본 스코프 | spec 14.5 |
 | **`update_base.py "$BASE_STAGING"` 오사용을 잡는 테스트가 없다** | Task 14 Step 4b에서 확인된 구멍 |
+| **`reconcile_restore.py:108-111·126-129`의 비원자적 로컬 쓰기** — `open(local,"wb")`가 선-truncate한다. ENOSPC로 중간에 죽으면 `~/.claude/agents/foo.md`가 **잘린 채** 남고, 예외가 traceback으로 서서 `write_base`가 실행되지 않아 base는 옛 값 그대로다. 다음 판정이 `L≠S, R==S` → `local_ahead` → **다음 백업이 잘린 로컬을 레포의 온전한 사본 위에 push한다.** Task 1이 막은 것과 같은 계열이다. `ks.dump_bytes`가 생겼으므로 두 곳 다 한 줄 교체다 | Task 1 quality review I3 |
+| 고정 `.tmp` 이름은 동시 실행에서 원자성이 무력화된다. 코드베이스에 락이 하나도 없어(전수 grep 0건) 동시 실행을 전제하지 않는 설계와는 일관된다. `mkstemp`로 바꾸면 잔존 파일 이름이 무작위가 되어 `.gitignore` 대응이 어려워지는 역효과가 있다 | Task 1 quality review M3 |
+| `sync_state.write_base`의 `data is None` 삭제 분기가 `<path>.tmp`를 지우지 않는다. base 디렉토리를 walk하는 코드가 없어 현재 영향은 없다 | Task 1 quality review M4 |
+| 백업 레포에 `.gitignore`가 없다(`bootstrap.sh`가 만들지 않는다). `*.tmp` 한 줄이 값싼 보험이다 | Task 1 quality review |
 | `test_mcp_state_machine.py`의 이름이 더 이상 내용과 맞지 않는다 | Task 11 |
 
 **plan ③은 이 plan이 끝나야 쓸 수 있다.** `plugin_config`의 인식 규칙과 `plugins.json`의 실제 v2 형태가 확정되어야 shape 상수와 다운그레이드 판정을 정의할 수 있다.
