@@ -7,6 +7,7 @@ import pytest
 
 import keyed_sync as ks
 import mcp_config as mc
+from marks import requires_permission_bits
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
 
@@ -95,6 +96,7 @@ def test_load_backup_degrades_broken_syntax_to_empty(tmp_path):
     assert ks.load_backup(str(path), only_dict_with_items) == {}
 
 
+@requires_permission_bits
 def test_load_backup_propagates_permission_error(tmp_path):
     """FileNotFoundError만 {}로 접는다. 다른 OSError를 접으면 못 읽은 백업이
     "항목 0개"가 되고, merge가 그 레포를 덮어써 파괴한다."""
@@ -691,7 +693,17 @@ def test_every_hold_consuming_function_has_a_recording_hold_test():
     assert missing == [], "recording_hold 테스트가 없는 hold 소비 함수: %s" % missing
 
 
-def test_mcp_adapter_passes_one_recognize_hook_to_all_three(tmp_path, monkeypatch):
+# recognize를 코어 세 함수에 넘기는 어댑터 전수. (모듈, 인식되는 최소 문서) 쌍이다.
+# 손으로 복제하는 대신 파라미터화한다 — 복제를 잊으면 그 어댑터의 비대칭이 무증상으로
+# 들어오고, 그 비대칭이 상위 버전 백업을 파괴한다(spec 4.4).
+RECOGNIZE_ADAPTERS = [
+    (mc, b'{"version": 2, "scope": "user", "servers": {}}'),
+]
+
+
+@pytest.mark.parametrize("adapter,sample", RECOGNIZE_ADAPTERS,
+                         ids=lambda x: x.__name__ if hasattr(x, "__name__") else "")
+def test_adapter_passes_one_recognize_hook_to_all_three(adapter, sample, tmp_path, monkeypatch):
     """어댑터가 세 함수에 같은 recognize를 넘겨야 한다.
 
     코어는 훅을 파라미터로 받으므로 공유를 강제할 수 없다. 갈리면 "이력은 못 믿는데
@@ -703,16 +715,56 @@ def test_mcp_adapter_passes_one_recognize_hook_to_all_three(tmp_path, monkeypatc
         seen.append(args[-1])   # 세 코어 함수 모두 recognize가 마지막 위치 인자다
         return {}
 
-    monkeypatch.setattr(mc.ks, "parse_base", capture)
-    monkeypatch.setattr(mc.ks, "load_backup", capture)
-    monkeypatch.setattr(mc.ks, "parse_backup", capture)
+    monkeypatch.setattr(adapter.ks, "parse_base", capture)
+    monkeypatch.setattr(adapter.ks, "load_backup", capture)
+    monkeypatch.setattr(adapter.ks, "parse_backup", capture)
 
-    mc.parse_base(b'{"version": 2, "scope": "user", "servers": {}}')
-    mc.load_backup(str(tmp_path / "none.json"))
-    mc.parse_backup(b'{"version": 2, "scope": "user", "servers": {}}')
+    adapter.parse_base(sample)
+    adapter.load_backup(str(tmp_path / "none.json"))
+    adapter.parse_backup(sample)
 
     assert len(seen) == 3
     assert len({id(hook) for hook in seen}) == 1
+
+
+RECOGNIZE_HOOK_CALL = re.compile(r"\bks\.(?:parse_base|load_backup|parse_backup)\(")
+
+# lib/에서 keyed_sync를 import하지만 recognize를 받는 세 함수(parse_base·load_backup·
+# parse_backup)는 전혀 부르지 않는 모듈. sync_state는 ks.dump_bytes만 쓴다 — recognize
+# 공유와 무관하므로 RECOGNIZE_ADAPTERS에 넣을 수 없다(그 세 함수가 없어 파라미터화
+# 테스트가 AttributeError로 깨진다). 그렇다고 완전성 스캔에서 통째로 빼면 소스 스캔의
+# 의미가 없으므로, 아래 테스트가 "정말 세 함수를 안 부르는지"를 매번 재확인한다 —
+# 나중에 호출이 생기면 이 목록이 거짓이 되어 가드가 잡는다.
+NON_ADAPTER_KEYED_SYNC_IMPORTERS = {"sync_state"}
+
+
+def test_recognize_adapter_list_covers_every_keyed_sync_importer():
+    """lib/에서 코어를 import하는 모듈은 전부 위 두 목록 중 하나에 있어야 한다.
+
+    목록을 손으로 관리하면 새 어댑터가 붙을 때 조용히 빠진다 — 그것이 이 가드가
+    mc에 하드코딩돼 있던 동안의 상태였다. 소스를 훑어 강제한다. import 한 줄만 있는
+    빈 어댑터 스텁도 걸려야 하므로(뒤늦게 함수 호출이 생길 때까지 기다리지 않는다),
+    기준은 "recognize 함수를 부르는가"가 아니라 "keyed_sync를 import하는가"다 —
+    그래서 비-어댑터는 이름만 적지 않고 세 함수를 안 부른다는 사실도 함께 검증한다.
+    """
+    found = set()
+    for name in sorted(os.listdir(LIB_DIR)):
+        if not name.endswith(".py") or name == "keyed_sync.py":
+            continue
+        with open(os.path.join(LIB_DIR, name), encoding="utf-8") as f:
+            source = f.read()
+        if not re.search(r"^import keyed_sync\b", source, re.M):
+            continue
+        found.add(name[:-3])
+        if name[:-3] in NON_ADAPTER_KEYED_SYNC_IMPORTERS:
+            assert not RECOGNIZE_HOOK_CALL.search(source), (
+                "%s가 recognize를 받는 함수를 호출하기 시작했다 — "
+                "RECOGNIZE_ADAPTERS로 옮겨야 한다" % name
+            )
+
+    assert found == (
+        {module.__name__ for module, _ in RECOGNIZE_ADAPTERS} | NON_ADAPTER_KEYED_SYNC_IMPORTERS
+    )
 
 
 def test_dump_json_leaves_old_file_intact_when_write_fails(tmp_path, monkeypatch):

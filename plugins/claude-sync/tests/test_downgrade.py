@@ -18,6 +18,8 @@ import compat  # noqa: E402
 import mcp_config as mc  # noqa: E402
 import detect_downgrade as dd  # noqa: E402
 
+from marks import requires_permission_bits  # noqa: E402
+
 SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "..", "skills", "sync-backup", "scripts", "detect_downgrade.py",
@@ -130,6 +132,7 @@ def test_skips_commits_where_file_absent(tmp_path):
     assert out["candidate"]["subject"] == "backup: v2"
 
 
+@requires_permission_bits
 def test_unreadable_repo_file_is_not_absent(tmp_path):
     """못 읽음을 absent로 접으면 탐지가 조용히 꺼진다(불변식 6)."""
     repo = make_repo(tmp_path)

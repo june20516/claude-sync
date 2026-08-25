@@ -13,6 +13,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 
 import compat  # noqa: E402
 
+from marks import requires_permission_bits  # noqa: E402
+
 
 @pytest.mark.parametrize("text,expected", [
     ("3.0.0", (3, 0, 0)),
@@ -126,7 +128,7 @@ def test_load_metadata_directory_path_is_unreadable(tmp_path):
     assert compat.load_metadata(str(d)) is compat.UNREADABLE
 
 
-@pytest.mark.skipif(os.getuid() == 0, reason="root는 권한 검사를 건너뛴다")
+@requires_permission_bits
 def test_load_metadata_unreadable_file_is_not_none(tmp_path):
     """못 읽음을 없음으로 접으면 상위 버전이 쓴 레포를 통과시킨다."""
     p = tmp_path / "m.json"
@@ -145,7 +147,7 @@ def test_load_metadata_missing_is_none_not_unreadable(tmp_path):
     assert result is not compat.UNREADABLE
 
 
-@pytest.mark.skipif(os.getuid() == 0, reason="root는 권한 검사를 건너뛴다")
+@requires_permission_bits
 def test_read_plugin_version_unreadable_file_is_none(tmp_path):
     """plugin.json 쪽은 못 읽어도 None이면 된다 — 상위 판정이 차단으로 접는다."""
     p = tmp_path / "plugin.json"
