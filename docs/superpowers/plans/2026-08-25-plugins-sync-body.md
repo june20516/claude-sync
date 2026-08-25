@@ -389,8 +389,12 @@ def test_collect_names_the_staging_failure_reason_apart_from_skipped(tmp_path, m
     base_dir = write_base_blob(tmp_path, None)
     real_replace = os.replace
 
+    staged = os.path.join(str(tmp_path / "staging"), mc.BACKUP_RELPATH)
+
     def fail_on_staging(src, dst):
-        if str(dst).endswith(mc.BACKUP_RELPATH):
+        # 정확 경로로 비교한다 — endswith로는 레포 파일 rename까지 가로챈다.
+        # Task 1 이후 dump_backup도 내부적으로 os.replace를 쓰므로 basename이 겹친다.
+        if str(dst) == staged:
             raise OSError("rename failed")
         return real_replace(src, dst)
 
