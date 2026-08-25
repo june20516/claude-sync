@@ -727,6 +727,7 @@ def test_adapter_passes_one_recognize_hook_to_all_three(adapter, sample, tmp_pat
     assert len({id(hook) for hook in seen}) == 1
 
 
+KEYED_SYNC_IMPORT = re.compile(r"^\s*(?:import keyed_sync\b|from keyed_sync import\b)", re.M)
 RECOGNIZE_HOOK_CALL = re.compile(r"\bks\.(?:parse_base|load_backup|parse_backup)\(")
 
 # lib/에서 keyed_sync를 import하지만 recognize를 받는 세 함수(parse_base·load_backup·
@@ -753,7 +754,7 @@ def test_recognize_adapter_list_covers_every_keyed_sync_importer():
             continue
         with open(os.path.join(LIB_DIR, name), encoding="utf-8") as f:
             source = f.read()
-        if not re.search(r"^import keyed_sync\b", source, re.M):
+        if not KEYED_SYNC_IMPORT.search(source):
             continue
         found.add(name[:-3])
         if name[:-3] in NON_ADAPTER_KEYED_SYNC_IMPORTERS:
@@ -764,6 +765,9 @@ def test_recognize_adapter_list_covers_every_keyed_sync_importer():
 
     assert found == (
         {module.__name__ for module, _ in RECOGNIZE_ADAPTERS} | NON_ADAPTER_KEYED_SYNC_IMPORTERS
+    ), (
+        "새 keyed_sync importer가 목록에 없다 — recognize를 코어 세 함수에 넘기는 "
+        "어댑터면 RECOGNIZE_ADAPTERS에, 아니면 NON_ADAPTER_KEYED_SYNC_IMPORTERS에 등재하라"
     )
 
 
