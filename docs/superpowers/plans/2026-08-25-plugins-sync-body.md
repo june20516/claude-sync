@@ -218,13 +218,29 @@ def test_write_base_leaves_old_blob_intact_when_write_fails(tmp_path, monkeypatc
         ss.write_base("plugins.json", b"truncated", base_dir=base_dir)
     monkeypatch.undo()
     assert ss.read_base("plugins.json", base_dir=base_dir) == b'{"version": 2}'
+
+
+def test_write_base_removes_its_temp_file_when_the_write_itself_fails(tmp_path):
+    """.tmp가 **만들어진 뒤에** 실패하는 경로를 잡는다.
+
+    위 테스트의 fail_on_tmp는 open이 열리기 **전에** 터지므로 .tmp가 애초에 생기지
+    않는다 — 그래서 "디렉토리에 .tmp가 없다"는 단정이 정리 코드 유무와 무관하게 참이고
+    공허하다. bytes가 아닌 값을 넘기면 open은 성공하고 f.write가 TypeError를 낸다.
+    OSError가 아닌 예외라서 `except Exception:`을 `except OSError:`로 좁히는 변조도
+    함께 잡는다.
+    """
+    base_dir = str(tmp_path / "base")
+    ss.write_base("plugins.json", b'{"version": 2}', base_dir=base_dir)
+    with pytest.raises(TypeError):
+        ss.write_base("plugins.json", "bytes가 아니다", base_dir=base_dir)
+    assert ss.read_base("plugins.json", base_dir=base_dir) == b'{"version": 2}'
     assert os.listdir(base_dir) == ["plugins.json"]
 ```
 
 - [ ] **Step 2: test를 실행하여 실패를 확인**
 
 실행: `cd /Users/bran/personal/claude-sync && uv run --with pytest pytest plugins/claude-sync/tests/test_keyed_sync.py plugins/claude-sync/tests/test_mcp_config.py plugins/claude-sync/tests/test_sync_state.py -q`
-기대: 새 테스트 넷이 FAIL (`ks.dump_json` 없음 / 이전 내용이 잘림 / `.tmp` 잔존)
+기대: 새 테스트 다섯이 FAIL (`ks.dump_json` 없음 / 이전 내용이 잘림 / `.tmp` 잔존)
 
 - [ ] **Step 3: 구현**
 
@@ -312,7 +328,7 @@ def write_base(relpath, data, base_dir=BASE_DIR):
 - [ ] **Step 4: test를 실행하여 통과를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests -q`
-기대: 신규 4개 포함 **450 passed**
+기대: 신규 5개 포함 **451 passed**. 개수는 참고값이고 게이트는 `0 failed`다
 
 - [ ] **Step 4b: 변조 확인 (필수)**
 
@@ -323,6 +339,9 @@ def write_base(relpath, data, base_dir=BASE_DIR):
 - `except Exception:`을 `except OSError:`로 좁히기 → `json.dump`가 `TypeError`를 내는 값(집합 등)에서 `.tmp`가 남는다. **테스트가 이것을 잡지 못하면 보강한다**(직렬화 불가능한 값으로 테스트 하나 추가)
 - `sort_keys=True`를 지우기 / `ensure_ascii=False`를 지우기 → 바이트 동등 테스트가 잡아야 한다
 - `mc.dump_backup`을 옛 `open(path, "w")` 구현으로 되돌리기 → 어댑터 원자성 테스트가 잡아야 한다
+- **`sync_state.write_base`에도 같은 변조 셋을 각각 적용한다** — `os.replace` 제거 / `os.remove(tmp)` 제거 /
+  `except Exception:`을 `except OSError:`로 좁히기. `write_base`는 `dump_json`을 쓰지 않고 같은 패턴을
+  **복제**하므로, `dump_json`만 변조해서는 이 세 구멍이 드러나지 않는다
 
 - [ ] **Step 5: Commit**
 
