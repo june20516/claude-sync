@@ -45,7 +45,11 @@ def base_hash(relpath, base_dir=BASE_DIR):
 
 
 def write_base(relpath, data, base_dir=BASE_DIR):
-    """base 블롭 기록(불변식 갱신). data가 None이면 삭제."""
+    """base 블롭 기록(불변식 갱신). data가 None이면 삭제.
+
+    .tmp에 쓰고 os.replace한다 — 잘린 base 블롭은 parse_base가 None으로 읽어
+    합집합 degrade를 부르고, 그러면 삭제 전파가 조용히 죽는다.
+    """
     path = base_blob_path(relpath, base_dir)
     if data is None:
         try:
@@ -54,8 +58,17 @@ def write_base(relpath, data, base_dir=BASE_DIR):
             pass
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "wb") as f:
-        f.write(data)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists):

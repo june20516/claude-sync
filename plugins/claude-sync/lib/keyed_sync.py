@@ -9,6 +9,7 @@ MCP 서버와 플러그인이 같은 판정표·인식 계층·예외 클래스�
 """
 import copy
 import json
+import os
 
 BROKEN = object()   # JSON 구문 오류 센티널. None·0·false와 구별해야 한다
 
@@ -66,6 +67,33 @@ def fingerprint(value):
 def same(a, b):
     """값 동등 비교. 키 순서에 무관하다."""
     return fingerprint(a) == fingerprint(b)
+
+
+def dump_json(payload, path):
+    """키 정렬 JSON을 원자적으로 쓴다 — 같은 디렉토리의 .tmp에 쓰고 os.replace한다.
+
+    직접 open(path, "w")하면 truncate가 먼저 일어나므로, 쓰기 도중 실패(ENOSPC/EIO)가
+    **파일을 잘린 채로 남긴다.** 잘린 백업 파일은 다음 load_backup에서 구문 오류로 {}로
+    degrade하고, 그러면 모든 항목이 케이스 4로 판정되어 restore가 "다른 기기가
+    삭제했습니다"라는 거짓 문구를 띄운다. 이 프로젝트가 이미 한 번 고친 거짓 문구다.
+
+    실패하면 임시 파일을 지운다 — 레포 디렉토리에 남으면 `git add -A`가 그것을 커밋한다.
+
+    직렬화 옵션은 fingerprint()와 맞춰져 있다(sort_keys, ensure_ascii=False).
+    두 어댑터가 각자 이 함수를 복사하면 다음 수정이 한쪽에만 반영된다.
+    """
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, sort_keys=True, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # recognize(obj) -> mapping | None

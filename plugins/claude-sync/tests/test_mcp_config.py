@@ -814,3 +814,18 @@ def test_version_at_or_below_current_is_recognized(version, tmp_path):
     path.write_text(json.dumps({"version": version, "servers": {"a": {"command": "a"}}}),
                     encoding="utf-8")
     assert mc.load_backup(str(path)) == {"a": {"command": "a"}}
+
+
+def test_dump_backup_is_atomic(tmp_path, monkeypatch):
+    """어댑터가 코어의 원자적 writer를 거쳐야 한다 — 두 벌이 되면 다음 수정이 한쪽만 간다."""
+    path = str(tmp_path / mc.BACKUP_RELPATH)
+    mc.dump_backup({"x": {"command": "a"}}, path)
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mc.ks.json, "dump", boom)
+    with pytest.raises(OSError):
+        mc.dump_backup({"y": {"command": "b"}}, path)
+    assert mc.load_backup(path) == {"x": {"command": "a"}}
+    assert not os.path.exists(path + ".tmp")

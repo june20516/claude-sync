@@ -10,7 +10,7 @@ backup/status/restore는 이 모듈만 통해 MCP를 다룬다(파서 드리프�
 복원 가능성(restorable)·비밀 키 목록(secret_keys).
 """
 import copy
-import json          # read_local_servers·dump_backup이 여전히 쓴다. 지우지 말 것
+import json          # read_local_servers가 여전히 쓴다. 지우지 말 것
 import os
 import re
 
@@ -172,11 +172,13 @@ def load_backup(path):
 
 
 def dump_backup(servers, path):
-    """v2 형식으로 저장한다. sort_keys로 git diff를 안정화한다."""
+    """v2 형식으로 저장한다. sort_keys로 git diff를 안정화한다.
+
+    코어의 원자적 writer를 쓴다 — 쓰기 도중 실패가 레포 파일을 잘린 채로 남기면
+    다음 백업이 그것을 "서버 0개"로 읽어 전부 케이스 4로 판정한다.
+    """
     payload = {"version": SCHEMA_VERSION, "scope": "user", "servers": servers}
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, sort_keys=True, ensure_ascii=False)
-        f.write("\n")
+    ks.dump_json(payload, path)
 
 
 def same(a, b):

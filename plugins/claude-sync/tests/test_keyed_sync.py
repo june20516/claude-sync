@@ -713,3 +713,57 @@ def test_mcp_adapter_passes_one_recognize_hook_to_all_three(tmp_path, monkeypatc
 
     assert len(seen) == 3
     assert len({id(hook) for hook in seen}) == 1
+
+
+def test_dump_json_leaves_old_file_intact_when_write_fails(tmp_path, monkeypatch):
+    """쓰기 도중 실패해도 이전 내용이 온전해야 한다.
+
+    open(path, "w")는 truncate가 먼저 일어난다. 잘린 파일은 다음 load_backup에서
+    {}로 degrade하고, 그러면 모든 항목이 케이스 4로 판정되어 restore가
+    "다른 기기가 삭제했습니다"라는 거짓 문구를 띄운다.
+    """
+    path = str(tmp_path / "x.json")
+    ks.dump_json({"a": 1}, path)
+
+    def boom(*args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(ks.json, "dump", boom)
+    with pytest.raises(OSError):
+        ks.dump_json({"b": 2}, path)
+    with open(path, encoding="utf-8") as f:
+        assert json.load(f) == {"a": 1}
+
+
+def test_dump_json_removes_its_temp_file_when_write_fails(tmp_path, monkeypatch):
+    """실패가 남긴 .tmp를 지운다 — 레포 디렉토리에 남으면 `git add -A`가 커밋한다."""
+    path = str(tmp_path / "x.json")
+
+    def boom(*args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(ks.json, "dump", boom)
+    with pytest.raises(OSError):
+        ks.dump_json({"b": 2}, path)
+    assert os.listdir(str(tmp_path)) == []
+
+
+def test_dump_json_writes_the_same_bytes_as_before(tmp_path):
+    """직렬화 옵션은 바뀌지 않는다 — 지문 비교와 디스크 표현의 일치가 계약이다."""
+    path = str(tmp_path / "x.json")
+    ks.dump_json({"b": 1, "a": {"ko": "한글"}}, path)
+    with open(path, encoding="utf-8") as f:
+        assert f.read() == '{\n  "a": {\n    "ko": "한글"\n  },\n  "b": 1\n}\n'
+
+
+def test_dump_json_removes_its_temp_file_on_non_oserror_failure(tmp_path):
+    """OSError가 아닌 실패(직렬화 불가능한 값)도 .tmp를 지워야 한다.
+
+    payload에 set처럼 JSON이 못 담는 값이 섞이면 json.dump가 TypeError를 던진다.
+    except를 OSError로 좁히면 이 경로에서 정리 코드가 아예 실행되지 않아 .tmp가
+    레포 디렉토리에 남고, 다음 `git add -A`가 그것을 커밋한다.
+    """
+    path = str(tmp_path / "x.json")
+    with pytest.raises(TypeError):
+        ks.dump_json({"b": {1, 2}}, path)
+    assert os.listdir(str(tmp_path)) == []

@@ -1,3 +1,7 @@
+import os
+
+import pytest
+
 import sync_state as ss
 
 
@@ -113,3 +117,22 @@ def test_iter_synced_relpaths(tmp_path):
     (root / "settings.json").write_text("{}")  # 대상 아님
     got = set(ss.iter_synced_relpaths(str(root)))
     assert got == {"agents/a.md", "skills/s/SKILL.md", "CLAUDE.md"}
+
+
+def test_write_base_leaves_old_blob_intact_when_write_fails(tmp_path, monkeypatch):
+    """base 블롭도 같다 — 잘린 base는 parse_base가 None으로 읽어 합집합 degrade를 부른다."""
+    base_dir = str(tmp_path / "base")
+    ss.write_base("plugins.json", b'{"version": 2}', base_dir=base_dir)
+    real_open = open
+
+    def fail_on_tmp(path, *args, **kwargs):
+        if str(path).endswith(".tmp"):
+            raise OSError("disk full")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", fail_on_tmp)
+    with pytest.raises(OSError):
+        ss.write_base("plugins.json", b"truncated", base_dir=base_dir)
+    monkeypatch.undo()
+    assert ss.read_base("plugins.json", base_dir=base_dir) == b'{"version": 2}'
+    assert os.listdir(base_dir) == ["plugins.json"]
