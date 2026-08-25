@@ -55,6 +55,12 @@ def apply_base(backup_path, staging_dir, choices, claude_json_path=None, base_di
     override가 없으면 두 종류의 "유지"가 "나중에"와 구별되지 않아 고정점에 도달하지
     못한다(7.4·7.7). 반대로 "레포 값 채택"과 "제거"에는 override가 없다 —
     next_base가 이미 하는 일을 중복하지 않는 것이 규칙이다.
+
+    **이 함수는 .tmp+rename 규칙에서 제외된다.** 그 규칙은 "레포 쓰기가 성공한 뒤에
+    rename"인데 apply-base에는 **레포 쓰기가 없다.** 그대로 적용하면 rename 트리거가
+    영영 오지 않아 SKILL.md의 게이트가 언제나 거짓이 되고, restore 경로의 base가
+    전혀 전진하지 않는다 — keep_stale/keep_local 선택이 전부 무효가 된다.
+    여기서는 **파일 존재가 곧 "계산 성공"**이다(spec 9.3.7).
     """
     local = mc.read_local_servers(claude_json_path)
     repo = mc.load_backup(backup_path)

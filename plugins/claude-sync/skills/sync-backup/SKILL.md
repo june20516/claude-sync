@@ -305,6 +305,8 @@ cat /tmp/claude-sync-mcp.json
 
 `repo_ahead.present`(케이스 8)에 케이스 2와 같은 문구("restore를 실행하면 반영됩니다")를 쓰면 안 된다. restore는 케이스 8을 자동 반영하지 않으므로 그 안내는 사실이 아니고, 사용자가 빠져나갈 수 없는 루프에 갇힌다. 실제로 필요한 것은 사용자의 선택이다.
 
+`base_staging`이 `"failed"`이면 **레포는 갱신됐지만 base 스테이징이 실패한 것이다.** `base_staging_reason`을 그대로 보여준다. 이 실행에서는 base가 전진하지 않으므로 다음 백업이 같은 내용을 다시 계산해 복구한다. **`skipped`로 오해하지 않는다** — `skipped`의 표준 문구는 "레포 파일은 손대지 않았다"인데 이 경로에서는 그것이 거짓이다.
+
 충돌이 있어도 백업 전체를 막지 않는다. 해당 서버만 건너뛴다.
 
 ### 7. sync-metadata.json 생성
@@ -394,7 +396,8 @@ else
 fi
 
 # MCP base: 레포가 실제로 그 내용을 갖게 된 뒤에만 기록한다.
-# 스테이징 파일은 collect_mcp.py가 status=ok일 때만 쓰므로, 파일 존재가 곧 'skip 아님'이다.
+# 스테이징 최종 파일은 collect_mcp.py가 레포 쓰기에 성공한 뒤 rename으로 만든다.
+# 따라서 파일 존재가 곧 "레포까지 반영됨"이다 — status 값을 다시 읽을 필요가 없다.
 if [ "$REPO_HAS_CONTENT" = "1" ] && [ -f "$MCP_STAGING/mcp-servers.json" ]; then
   python3 "$SYNC_SCRIPTS/update_base.py" "$MCP_STAGING" mcp-servers.json
   echo "MCP base 갱신됨"

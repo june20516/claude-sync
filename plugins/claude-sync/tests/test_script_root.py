@@ -576,3 +576,22 @@ def test_marketplace_update_always_precedes_plugin_update(skill):
         "%s: 짝지어진 %d회 vs plugin update %d회 — 순서가 뒤바뀌었거나 떨어져 있다"
         % (skill, paired, lone)
     )
+
+
+def test_backup_reports_staging_failure_to_the_user():
+    """spec 7.4는 "보고한다"고 썼다. 반환만 하고 아무도 읽지 않으면 보고가 아니다."""
+    sec = section("sync-backup", "6. mcp-servers.json 생성 (키 단위 3-way 병합)")
+    assert "`base_staging`" in sec
+    assert "`base_staging_reason`" in sec
+
+
+def test_backup_base_gate_cites_the_rename_contract_not_the_old_reason():
+    """게이트가 참인 근거는 rename 계약이다 — "status=ok일 때만 쓴다"가 아니다.
+
+    옛 근거는 거짓이었다: 수집 스크립트가 스테이징을 레포보다 먼저 썼으므로
+    레포 쓰기가 실패해도 파일이 남았다. 근거를 갱신하지 않으면 다음 사람이
+    그 문장을 믿고 rename을 지운다.
+    """
+    text = read_skill("sync-backup")
+    assert "status=ok일 때만 쓰므로" not in text
+    assert "rename" in section("sync-backup", "10. 커밋 & 푸시")

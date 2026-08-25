@@ -31,6 +31,11 @@ def collect(repo_path, staging_dir, claude_json_path=None, base_dir=ss.BASE_DIR)
     SKILL.md의 base 갱신 게이트가 그 파일의 존재만 보고 판단한다.
     먼저 최종 이름으로 쓰면 레포 쓰기가 실패해도 게이트가 통과해 base가 전진하고,
     다음 백업이 이 기기 자신의 서버를 케이스 4로 오독한다.
+
+    **전제: 호출부가 실행마다 스테이징 디렉토리를 한 번 비운다**(SKILL.md의 rm -rf).
+    os.replace가 실패하면 <rel>.tmp가 남는데, 그것이 무해한 이유가 이 전제다.
+    spec 7.4의 배선이 스테이징 디렉토리를 플러그인 수집과 공유하므로 이 성질이
+    유지되려면 rm -rf가 **수집 단계들보다 앞에서 딱 한 번** 실행되어야 한다.
     """
     local = mc.read_local_servers(claude_json_path)
     repo_file = os.path.join(repo_path, mc.BACKUP_RELPATH)
@@ -62,8 +67,10 @@ def collect(repo_path, staging_dir, claude_json_path=None, base_dir=ss.BASE_DIR)
         os.replace(tmp, staged)
     except OSError as e:
         # 레포는 이미 갱신됐다. skipped로 접으면 "레포를 손대지 않았다"가 거짓이 된다.
+        # 키 이름을 reason과 가른다 — reason은 skipped 경로의 필드다(SKILL.md:292).
         out["base_staging"] = "failed"
-        out["reason"] = "레포는 갱신됐으나 base 스테이징에 실패했다: %s (다음 백업이 복구한다)" % e
+        out["base_staging_reason"] = (
+            "레포는 갱신됐으나 base 스테이징에 실패했다: %s (다음 백업이 복구한다)" % e)
     return out
 
 

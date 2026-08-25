@@ -521,3 +521,33 @@ def test_compare_cli_skips_when_normalize_drops_a_key(tmp_path, monkeypatch, cap
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "skipped"
     assert out["reason"]
+
+
+def test_collect_names_the_staging_failure_reason_apart_from_skipped(tmp_path, monkeypatch):
+    """status=ok payload에 `reason`을 실으면 skipped 경로의 필드 이름과 충돌한다.
+
+    SKILL.md:292가 `reason`을 "레포 파일은 손대지 않았다"의 사유로 문서화했다.
+    같은 이름을 ok 경로에 쓰면 스킬이 두 상태를 한 이름으로 읽는다.
+    """
+    local = write_local(tmp_path, {"x": A})
+    repo = write_repo(tmp_path, None)
+    base_dir = write_base_blob(tmp_path, None)
+    staging = str(tmp_path / "staging")
+    staged = os.path.join(staging, mc.BACKUP_RELPATH)
+    real_replace = os.replace
+
+    def fail_on_staging(src, dst):
+        # repo_file도 mc.BACKUP_RELPATH로 끝나므로 endswith가 아니라 정확히
+        # staged 경로만 매치한다 — 아니면 레포 쓰기 자체가 먼저 걸려
+        # collect()가 이 함수의 try/except에 닿기도 전에 예외로 죽는다.
+        if str(dst) == staged:
+            raise OSError("rename failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(collect_mcp.os, "replace", fail_on_staging)
+    out = collect_mcp.collect(repo, staging,
+                              claude_json_path=local, base_dir=base_dir)
+    assert out["status"] == "ok"
+    assert out["base_staging"] == "failed"
+    assert "reason" not in out
+    assert "다음 백업이 복구한다" in out["base_staging_reason"]
