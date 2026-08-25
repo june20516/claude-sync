@@ -1,9 +1,10 @@
+import ast
 import json
 import os
-import re
 
 import pytest
 
+import keyed_sync as ks
 import mcp_config as mc
 
 SERVER_A = {"command": "a"}
@@ -604,6 +605,35 @@ def test_restore_plan_without_base_degrades_to_both_changed_and_local_only():
     assert plan["local_stale"] == []
 
 
+def test_restore_plan_exposes_exactly_nine_buckets():
+    """held 축은 MCP 공개 계약이 아니다 — plan_mcp가 이 dict를 사용자 JSON에 펼친다.
+
+    keyed_sync.restore_plan은 value_held·action_held를 포함해 11개 버킷을 낸다.
+    Task 8이 mcp_config.restore_plan을 keyed_sync 위임으로 바꿀 때 그 두 버킷을
+    걸러내지 않으면 plan_mcp.py의 출력 JSON에 held 축이 새로 나타나는데, 이 테스트가
+    없으면 아무도 못 잡는다(Task 7 리뷰에서 화이트리스트 없이 위임을 시뮬레이션했더니
+    기존 게이트가 전부 통과했다).
+    """
+    assert sorted(mc.restore_plan({}, {}, None)) == [
+        "add", "both_changed", "in_sync", "local_ahead", "local_only",
+        "local_stale", "needs_secret", "repo_ahead", "unrestorable"]
+
+
+def test_adapter_whitelists_track_every_core_bucket():
+    """코어가 버킷을 추가하면 여기서 걸린다. 화이트리스트는 조용히 빠뜨리기 때문이다.
+
+    빠뜨리면 그 버킷으로 분류된 항목이 사용자 JSON에서 통째로 사라진다 —
+    9버킷 게이트는 '있는 것'만 보므로 이것을 못 잡는다(실측: 443 passed).
+    """
+    assert set(ks.BUCKETS) - set(mc.restore_plan({}, {}, None)) == {"value_held", "action_held"}
+    core_diff = set(ks.diff({}, {}, normalize=mc.redact, hold=ks.no_hold))
+    assert core_diff - set(mc.diff({}, {})) == {"held"}
+    core_merge = set(ks.merge({}, {}, None, normalize=mc.redact, hold=ks.no_hold))
+    adapter_merge = set(mc.merge({}, {}, None))
+    assert core_merge - adapter_merge == {"held", "merged"}
+    assert adapter_merge - core_merge == {"servers"}   # merged→servers 개명을 기계로 고정한다
+
+
 FUTURE_V3 = b'{"version": 3, "scope": "user", "entries": {"x": {"command": "a"}}}'
 
 
@@ -651,7 +681,52 @@ def test_parse_backup_degrades_higher_schema_version():
 
 PLUGIN_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 PROD_DIRS = (os.path.join(PLUGIN_ROOT, "lib"), os.path.join(PLUGIN_ROOT, "skills"))
-PARSE_BACKUP_CALL = re.compile(r"\b(?:mc|mcp_config)\.parse_backup\s*\(")
+
+
+class ParseBackupCallFinder(ast.NodeVisitor):
+    """parse_backup을 부르는 위치를 모으되, 같은 이름의 공개 정의부 안은 세지 않는다.
+
+    잡는 형태 세 가지 —
+      ks.parse_backup(...) / mc.parse_backup(...) 등 속성 호출
+      parse_backup(...)  from-import로 들여온 이름 호출
+      getattr(어떤것, "parse_backup")(...)  문자열 스캔을 피해 가는 동적 조회
+    모듈 최상위 호출도 offender다(감싸는 함수가 없으므로 예외 조건을 만족하지 못한다).
+    클래스 본문도 스코프로 센다 — 클래스 안의 parse_backup은 모듈 최상위 공개 함수가
+    아니라 메서드이고, 그 뒤에 읽기 경로를 숨길 수 있기 때문이다.
+    """
+
+    def __init__(self):
+        self.scope = []          # 지금 감싸고 있는 함수·클래스 이름들(바깥→안쪽)
+        self.offenders = []
+
+    def visit_FunctionDef(self, node):
+        self.scope.append(node.name)
+        self.generic_visit(node)
+        self.scope.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+    visit_ClassDef = visit_FunctionDef
+
+    def visit_Call(self, node):
+        if self._calls_parse_backup(node) and not self._is_public_delegation():
+            self.offenders.append(node.lineno)
+        self.generic_visit(node)
+
+    def _is_public_delegation(self):
+        """모듈 최상위의 parse_backup 정의부인가. 중첩 def도 메서드도 예외가 아니다."""
+        return self.scope == ["parse_backup"]
+
+    @staticmethod
+    def _calls_parse_backup(node):
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "parse_backup":
+            return True
+        if isinstance(func, ast.Name) and func.id == "parse_backup":
+            return True
+        return (isinstance(func, ast.Name) and func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value == "parse_backup")
 
 
 def test_no_production_code_calls_parse_backup():
@@ -661,17 +736,33 @@ def test_no_production_code_calls_parse_backup():
     parse_backup만 알아볼 수 없는 문서를 {}로 degrade하므로, 게이트가 한 곳에 있어도
     이 함수를 통과하는 경로만은 fail-open이다. **프로덕션에 호출부가 하나도 없다는
     사실 자체가 계약이다** — 새 호출부가 생기면 여기서 걸린다.
+
+    단 하나의 예외는 어댑터의 공개 parse_backup 정의부다. 코어에 같은 이름으로 얇게
+    위임하는 그 한 줄까지 막으면 어댑터는 위임 대신 관대한 해석을 스스로 재구현해야
+    하고, 그 중복이야말로 이 추출이 없애려던 것이다. 그 정의부는 읽기 경로가 아니다 —
+    프로덕션에 호출부가 없다는 사실을 이 테스트가 계속 보장하므로, 아무도 그 경로를
+    타지 않는다.
+
+    **문자열 스캔이 아니라 AST로 보는 이유**: 정규식은 "어디에 있는 호출인지"를 모른다.
+    호출부와 위임 정의부를 구별하지 못해 정상 위임을 거짓 양성으로 막았고, 그 압박이
+    getattr 난독화를 부른다 — 그러면 가드가 진짜 오용까지 놓친다. AST는 감싸는 함수를
+    보므로 둘을 가르고, 동적 조회 형태도 같이 잡는다. **정규식으로 되돌리지 말 것.**
     """
     offenders = []
     for root_dir in PROD_DIRS:
         for root, _, files in os.walk(root_dir):
-            for name in files:
+            for name in sorted(files):
                 if not name.endswith(".py"):
                     continue
                 path = os.path.join(root, name)
                 with open(path, encoding="utf-8") as f:
-                    if PARSE_BACKUP_CALL.search(f.read()):
-                        offenders.append(os.path.relpath(path, PLUGIN_ROOT))
+                    tree = ast.parse(f.read(), filename=path)
+                finder = ParseBackupCallFinder()
+                finder.visit(tree)
+                offenders.extend(
+                    "%s:%d" % (os.path.relpath(path, PLUGIN_ROOT), line)
+                    for line in finder.offenders
+                )
     assert not offenders, (
         "parse_backup 호출부가 생겼다: %s — 레포는 load_backup, base는 parse_base다"
         % sorted(offenders)

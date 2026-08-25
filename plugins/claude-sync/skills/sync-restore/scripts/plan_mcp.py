@@ -102,6 +102,12 @@ def main():
         sys.exit(1)
     try:
         out = runner()
+    # 세 스크립트(collect_mcp·compare_mcp·plan_mcp)가 같은 튜플을 쓴다. 갈리면
+    # 한쪽만 traceback으로 죽는다.
+    # ValueError를 잡는 이유 둘: 선택 결과 JSON이 깨졌을 때(read_choices,
+    # json.JSONDecodeError도 ValueError의 하위다)와, 코어(keyed_sync)가 normalize 계약
+    # 위반 — 훅이 키 집합을 바꾼 경우 — 을 ValueError로 던질 때다. 어느 쪽도 restore
+    # 흐름 전체를 traceback으로 세우지 않는다.
     except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema, OSError, ValueError) as e:
         out = {"status": "skipped", "reason": str(e)}
         print("MCP 단계 건너뜀: %s" % e, file=sys.stderr)

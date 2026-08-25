@@ -63,7 +63,7 @@ def _load_json(path):
     박아두면 호출부가 되돌릴 수 없고, load_metadata 쪽에서 fail-open이 된다.
     셋을 그대로 돌려주고 해석은 각 함수가 한다.
     깨진 JSON만 None으로 degrade한다 — 내용의 문제이고 다음 백업이 되돌린다.
-    (mcp_config._BROKEN이 쓰는 out-of-band 센티널과 같은 이유다.)
+    (keyed_sync.BROKEN이 쓰는 out-of-band 센티널과 같은 이유다.)
     """
     try:
         with open(path, "rb") as f:
