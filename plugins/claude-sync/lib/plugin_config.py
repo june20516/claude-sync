@@ -29,6 +29,7 @@ PermissionError 등 그 외 OSError는 네 읽기 함수 모두에서 **전파�
 감싸면 "읽을 수 없음"이 "0개"나 "보류 없음"으로 접힌다.
 """
 import copy
+import hashlib
 import json
 import os
 
@@ -38,7 +39,8 @@ SCHEMA_VERSION = 2
 BACKUP_RELPATH = "plugins.json"
 SECTIONS = ("enabledPlugins", "extraKnownMarketplaces", "pluginConfigs")
 
-# 7.2 정규화(pluginConfigs 비밀 마스킹)가 쓴다 — Task 5에서 사용된다. 지금은 값만 선언한다.
+# pluginConfigs 정규화가 options 값을 이것으로 덮는다(7.2). 키 이름은 보존한다 —
+# 레포 파일만 보고 "복원할 때 어떤 값을 되물어야 하는지"를 알아야 하기 때문이다(6.1).
 SENTINEL = "<REDACTED>"
 
 # 별칭은 같은 뜻이다. 둘 다 있으면 앞의 것을 채택한다 — CLI와 같은 규칙이고,
@@ -384,3 +386,226 @@ def dump_backup(sections, path):
                 " 이 파일을 알아보지 못한다" % (path, name, type(value).__name__))
         payload[name] = value
     ks.dump_json(payload, path)
+
+
+# ------------------------------------------------------- 정규화·비밀 키 (6.1, 7.2)
+
+def _identity(mapping):
+    """enabledPlugins의 정규화 — 값을 좁히지 않는다.
+
+    값 스키마는 union([array, boolean, object])이고 버전 제약 표현이 실재한다.
+    bool로 좁히면 데이터를 파괴한다(G5). deepcopy로 돌려주는 것은 호출부가 결과를
+    다듬어도 원본 설정이 오염되지 않게 하기 위해서다.
+    """
+    return copy.deepcopy(dict(mapping))
+
+
+def _drop_auto_update(marketplaces):
+    """extraKnownMarketplaces의 정규화 — autoUpdate 필드를 제거한다 (7.2).
+
+    값에는 실재하지만 `marketplace add`에 이를 설정하는 옵션이 없다(실측). 비교에 넣으면
+    한 기기가 켜고 다른 기기가 껐을 때 **수렴시킬 CLI 수단이 없어** 영구 보고된다.
+    **필드 제거이지 키 제거가 아니므로** 값 층위에서 안전하다 — 코어의 _normalized 가드를
+    통과한다.
+    """
+    out = {}
+    for name, value in marketplaces.items():
+        if not isinstance(value, dict):
+            out[name] = copy.deepcopy(value)
+            continue
+        new = copy.deepcopy(value)
+        new.pop("autoUpdate", None)
+        out[name] = new
+    return out
+
+
+def _redact_configs(configs):
+    """pluginConfigs의 정규화 — options의 **값만** 마스킹하고 키 이름은 보존한다 (6.1).
+
+    키 이름을 보존해야 복원 시 레포 파일만 보고 "어떤 값을 물어야 하는지"를 알 수 있다.
+    options가 객체가 아니면 필드 전체를 문자열 SENTINEL로 바꾼다 — 타입이 dict에서
+    str로 바뀌므로 secret_keys는 그 항목에 대해 키를 하나도 묻지 않는다.
+    이미 마스킹된 입력에 다시 적용해도 결과가 같다(멱등) — 로컬(평문)과 레포(마스킹됨)를
+    수렴시키는 전제다.
+    """
+    out = {}
+    for plugin_id, cfg in configs.items():
+        if not isinstance(cfg, dict):
+            out[plugin_id] = copy.deepcopy(cfg)
+            continue
+        new = copy.deepcopy(cfg)
+        if "options" in new:
+            options = new["options"]
+            new["options"] = ({k: SENTINEL for k in options}
+                              if isinstance(options, dict) else SENTINEL)
+        out[plugin_id] = new
+    return out
+
+
+SECTION_NORMALIZE = {
+    "enabledPlugins": _identity,
+    "extraKnownMarketplaces": _drop_auto_update,
+    "pluginConfigs": _redact_configs,
+}
+
+
+def _config_secret_keys(cfg):
+    """복원 시 사용자에게 값을 물어야 하는 option 키 이름 목록 (6.1·6.2).
+
+    비어 있으면 물어볼 것이 없다 — add 버킷으로 간다.
+    """
+    if not isinstance(cfg, dict):
+        return []
+    options = cfg.get("options")
+    return sorted(options) if isinstance(options, dict) else []
+
+
+def _no_secrets(value):
+    """enabledPlugins·extraKnownMarketplaces에는 되물을 비밀이 없다.
+
+    여기서 비어 있지 않은 목록을 돌려주면 정상 항목이 needs_secret 버킷으로 새어 나가
+    설치되지 않는다.
+    """
+    return []
+
+
+SECTION_SECRET_KEYS = {
+    "enabledPlugins": _no_secrets,
+    "extraKnownMarketplaces": _no_secrets,
+    "pluginConfigs": _config_secret_keys,
+}
+
+
+# ------------------------------------------------------------------ 보류 (7.3)
+
+def value_fingerprint(value):
+    """정규화된 레포 값의 sha256 지문. plugins-held.json에 저장되는 형태다 (6.4).
+
+    코어와 **같은 정규 직렬화**(ks.fingerprint)를 쓴다 — 여기서 옵션을 다시 적으면
+    디스크 표현과 지문이 어긋난다.
+    """
+    return hashlib.sha256(ks.fingerprint(value).encode("utf-8")).hexdigest()
+
+
+def marketplace_of(plugin_id):
+    """'<plugin>@<marketplace>'의 마켓플레이스 부분. 그 형태가 아니면 None."""
+    if not isinstance(plugin_id, str) or plugin_id.count("@") != 1:
+        return None
+    name, _, marketplace = plugin_id.partition("@")
+    return marketplace if name and marketplace else None
+
+
+def _source_kind(value):
+    """마켓플레이스 값의 source.source. 알아볼 수 없으면 None."""
+    if not isinstance(value, dict):
+        return None
+    source = value.get("source")
+    if not isinstance(source, dict):
+        return None
+    kind = source.get("source")
+    return kind if isinstance(kind, str) else None
+
+
+def directory_marketplaces(local_marketplaces, repo_marketplaces):
+    """로컬 디렉토리에서 등록한 마켓플레이스 이름 집합 (H2).
+
+    **양쪽을 다 본다.** 로컬 쪽은 생산 측 방어(기기 A가 애초에 올리지 않는다)이고,
+    레포 쪽은 이미 실린 옛 항목의 소비 측 방어다(기기 B에는 등록할 소스가 없다).
+    """
+    names = set()
+    for mapping in (local_marketplaces, repo_marketplaces):
+        for name, value in mapping.items():
+            if _source_kind(value) == "directory":
+                names.add(name)
+    return frozenset(names)
+
+
+def _make_hold(section, *, auto_ids, directory_names, held_configs, released):
+    """섹션 하나의 hold 훅을 만든다. 코어가 (local, repo)로 부른다.
+
+    **좌우 비대칭이다** — H3·H4는 레포 값을 보고, H1·H2는 로컬 쪽 사실(auto 플래그,
+    마켓플레이스 출처)을 본다. 인자 순서가 뒤집히면 예외도 빈 결과도 나지 않고
+    판정이 조용히 반대로 선다.
+
+    **입력은 이미 정규화돼 있다** — H4의 지문이 마스킹된 레포 값으로 계산되는 근거다.
+    """
+    def hold(local, repo):
+        value, action = set(), set()
+        for key in set(local) | set(repo):
+            if section != "extraKnownMarketplaces" and key in auto_ids:      # H1
+                value.add(key)
+                action.add(key)
+            owner = key if section == "extraKnownMarketplaces" else marketplace_of(key)
+            if owner is not None and owner in directory_names:               # H2
+                value.add(key)
+                action.add(key)
+            if (section == "enabledPlugins" and key in repo                  # H3
+                    and not isinstance(repo[key], bool) and key not in released):
+                value.add(key)                    # 행동 보류가 아니다 — 설치한다
+            if (section == "pluginConfigs" and key in repo                   # H4
+                    and held_configs.get(key) == value_fingerprint(repo[key])):
+                value.add(key)
+                action.add(key)
+        return {"value": value, "action": action}
+    return hold
+
+
+HELD_KINDS = {
+    "enabledPlugins": ("auto", "local_marketplace", "extended_value"),
+    "extraKnownMarketplaces": ("local_marketplace",),
+    "pluginConfigs": ("auto", "local_marketplace", "declined"),
+}
+
+
+def held_kinds(section, keys, *, auto_ids, directory_names, held_configs, repo_norm):
+    """보류 키를 종류별로 가른다. status·backup이 종류별 문구로 보고하기 위해서다.
+
+    한 키가 여러 종류에 걸칠 수 있으므로 첫 종류에서 멈추지 않는다.
+    **어느 종류에도 걸리지 않는 키가 있으면 ValueError다** — 조용히 빠뜨리면 그 키가
+    사용자 보고에서 통째로 사라진다(불변식 6). 스크립트가 그 섹션을 skipped로 접는다.
+    """
+    kinds = {name: [] for name in HELD_KINDS[section]}
+    for key in sorted(keys):
+        owner = key if section == "extraKnownMarketplaces" else marketplace_of(key)
+        if "auto" in kinds and key in auto_ids:
+            kinds["auto"].append(key)
+        if owner is not None and owner in directory_names:
+            kinds["local_marketplace"].append(key)
+        if ("extended_value" in kinds and key in repo_norm
+                and not isinstance(repo_norm[key], bool)):
+            kinds["extended_value"].append(key)
+        if ("declined" in kinds and key in repo_norm
+                and held_configs.get(key) == value_fingerprint(repo_norm[key])):
+            kinds["declined"].append(key)
+    covered = {key for names in kinds.values() for key in names}
+    missing = sorted(set(keys) - covered)
+    if missing:
+        raise ValueError("%s의 보류 사유를 분류할 수 없다: %s" % (section, missing))
+    return kinds
+
+
+def build_hooks(local, repo, *, auto_ids, held_state):
+    """섹션별 훅 묶음 {섹션: {"normalize":..., "hold":...}}.
+
+    **레포를 읽은 뒤에 불러야 한다**(spec 9.1.1의 4단계 > 2단계). H3는 "레포 값이
+    불리언이 아님", H4는 "지문이 현재 레포 값과 일치"이므로 레포 없이는 둘 다 계산할 수
+    없고, 순서를 뒤집으면 둘 다 항상 빈 집합이 되어 버전 제약이 true로 덮이고 6.4의
+    탈출구가 무증상으로 죽는다.
+
+    훅 넷은 섹션마다 다른 함수다 — 자기 섹션 밖의 입력(auto 집합, **다른 섹션**인
+    extraKnownMarketplaces의 출처, 보류 파일)을 필요로 하기 때문이다. 코어가 보는
+    계약은 hold(local, repo)와 normalize(mapping) 둘뿐이고 나머지는 여기서 닫는다.
+    """
+    directory_names = directory_marketplaces(
+        local.get("extraKnownMarketplaces", {}), repo.get("extraKnownMarketplaces", {}))
+    held_configs = dict(held_state.get("pluginConfigs", {}))
+    released = frozenset(held_state.get("release", {}).get("enabledPlugins", []))
+    return {
+        section: {
+            "normalize": SECTION_NORMALIZE[section],
+            "hold": _make_hold(section, auto_ids=auto_ids,
+                               directory_names=directory_names,
+                               held_configs=held_configs, released=released),
+        }
+        for section in SECTIONS
+    }

@@ -7,6 +7,7 @@ import os
 
 import pytest
 
+import keyed_sync as ks
 import plugin_config as pc
 from marks import requires_permission_bits
 
@@ -413,3 +414,255 @@ def test_dump_backup_round_trips_through_load(tmp_path):
            "pluginConfigs": {"p@m": {"options": {"k": "v"}}}}
     pc.dump_backup(doc, path)
     assert pc.load_backup(path) == doc
+
+
+# --- 7.2 섹션별 정규화 ---
+
+def test_enabled_plugins_normalize_is_identity_on_all_three_value_types():
+    """값을 좁히지 않는다 — bool로 좁히면 확장 포맷을 파괴한다 (G5)."""
+    norm = pc.SECTION_NORMALIZE["enabledPlugins"]
+    values = {"a@m": True, "b@m": ["1.0.0"], "c@m": {"version": "1.0.0"}}
+    assert norm(values) == values
+
+
+def test_marketplace_normalize_drops_auto_update_field_only():
+    """autoUpdate는 marketplace add로 설정할 수 없어 수렴시킬 CLI 수단이 없다 (7.2).
+
+    필드 제거이지 키 제거가 아니다 — 값 층위에서 안전하다.
+    """
+    norm = pc.SECTION_NORMALIZE["extraKnownMarketplaces"]
+    out = norm({"m": {"source": {"source": "github", "repo": "a/b"}, "autoUpdate": True}})
+    assert out == {"m": {"source": {"source": "github", "repo": "a/b"}}}
+
+
+def test_plugin_configs_normalize_masks_values_and_keeps_key_names():
+    """키 이름을 보존해야 레포 파일만 보고 "어떤 값을 물어야 하는지"를 안다 (6.1)."""
+    norm = pc.SECTION_NORMALIZE["pluginConfigs"]
+    out = norm({"p@m": {"options": {"apiKey": "sk-real", "region": "kr"}, "other": 1}})
+    assert out == {"p@m": {"options": {"apiKey": pc.SENTINEL, "region": pc.SENTINEL},
+                           "other": 1}}
+
+
+def test_plugin_configs_normalize_replaces_non_object_options_wholesale():
+    """options가 객체가 아니면 필드 전체를 문자열 SENTINEL로 바꾼다 (6.1)."""
+    norm = pc.SECTION_NORMALIZE["pluginConfigs"]
+    assert norm({"p@m": {"options": ["secret"]}}) == {"p@m": {"options": pc.SENTINEL}}
+
+
+@pytest.mark.parametrize("section", pc.SECTIONS)
+def test_every_normalize_is_idempotent_and_key_preserving(section):
+    """멱등하지 않으면 로컬(원본)과 레포(정규화됨)가 수렴하지 않는다.
+
+    코어는 키 보존만 집행하고 멱등성은 집행하지 않는다(spec 5.2) — 어댑터의 책임이다.
+    """
+    norm = pc.SECTION_NORMALIZE[section]
+    sample = {"a@m": True, "b@m": {"source": {"source": "directory", "path": "/x"},
+                                   "autoUpdate": True},
+              "c@m": {"options": {"k": "v"}}}
+    once = norm(sample)
+    assert set(once) == set(sample)
+    assert once == norm(once)
+
+
+def test_normalize_does_not_mutate_its_input():
+    """입력을 바꾸면 원본 로컬 설정이 오염되고 비밀 평문이 사라진다."""
+    original = {"p@m": {"options": {"apiKey": "sk-real"}}}
+    pc.SECTION_NORMALIZE["pluginConfigs"](original)
+    assert original == {"p@m": {"options": {"apiKey": "sk-real"}}}
+
+
+# --- 6.1·6.2 비밀 키 ---
+
+def test_secret_keys_lists_option_names_for_plugin_configs():
+    assert pc.SECTION_SECRET_KEYS["pluginConfigs"](
+        {"options": {"region": "x", "apiKey": "y"}}) == ["apiKey", "region"]
+
+
+def test_secret_keys_is_empty_when_there_is_nothing_to_ask(section=None):
+    """options가 비었거나 없으면 물어볼 것이 없다 — add 버킷으로 간다 (6.2)."""
+    ask = pc.SECTION_SECRET_KEYS["pluginConfigs"]
+    assert ask({"options": {}}) == [] and ask({}) == [] and ask("x") == []
+
+
+@pytest.mark.parametrize("section", ("enabledPlugins", "extraKnownMarketplaces"))
+def test_secret_keys_is_always_empty_for_the_other_two_sections(section):
+    """다른 섹션에 비밀이 있다고 말하면 정상 항목이 needs_secret으로 새어 나간다."""
+    assert pc.SECTION_SECRET_KEYS[section]({"options": {"k": "v"}}) == []
+
+
+# --- 7.3 보류 ---
+
+def hooks_for(local, repo, auto_ids=frozenset(), held=None):
+    return pc.build_hooks(local, repo, auto_ids=auto_ids,
+                          held_state=held or pc.EMPTY_HELD)
+
+
+def hold_of(section, local, repo, **kw):
+    """코어가 부르는 방식 그대로 — 정규화된 입력을 넘긴다."""
+    norm = pc.SECTION_NORMALIZE[section]
+    hooks = hooks_for({section: local}, {section: repo}, **kw)
+    return hooks[section]["hold"](norm(local), norm(repo))
+
+
+def test_h1_holds_auto_dependency_on_both_axes():
+    """의존성 플러그인은 값도 행동도 보류다 — 명시적 install이 auto 표식을 영구 소실시킨다."""
+    held = hold_of("enabledPlugins", {"dep@m": True}, {}, auto_ids=frozenset({"dep@m"}))
+    assert held["value"] == {"dep@m"} and held["action"] == {"dep@m"}
+
+
+def test_h1_also_holds_the_plugin_configs_entry():
+    held = hold_of("pluginConfigs", {"dep@m": {"options": {}}}, {},
+                   auto_ids=frozenset({"dep@m"}))
+    assert held["value"] == {"dep@m"} and held["action"] == {"dep@m"}
+
+
+def test_h1_does_not_hold_a_marketplace_that_shares_a_name_with_an_auto_id():
+    """auto 플래그는 플러그인의 사실이지 마켓플레이스의 사실이 아니다.
+
+    H1의 `section != "extraKnownMarketplaces"` 가드를 지우는 변조를 잡는 줄이다.
+    read_auto_ids는 id의 형태를 강제하지 않으므로 이름 충돌은 실제로 가능하고, 가드를
+    지우면 같은 이름의 마켓플레이스가 보류된다. 그런데
+    HELD_KINDS["extraKnownMarketplaces"]에는 "auto" 종류가 없어 held_kinds가 그 키를
+    분류하지 못하고 ValueError를 던져 **마켓플레이스 섹션 전체가 skipped로 접힌다.**
+    """
+    held = hold_of("extraKnownMarketplaces", {"shared": GH}, {},
+                   auto_ids=frozenset({"shared"}))
+    assert held == {"value": set(), "action": set()}
+    # 위 단정이 지키는 결과를 명시한다 — 보류됐다면 여기서 ValueError가 났을 것이다.
+    assert pc.held_kinds("extraKnownMarketplaces", [], auto_ids=frozenset({"shared"}),
+                         directory_names=frozenset(), held_configs={},
+                         repo_norm={}) == {"local_marketplace": []}
+    with pytest.raises(ValueError):
+        pc.held_kinds("extraKnownMarketplaces", ["shared"],
+                      auto_ids=frozenset({"shared"}), directory_names=frozenset(),
+                      held_configs={}, repo_norm={})
+
+
+def test_h2_holds_directory_marketplace_and_its_plugins_in_all_three_sections():
+    """마켓플레이스만 빼면 소속 플러그인이 기기 B에서 해소 불가 상태가 된다 (7.3)."""
+    local = {"enabledPlugins": {"p@mylocal": True, "q@gh": True},
+             "extraKnownMarketplaces": {"mylocal": {"source": {"source": "directory",
+                                                               "path": "/x"}},
+                                        "gh": GH},
+             "pluginConfigs": {"p@mylocal": {"options": {}}}}
+    hooks = hooks_for(local, {name: {} for name in pc.SECTIONS})
+    for section, expected in (("enabledPlugins", {"p@mylocal"}),
+                              ("extraKnownMarketplaces", {"mylocal"}),
+                              ("pluginConfigs", {"p@mylocal"})):
+        norm = pc.SECTION_NORMALIZE[section]
+        held = hooks[section]["hold"](norm(local[section]), norm({}))
+        assert held["value"] == expected and held["action"] == expected
+
+
+def test_h2_sees_directory_source_on_the_repo_side_too():
+    """이미 레포에 실린 옛 directory 항목도 보류한다 — 등록할 소스가 이 기기에 없다."""
+    repo = {"extraKnownMarketplaces": {"theirs": {"source": {"source": "directory",
+                                                             "path": "/x"}}},
+            "enabledPlugins": {"p@theirs": True}, "pluginConfigs": {}}
+    hooks = hooks_for({name: {} for name in pc.SECTIONS}, repo)
+    norm = pc.SECTION_NORMALIZE["enabledPlugins"]
+    assert hooks["enabledPlugins"]["hold"](norm({}), norm(repo["enabledPlugins"])) == {
+        "value": {"p@theirs"}, "action": {"p@theirs"}}
+
+
+def test_h3_holds_value_only_and_judges_by_the_repo_side():
+    """H3는 값만 보류한다 — 설치는 한다. 그리고 **레포** 값을 본다 (7.3)."""
+    held = hold_of("enabledPlugins", {"p@m": True}, {"p@m": ["1.0.0"]})
+    assert held["value"] == {"p@m"}
+    assert held["action"] == set()
+
+
+def test_h3_covers_objects_as_well_as_arrays():
+    """1차 개정은 객체만 잡았다. 새 기기에는 키가 없으므로 install이 true를 쓴다 (0.1)."""
+    assert hold_of("enabledPlugins", {}, {"p@m": {"version": "1.0.0"}})["value"] == {"p@m"}
+
+
+def test_h3_does_not_hold_when_only_the_local_side_is_extended():
+    """레포 기준이라 새 값의 등록을 막지 않는다 — 로컬 배열은 정상 push된다."""
+    assert hold_of("enabledPlugins", {"p@m": ["1.0.0"]}, {})["value"] == set()
+
+
+def test_h3_is_lifted_by_the_release_marker():
+    """7.3의 탈출구 — release에 있는 키는 H3 값 보류에서 뺀다."""
+    held = hold_of("enabledPlugins", {"p@m": True}, {"p@m": ["1.0.0"]},
+                   held={"pluginConfigs": {}, "release": {"enabledPlugins": ["p@m"]}})
+    assert held["value"] == set()
+
+
+def test_h4_holds_only_when_the_fingerprint_matches_the_masked_repo_value():
+    """지문 대상은 **레포 값(마스킹 후)**이다. 로컬 값이나 입력값을 넣으면 영영 매치되지
+    않아 탈출구가 무증상으로 죽는다 (6.4)."""
+    repo = {"delta@m": {"options": {"apiKey": "x"}}}
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo)
+    good = {"pluginConfigs": {"delta@m": pc.value_fingerprint(masked["delta@m"])},
+            "release": {"enabledPlugins": []}}
+    assert hold_of("pluginConfigs", {}, repo, held=good)["value"] == {"delta@m"}
+    stale = {"pluginConfigs": {"delta@m": "0" * 64}, "release": {"enabledPlugins": []}}
+    assert hold_of("pluginConfigs", {}, repo, held=stale)["value"] == set()
+
+
+def test_h4_holds_both_axes():
+    repo = {"delta@m": {"options": {"apiKey": "x"}}}
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo)
+    held = hold_of("pluginConfigs", {}, repo, held={
+        "pluginConfigs": {"delta@m": pc.value_fingerprint(masked["delta@m"])},
+        "release": {"enabledPlugins": []}})
+    assert held["action"] == {"delta@m"}
+
+
+def test_value_fingerprint_is_a_sha256_of_the_canonical_serialization():
+    """코어와 같은 정규 직렬화를 써야 디스크 표현과 지문이 어긋나지 않는다."""
+    import hashlib
+    value = {"options": {"b": 1, "a": 2}}
+    assert pc.value_fingerprint(value) == hashlib.sha256(
+        ks.fingerprint(value).encode("utf-8")).hexdigest()
+
+
+def test_build_hooks_gives_the_core_exactly_the_two_hook_contract():
+    """코어가 보는 계약은 hold(local, repo)와 normalize(mapping) 둘뿐이다.
+
+    자기 섹션 밖의 입력(auto_ids·다른 섹션의 출처·보류 파일)은 어댑터가 클로저로 닫는다.
+    """
+    hooks = hooks_for({name: {} for name in pc.SECTIONS},
+                      {name: {} for name in pc.SECTIONS})
+    for section in pc.SECTIONS:
+        assert set(hooks[section]) >= {"normalize", "hold"}
+        # 섹션마다 **자기** 정규화를 실어야 한다. 키가 있는지만 보면
+        # SECTION_NORMALIZE[section]을 SECTION_NORMALIZE["enabledPlugins"]로 바꾸는
+        # 변조가 통과하는데, 그러면 코어가 pluginConfigs를 _identity로 정규화해
+        # **비밀 평문이 그대로 레포에 실린다.** hold_of는 SECTION_NORMALIZE를 직접
+        # 찾아 쓰므로 이 줄이 없으면 그 변조를 잡는 단정이 하나도 없다.
+        assert hooks[section]["normalize"] is pc.SECTION_NORMALIZE[section]
+        assert hooks[section]["hold"]({}, {}) == {"value": set(), "action": set()}
+
+
+# --- 보류 종류 보고 ---
+
+def test_held_kinds_splits_by_reason_and_covers_every_key():
+    """사용자에게는 종류별 문구로 보고한다 — 한 키가 여러 종류에 걸릴 수 있다."""
+    repo = {"ext@m": ["1.0.0"], "dep@m": True}
+    kinds = pc.held_kinds("enabledPlugins", ["ext@m", "dep@m"],
+                          auto_ids=frozenset({"dep@m"}), directory_names=frozenset(),
+                          held_configs={}, repo_norm=repo)
+    assert kinds == {"auto": ["dep@m"], "local_marketplace": [], "extended_value": ["ext@m"]}
+
+
+def test_held_kinds_uses_the_section_specific_key_set():
+    """섹션마다 나올 수 있는 종류가 다르다. 화이트리스트를 기계로 고정한다."""
+    assert set(pc.held_kinds("extraKnownMarketplaces", [], auto_ids=frozenset(),
+                             directory_names=frozenset(), held_configs={},
+                             repo_norm={})) == {"local_marketplace"}
+    assert set(pc.held_kinds("pluginConfigs", [], auto_ids=frozenset(),
+                             directory_names=frozenset(), held_configs={},
+                             repo_norm={})) == {"auto", "local_marketplace", "declined"}
+
+
+def test_held_kinds_refuses_to_drop_an_unclassified_key():
+    """분류되지 않은 보류 키를 조용히 빠뜨리면 사용자 보고에서 통째로 사라진다.
+
+    불변식 6 — 조용한 fail-open 금지. 스크립트의 except 튜플이 ValueError를 잡아
+    그 섹션을 skipped로 접고 사유를 보여준다.
+    """
+    with pytest.raises(ValueError):
+        pc.held_kinds("enabledPlugins", ["ghost@m"], auto_ids=frozenset(),
+                      directory_names=frozenset(), held_configs={}, repo_norm={})
