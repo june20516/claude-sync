@@ -1,4 +1,5 @@
 """값 무관 코어의 단위 테스트. 도메인 지식은 전부 훅으로 들어온다."""
+import ast
 import json
 import os
 import re
@@ -759,6 +760,48 @@ def test_adapter_readers_open_local_files_in_binary_mode(reader, payload, tmp_pa
     path.write_bytes(b"\xef\xbb\xbf" + json.dumps(payload).encode("utf-8"))
     # 단정은 "예외가 나지 않는다" 그 자체다 — 예외가 나면 그 리더가 텍스트 모드다.
     reader(str(path))
+
+
+class OpenModeFinder(ast.NodeVisitor):
+    """소스에서 open() 호출을 찾아 바이너리 모드가 아닌 것을 모은다."""
+
+    def __init__(self):
+        self.offenders = []
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Name) and node.func.id == "open":
+            mode = node.args[1] if len(node.args) >= 2 else None
+            for kw in node.keywords:
+                if kw.arg == "mode":
+                    mode = kw.value
+            if not isinstance(mode, ast.Constant) or not isinstance(mode.value, str):
+                self.offenders.append((node.lineno, "모드가 문자열 리터럴이 아니다"))
+            elif "b" not in mode.value:
+                self.offenders.append((node.lineno, "텍스트 모드 %r" % mode.value))
+        self.generic_visit(node)
+
+
+def test_lib_opens_every_file_in_binary_mode():
+    """lib/의 모든 open()은 바이너리 모드여야 한다. 등재를 잊을 여지가 없는 소스 스캔이다.
+
+    위 BYTE_READERS 표는 **동작**으로 검증하지만 손으로 등재하는 목록이라 다음 리더가
+    붙을 때 조용히 빠진다 — RECOGNIZE_ADAPTERS가 소스 스캔 가드를 얻은 것과 같은 이유다.
+    이 가드는 리더뿐 아니라 writer(dump_bytes의 "wb")까지 덮는다.
+
+    왜 바이너리인가 — 읽기 쪽은 (a) 텍스트 모드가 로케일 인코딩에 의존하고 (b) UTF-8
+    BOM을 본문 첫 글자로 남겨 정상 문서를 "깨졌다"로 만든다. 쓰기 쪽은 원자적 writer가
+    이미 인코딩을 마친 바이트를 다루므로 "wb"가 아니면 타입부터 맞지 않는다.
+    """
+    offenders = []
+    for name in sorted(os.listdir(LIB_DIR)):
+        if not name.endswith(".py"):
+            continue
+        path = os.path.join(LIB_DIR, name)
+        with open(path, encoding="utf-8") as f:
+            finder = OpenModeFinder()
+            finder.visit(ast.parse(f.read(), filename=path))
+        offenders.extend("%s:%d %s" % (name, line, why) for line, why in finder.offenders)
+    assert offenders == [], "lib/의 open()이 바이너리 모드가 아니다: %s" % offenders
 
 
 KEYED_SYNC_IMPORT = re.compile(r"^\s*(?:import keyed_sync\b|from keyed_sync import\b)", re.M)

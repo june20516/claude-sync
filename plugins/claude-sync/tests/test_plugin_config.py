@@ -194,6 +194,39 @@ def test_read_auto_ids_rejects_higher_schema_version(tmp_path):
     assert pc.read_auto_ids(str(path)) == frozenset()
 
 
+def test_read_auto_ids_accepts_a_document_without_a_version_key(tmp_path):
+    """version 키 부재는 "주장 없음"이지 이상이 아니다 — version을 필수로 만드는 변조를 잡는다."""
+    path = tmp_path / "installed_plugins.json"
+    path.write_text(json.dumps({"plugins": {"dep@m": [{"scope": "user", "auto": True}]}}),
+                    encoding="utf-8")
+    assert pc.read_auto_ids(str(path)) == frozenset({"dep@m"})
+
+
+def test_read_auto_ids_rejects_non_bool_auto(tmp_path):
+    """auto=1·"true"·[True]는 `is True`가 거짓이라 조용히 "auto 아님"이 된다 — N6의 입구다."""
+    for bad in (1, "true", [True], None):
+        with pytest.raises(pc.AutoFlagsUnavailable):
+            pc.read_auto_ids(write_installed(
+                tmp_path, {"x@m": [{"scope": "user", "auto": bad}]}))
+
+
+def test_read_auto_ids_rejects_non_string_scope(tmp_path):
+    """scope=["user"]·1은 == 비교가 거짓이라 조용히 판정에서 빠진다."""
+    for bad in (["user"], 1, None):
+        with pytest.raises(pc.AutoFlagsUnavailable):
+            pc.read_auto_ids(write_installed(
+                tmp_path, {"x@m": [{"scope": bad, "auto": True}]}))
+
+
+def test_read_auto_ids_accepts_entries_missing_those_keys(tmp_path):
+    """키 **부재**는 이상이 아니다 — 실기기의 항목에는 auto 키가 아예 없다.
+
+    "키 부재 = auto 아님"을 유지하지 않으면 정상 파일이 거부된다(과잉 차단).
+    """
+    path = write_installed(tmp_path, {"plain@m": [{"scope": "user"}], "bare@m": [{}]})
+    assert pc.read_auto_ids(path) == frozenset()
+
+
 def test_read_auto_ids_rejects_non_object_entry(tmp_path):
     """원소가 객체가 아니면 그 항목의 auto를 읽을 수 없다 — 조용히 건너뛰면 N6이다."""
     with pytest.raises(pc.AutoFlagsUnavailable):
@@ -363,8 +396,10 @@ def test_dump_backup_rejects_a_non_object_section(tmp_path):
     """{"enabledPlugins": None}을 그대로 쓰면 자기가 쓴 파일을 자기가 못 읽는다.
 
     다음 load_backup이 조건 4에서 인식에 실패해 그 백업이 영구히 UnknownBackupSchema가
-    된다. 호출부의 계약 위반이므로 읽기 실패 예외가 아니라 ValueError다 — 읽기 실패로
-    던지면 호출부의 except 튜플에 잡혀 버그가 "정상적인 skip"으로 위장된다.
+    된다. ValueError인 근거는 **쓰기 전에 던져 손상 파일이 레포에 들어가지 않는다**는
+    것과, 코어의 _normalized가 계약 위반에 쓰는 것과 같은 신호 종류라는 것이다.
+    스크립트의 except 튜플에는 ValueError가 이미 있으므로 이 예외도 skip으로 접힌다 —
+    전용 예외로 빼면 훅 결함 하나가 흐름 전체를 세우므로(결함 C) 알고 받아들인다.
     """
     path = str(tmp_path / pc.BACKUP_RELPATH)
     with pytest.raises(ValueError):

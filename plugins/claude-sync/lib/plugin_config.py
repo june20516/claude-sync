@@ -50,8 +50,20 @@ DEFAULT_INSTALLED = os.path.expanduser("~/.claude/plugins/installed_plugins.json
 DEFAULT_HELD = os.path.expanduser("~/.claude/.sync-state/plugins-held.json")
 
 HELD_SCHEMA_VERSION = 1
-INSTALLED_SCHEMA_VERSION = 2      # installed_plugins.json 자체가 달고 다니는 스키마 버전
 EMPTY_HELD = {"pluginConfigs": {}, "release": {"enabledPlugins": []}}
+
+# installed_plugins.json 자체가 달고 다니는 스키마 버전. 다른 두 게이트(SCHEMA_VERSION·
+# HELD_SCHEMA_VERSION)와 달리 **이 파일의 소유자는 이 프로젝트가 아니라 claude CLI다.**
+# CLI가 이 파일을 v3으로 올리면 여기도 올려야 한다 — 그때까지 **모든 기기에서 동시에**
+# enabledPlugins·pluginConfigs 백업이 멈춘다. 가시적이고 되돌릴 수 있는 정지이므로
+# fail-closed 자체는 옳다(반대편은 N6, 되돌릴 수 없다). 갱신 의무만 잊지 말 것.
+INSTALLED_SCHEMA_VERSION = 2
+
+# 사용자에게 reason으로 그대로 나가는 문구의 꼬리. 같은 함수 안에서 갈래마다 다르면
+# "그래서 무엇이 빠졌는가"를 사용자가 갈래마다 다시 추측해야 한다. 함수당 하나로 고정한다.
+SKIP_ALL = "플러그인 단계 전체를 건너뛴다"
+SKIP_AUTO_SECTIONS = "enabledPlugins·pluginConfigs를 건너뛴다"
+SKIP_PLUGIN_CONFIGS = "pluginConfigs를 건너뛴다"
 
 # 코어의 예외를 그대로 re-export한다. 클래스가 두 벌이 되면 스크립트의 except 튜플이
 # 갈라지고, 갱신을 잊으면 traceback으로 죽어 결함 C가 되살아난다.
@@ -94,8 +106,8 @@ def _section_of(data, key, path):
     value = data[key]
     if not isinstance(value, dict):
         raise LocalConfigUnavailable(
-            "%s의 %s가 객체가 아님(%s) — 플러그인 백업을 통째로 건너뛴다"
-            % (path, key, type(value).__name__))
+            "%s의 %s가 객체가 아님(%s) — %s"
+            % (path, key, type(value).__name__, SKIP_ALL))
     return dict(value)
 
 
@@ -124,12 +136,13 @@ def read_local_sections(settings_path=None):
         with open(path, "rb") as f:
             data = json.loads(f.read())
     except FileNotFoundError as e:
-        raise LocalConfigUnavailable(
-            "%s 없음 — 플러그인 백업을 통째로 건너뛴다" % path) from e
+        raise LocalConfigUnavailable("%s 없음 — %s" % (path, SKIP_ALL)) from e
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise LocalConfigUnavailable("%s 파싱 실패: %s" % (path, e)) from e
+        raise LocalConfigUnavailable(
+            "%s 파싱 실패: %s — %s" % (path, e, SKIP_ALL)) from e
     if not isinstance(data, dict):
-        raise LocalConfigUnavailable("%s 최상위가 객체가 아님" % path)
+        raise LocalConfigUnavailable(
+            "%s 최상위가 객체가 아님 — %s" % (path, SKIP_ALL))
     return {
         "enabledPlugins": _section_of(data, "enabledPlugins", path),
         "extraKnownMarketplaces": _marketplaces_of(data, path),
@@ -149,13 +162,21 @@ def read_auto_ids(installed_path=None):
       1. 파일 부재
       2. JSON 구문 오류 / 인코딩 오류
       3. 최상위가 객체가 아님
-      4. version이 INSTALLED_SCHEMA_VERSION보다 높다고 주장함
+      4. version이 INSTALLED_SCHEMA_VERSION보다 높다고 주장함 (version 키 부재는 정상)
       5. plugins 키 부재
       6. plugins가 객체가 아님
       7. plugins[<id>]가 배열이 아님
       8. plugins[<id>]의 원소가 객체가 아님
+      9. 원소에 auto가 있는데 bool이 아님
+     10. 원소에 scope가 있는데 문자열이 아님
 
-    5·8을 빈 집합으로 접지 않는 이유가 이 함수의 존재 이유다. auto 판정이 거짓으로
+    9·10에서 **키 부재는 이상이 아니다.** 실기기의 항목에는 auto 키가 아예 없고
+    "키 부재 = auto 아님"이 정상 판정이다. 값이 있는데 타입이 다른 경우만 막는다.
+    값 비교가 `is True`·`== "user"`라 auto=1·auto="true"·scope=["user"]가 전부 조용히
+    "auto 아님"으로 접히는데, 원소가 dict가 아닌 것은 막으면서 dict 안의 타입 이상은
+    통과시키는 것은 같은 함수 안의 비일관이다.
+
+    5·8·9·10을 빈 집합으로 접지 않는 이유가 이 함수의 존재 이유다. auto 판정이 거짓으로
     비면 auto 항목이 hold에 들어가지 못하고 그대로 레포에 실려 승격되며, 타 기기의
     restore가 그것을 설치한다 — **되돌릴 수 없다**(N6). 반대로 과하게 raise하면 두
     섹션이 skip될 뿐이고 레포는 그대로다. 비대칭이 명확하므로 전부 raise 쪽으로 조인다.
@@ -163,40 +184,44 @@ def read_auto_ids(installed_path=None):
     PermissionError 등 그 외 OSError는 전파한다(감싸지 않는다).
     """
     path = DEFAULT_INSTALLED if installed_path is None else installed_path
+
+    def unreadable(detail):
+        return AutoFlagsUnavailable("%s: %s — auto 판정 불가로 %s"
+                                    % (path, detail, SKIP_AUTO_SECTIONS))
+
     try:
         with open(path, "rb") as f:
             data = json.loads(f.read())
     except FileNotFoundError as e:
-        raise AutoFlagsUnavailable(
-            "%s 없음 — auto 판정 불가로 enabledPlugins·pluginConfigs를 건너뛴다"
-            % path) from e
+        raise unreadable("파일 없음") from e
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise AutoFlagsUnavailable(
-            "%s 파싱 실패: %s — auto 판정 불가로 enabledPlugins·pluginConfigs를 건너뛴다"
-            % (path, e)) from e
+        raise unreadable("파싱 실패(%s)" % e) from e
     if not isinstance(data, dict):
-        raise AutoFlagsUnavailable("%s 최상위가 객체가 아님" % path)
+        raise unreadable("최상위가 객체가 아님(%s)" % type(data).__name__)
     if ks.claims_newer_schema(data.get("version"), INSTALLED_SCHEMA_VERSION):
-        raise AutoFlagsUnavailable(
-            "%s가 상위 버전을 주장한다(version=%r) — auto 판정을 할 수 없다"
-            % (path, data.get("version")))
+        raise unreadable("상위 버전 주장(version=%r)" % data.get("version"))
     if "plugins" not in data:
-        raise AutoFlagsUnavailable(
-            "%s에 plugins 키가 없다 — auto 판정을 할 수 없다" % path)
+        raise unreadable("plugins 키가 없음")
     plugins = data["plugins"]
     if not isinstance(plugins, dict):
-        raise AutoFlagsUnavailable(
-            "%s의 plugins가 객체가 아님(%s)" % (path, type(plugins).__name__))
+        raise unreadable("plugins가 객체가 아님(%s)" % type(plugins).__name__)
     out = set()
     for plugin_id, entries in plugins.items():
         if not isinstance(entries, list):
-            raise AutoFlagsUnavailable(
-                "%s의 plugins[%s]가 배열이 아님" % (path, plugin_id))
+            raise unreadable("plugins[%s]가 배열이 아님(%s)"
+                             % (plugin_id, type(entries).__name__))
         for entry in entries:
             if not isinstance(entry, dict):
-                raise AutoFlagsUnavailable(
-                    "%s의 plugins[%s] 원소가 객체가 아님 — 그 항목의 auto를 읽을 수 없다"
-                    % (path, plugin_id))
+                raise unreadable("plugins[%s]의 원소가 객체가 아님(%s)"
+                                 % (plugin_id, type(entry).__name__))
+            # 키 부재는 통과시킨다("auto 아님"이 정상 판정). 값이 있는데 타입이 다르면
+            # `is True`·`== "user"`가 조용히 거짓이 되어 판정에서 빠진다 — N6의 입구다.
+            if "auto" in entry and not isinstance(entry["auto"], bool):
+                raise unreadable("plugins[%s]의 auto가 bool이 아님(%r)"
+                                 % (plugin_id, entry["auto"]))
+            if "scope" in entry and not isinstance(entry["scope"], str):
+                raise unreadable("plugins[%s]의 scope가 문자열이 아님(%r)"
+                                 % (plugin_id, entry["scope"]))
         if any(e.get("scope") == "user" and e.get("auto") is True for e in entries):
             out.add(plugin_id)
     return frozenset(out)
@@ -227,22 +252,26 @@ def read_held_state(held_path=None):
         return copy.deepcopy(EMPTY_HELD)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise HeldStateUnavailable(
-            "%s 파싱 실패: %s — pluginConfigs를 건너뛴다" % (path, e)) from e
+            "%s: 파싱 실패(%s) — %s" % (path, e, SKIP_PLUGIN_CONFIGS)) from e
     if not isinstance(data, dict):
-        raise HeldStateUnavailable("%s 최상위가 객체가 아님" % path)
+        raise HeldStateUnavailable("%s: 최상위가 객체가 아님(%s) — %s"
+                                   % (path, type(data).__name__, SKIP_PLUGIN_CONFIGS))
     if ks.claims_newer_schema(data.get("version"), HELD_SCHEMA_VERSION):
-        raise HeldStateUnavailable("%s가 상위 버전을 주장한다" % path)
+        raise HeldStateUnavailable("%s: 상위 버전 주장(version=%r) — %s"
+                                   % (path, data.get("version"), SKIP_PLUGIN_CONFIGS))
     configs = data.get("pluginConfigs", {})
     if not isinstance(configs, dict) or not all(
             isinstance(v, str) for v in configs.values()):
-        raise HeldStateUnavailable(
-            "%s의 pluginConfigs가 {id: 지문} 형태가 아님 — pluginConfigs를 건너뛴다" % path)
+        raise HeldStateUnavailable("%s: pluginConfigs가 {id: 지문} 형태가 아님 — %s"
+                                   % (path, SKIP_PLUGIN_CONFIGS))
     release = data.get("release", {})
     if not isinstance(release, dict):
-        raise HeldStateUnavailable("%s의 release가 객체가 아님" % path)
+        raise HeldStateUnavailable("%s: release가 객체가 아님(%s) — %s"
+                                   % (path, type(release).__name__, SKIP_PLUGIN_CONFIGS))
     released = release.get("enabledPlugins", [])
     if not isinstance(released, list) or not all(isinstance(v, str) for v in released):
-        raise HeldStateUnavailable("%s의 release.enabledPlugins가 문자열 배열이 아님" % path)
+        raise HeldStateUnavailable("%s: release.enabledPlugins가 문자열 배열이 아님 — %s"
+                                   % (path, SKIP_PLUGIN_CONFIGS))
     return {"pluginConfigs": dict(configs),
             "release": {"enabledPlugins": list(released)}}
 
@@ -313,8 +342,9 @@ def parse_base(data):
 def load_backup(path):
     """레포의 plugins.json을 안전하게 읽는다. 파일이 없으면 세 섹션 모두 {}.
 
-    구문이 깨진 파일은 {}로 degrade하고, 구문은 유효한데 형식을 알아볼 수 없으면
-    UnknownBackupSchema를 던진다. (PermissionError 등 그 외 OSError는 전파한다.)
+    구문이 깨진 파일은 **세 섹션이 모두 {}인 dict**로 degrade하고(parse_backup과 같다),
+    구문은 유효한데 형식을 알아볼 수 없으면 UnknownBackupSchema를 던진다.
+    (PermissionError 등 그 외 OSError는 전파한다.)
     """
     return _all_sections(ks.load_backup(path, _recognized_sections))
 
@@ -332,17 +362,25 @@ def dump_backup(sections, path):
 
     섹션 값이 dict가 아니면 **쓰기 전에** ValueError를 던진다. 그대로 쓰면 자기가 쓴
     파일을 자기 load_backup이 조건 4에서 인식하지 못해 그 백업이 영구히
-    UnknownBackupSchema가 된다. 이것은 사용자 데이터 문제가 아니라 호출부의 계약 위반이므로
-    읽기 실패 예외(LocalConfigUnavailable 등)로 던지지 않는다 — 그렇게 던지면 호출부의
-    except 튜플에 잡혀 버그가 "정상적인 skip"으로 위장된다. 코어의 _normalized가 키 집합
-    위반에 ValueError를 쓰는 것과 같은 이유다.
+    UnknownBackupSchema가 된다.
+
+    ValueError를 고른 근거는 둘이다 — (a) **쓰기 전에** 던지므로 손상된 파일이 애초에
+    레포에 들어가지 않는다, (b) 이것은 사용자 데이터 문제가 아니라 호출부의 계약 위반이고,
+    코어의 _normalized가 키 집합 위반에 쓰는 것과 같은 신호 종류다.
+
+    **이 예외는 호출부에서 skip으로 접힌다.** 세 스크립트의 except 튜플에 ValueError가
+    이미 들어 있어서(코어의 normalize 계약 위반을 잡으려고 넣은 것이다) 여기서 던진
+    ValueError도 {"status":"skipped"}가 된다 — 즉 이 버그는 traceback이 아니라 skip으로
+    보고된다. 그것을 알고 받아들인 트레이드오프다: 전용 예외를 만들어 튜플에서 빼면
+    어댑터 훅의 결함 하나가 백업 흐름 전체를 traceback으로 세우는데, 그것이 이 프로젝트가
+    이미 고친 결함 C다. 손상 파일이 레포에 들어가지 않는 것이 우선이다.
     """
     payload = {"version": SCHEMA_VERSION, "scope": "user"}
     for name in SECTIONS:
         value = sections.get(name, {})
         if not isinstance(value, dict):
             raise ValueError(
-                "%s 섹션이 객체가 아니다(%s) — 이대로 쓰면 다음 load_backup이 이 파일을"
-                " 알아보지 못한다" % (name, type(value).__name__))
+                "%s에 쓸 %s 섹션이 객체가 아니다(%s) — 이대로 쓰면 다음 load_backup이"
+                " 이 파일을 알아보지 못한다" % (path, name, type(value).__name__))
         payload[name] = value
     ks.dump_json(payload, path)
