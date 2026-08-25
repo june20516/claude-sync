@@ -729,6 +729,38 @@ def test_adapter_passes_one_recognize_hook_to_all_three(adapter, sample, tmp_pat
     assert len({id(hook) for hook in seen}) == 1
 
 
+# 두 어댑터의 로컬 리더 전체. 자리가 여기인 이유는 이 파일이 이미 RECOGNIZE_ADAPTERS로
+# 어댑터 간 불변식을 소유하고 있기 때문이다 — 어댑터별 파일에 흩어 두면 다음 어댑터가
+# 붙을 때 조용히 빠진다.
+BYTE_READERS = [
+    (mc.read_local_servers, {"mcpServers": {"a": {"command": "x"}}}),
+    (pc.read_local_sections, {"enabledPlugins": {"p@m": True}}),
+    (pc.read_auto_ids, {"version": 2, "plugins": {}}),
+    (pc.read_held_state, {"pluginConfigs": {}, "release": {"enabledPlugins": []}}),
+]
+
+
+@pytest.mark.parametrize("reader,payload", BYTE_READERS,
+                         ids=lambda x: x.__name__ if callable(x) else "")
+def test_adapter_readers_open_local_files_in_binary_mode(reader, payload, tmp_path):
+    """어댑터의 로컬 리더는 전부 open(path, "rb")여야 한다. BOM으로 그것을 고정한다.
+
+    **왜 BOM인가** — 이 리더들은 `except (json.JSONDecodeError, UnicodeDecodeError)`로
+    파싱 실패를 자기 예외로 감싼다. 그래서 잘못된 UTF-8 바이트로는 "rb"와 "r"을 구별할
+    수 없다: 텍스트 모드에서도 f.read()의 UnicodeDecodeError가 같은 except에 잡혀 같은
+    예외가 나온다. 두 모드가 실제로 갈리는 입력은 UTF-8 BOM이다 —
+    json.loads(bytes)는 json.detect_encoding이 BOM을 처리해 통과하지만, 텍스트 모드로
+    읽으면 BOM 문자가 본문 첫 글자로 남아 JSONDecodeError가 된다.
+
+    Windows 계열 편집기가 실제로 BOM을 붙인다. 그때 한 리더가 텍스트 모드면 그 파일이
+    "깨졌다"로 읽혀 해당 섹션이나 백업 전체가 통째로 skip된다.
+    """
+    path = tmp_path / "input.json"
+    path.write_bytes(b"\xef\xbb\xbf" + json.dumps(payload).encode("utf-8"))
+    # 단정은 "예외가 나지 않는다" 그 자체다 — 예외가 나면 그 리더가 텍스트 모드다.
+    reader(str(path))
+
+
 KEYED_SYNC_IMPORT = re.compile(r"^\s*(?:import keyed_sync\b|from keyed_sync import\b)", re.M)
 RECOGNIZE_HOOK_CALL = re.compile(r"\bks\.(?:parse_base|load_backup|parse_backup)\(")
 

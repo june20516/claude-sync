@@ -91,7 +91,14 @@ def test_written_by_omitted_when_plugin_json_unreadable(tmp_path):
 
 
 def test_schema_map_omits_plugins_json(tmp_path):
-    """plugins.json에는 자체 version 필드가 없다. 없는 사실을 쓰지 않는다."""
+    """plugins.json은 아직 schema 맵에 오르지 않는다. 없는 사실을 쓰지 않는다.
+
+    **plugins.json 자체에는 version 필드가 생겼다** — plugin_config.SCHEMA_VERSION = 2를
+    dump_backup이 기록한다. 이 맵이 여전히 비어 있는 이유는 레포 쓰기를 아직 레거시
+    스크립트가 하고 있어서이지, 그 필드가 없어서가 아니다.
+    스킬이 새 어댑터 기반 스크립트를 부르게 된 뒤 **별도 작업에서** 이 맵에 추가한다.
+    그때까지는 단정을 뒤집지 않는다 — 지금 추가하면 실제로 쓰이지 않는 사실을 쓰게 된다.
+    """
     meta = gm.build_metadata(
         fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
     )
