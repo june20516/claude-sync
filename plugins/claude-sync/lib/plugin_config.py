@@ -584,6 +584,27 @@ def held_kinds(section, keys, *, auto_ids, directory_names, held_configs, repo_n
     return kinds
 
 
+def held_context(local, repo, *, auto_ids, held_state):
+    """hold 훅과 held_kinds가 **같은 입력에서 같은 값**을 보게 하는 컨텍스트.
+
+    두 곳이 각자 계산하면 "보류로 판정했는데 보고에서는 종류를 못 찾는" 상태가 생기고,
+    held_kinds가 그것을 ValueError로 막으므로 섹션이 통째로 skipped가 된다.
+    호출부(스크립트)는 이 함수를 한 번 불러 hold와 held_kinds 양쪽에 같은 값을 넘긴다.
+
+    키 이름은 _make_hold와 held_kinds의 **키워드 인자 이름과 같다** — 양쪽 다
+    `**context`로 받으므로 이름이 어긋나면 조용한 오판정이 아니라 TypeError로 즉시 드러난다.
+    released를 여기 담지 않는 것은 그것이 H3 한 종류의 탈출구이고 held_kinds가 받지
+    않기 때문이다 — 두 곳이 공유하지 않는 값을 공유 컨텍스트에 넣으면 위 대응이 깨진다.
+    """
+    return {
+        "auto_ids": auto_ids,
+        "directory_names": directory_marketplaces(
+            local.get("extraKnownMarketplaces", {}),
+            repo.get("extraKnownMarketplaces", {})),
+        "held_configs": dict(held_state.get("pluginConfigs", {})),
+    }
+
+
 def build_hooks(local, repo, *, auto_ids, held_state):
     """섹션별 훅 묶음 {섹션: {"normalize":..., "hold":...}}.
 
@@ -595,17 +616,16 @@ def build_hooks(local, repo, *, auto_ids, held_state):
     훅 넷은 섹션마다 다른 함수다 — 자기 섹션 밖의 입력(auto 집합, **다른 섹션**인
     extraKnownMarketplaces의 출처, 보류 파일)을 필요로 하기 때문이다. 코어가 보는
     계약은 hold(local, repo)와 normalize(mapping) 둘뿐이고 나머지는 여기서 닫는다.
+
+    보류 판정의 입력은 held_context가 만든다 — 호출부가 그 함수를 한 번 더 불러
+    held_kinds에 같은 값을 넘기면 훅과 보고가 갈릴 수 없다.
     """
-    directory_names = directory_marketplaces(
-        local.get("extraKnownMarketplaces", {}), repo.get("extraKnownMarketplaces", {}))
-    held_configs = dict(held_state.get("pluginConfigs", {}))
+    context = held_context(local, repo, auto_ids=auto_ids, held_state=held_state)
     released = frozenset(held_state.get("release", {}).get("enabledPlugins", []))
     return {
         section: {
             "normalize": SECTION_NORMALIZE[section],
-            "hold": _make_hold(section, auto_ids=auto_ids,
-                               directory_names=directory_names,
-                               held_configs=held_configs, released=released),
+            "hold": _make_hold(section, released=released, **context),
         }
         for section in SECTIONS
     }

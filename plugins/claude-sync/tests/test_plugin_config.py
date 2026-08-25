@@ -666,3 +666,53 @@ def test_held_kinds_refuses_to_drop_an_unclassified_key():
     with pytest.raises(ValueError):
         pc.held_kinds("enabledPlugins", ["ghost@m"], auto_ids=frozenset(),
                       directory_names=frozenset(), held_configs={}, repo_norm={})
+
+
+def test_hold_and_held_kinds_never_diverge_when_fed_one_context():
+    """훅과 보고가 **같은 held_context**를 보면 갈릴 수 없다는 것을 고정한다.
+
+    두 곳이 각자 계산하던 시절에는 호출부가 셋(directory_names·held_configs·auto_ids)
+    중 하나만 어긋나도 hold는 보류로 판정하는데 held_kinds가 그 키를 분류하지 못해
+    ValueError를 던졌고, 스크립트의 except 튜플이 그것을 잡아 **섹션이 통째로
+    skipped**가 됐다.
+
+    시나리오가 H1~H4를 전부 태운다 — 특히 p@theirs는 **레포 쪽** directory 출처로만
+    보류되므로, held_context의 directory_marketplaces에서 repo를 빼는 변조는
+    아래 expected의 local_marketplace 줄에서 잡힌다.
+    """
+    local = {"enabledPlugins": {"dep@m": True, "plain@m": True},
+             "extraKnownMarketplaces": {"m": GH},
+             "pluginConfigs": {"dep@m": {"options": {}},
+                               "delta@m": {"options": {"apiKey": "sk-real"}}}}
+    repo = {"enabledPlugins": {"p@theirs": True, "ext@m": ["1.0.0"]},
+            "extraKnownMarketplaces": {"theirs": {"source": {"source": "directory",
+                                                             "path": "/x"}},
+                                       "m": GH},
+            "pluginConfigs": {"delta@m": {"options": {"apiKey": "x"}}}}
+    auto_ids = frozenset({"dep@m"})
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo["pluginConfigs"])
+    held_state = {"pluginConfigs": {"delta@m": pc.value_fingerprint(masked["delta@m"])},
+                  "release": {"enabledPlugins": []}}
+
+    context = pc.held_context(local, repo, auto_ids=auto_ids, held_state=held_state)
+    hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=held_state)
+
+    expected = {
+        # dep@m=H1(auto), p@theirs=H2(레포 쪽 directory), ext@m=H3(레포 값이 배열)
+        "enabledPlugins": {"auto": ["dep@m"], "local_marketplace": ["p@theirs"],
+                           "extended_value": ["ext@m"]},
+        "extraKnownMarketplaces": {"local_marketplace": ["theirs"]},
+        # dep@m=H1(auto), delta@m=H4(지문 일치 → 사용자가 거절함)
+        "pluginConfigs": {"auto": ["dep@m"], "local_marketplace": [],
+                          "declined": ["delta@m"]},
+    }
+    for section in pc.SECTIONS:
+        norm = pc.SECTION_NORMALIZE[section]
+        repo_norm = norm(repo[section])
+        held = hooks[section]["hold"](norm(local[section]), repo_norm)
+        both = held["value"] | held["action"]
+        kinds = pc.held_kinds(section, sorted(both), repo_norm=repo_norm, **context)
+        assert kinds == expected[section], section
+        # 분류가 보류 집합을 **정확히** 덮는다 — held_kinds의 ValueError가 한쪽을,
+        # 이 단정이 "보류하지도 않은 키를 보고에 넣는" 반대쪽을 막는다.
+        assert {key for names in kinds.values() for key in names} == both, section
