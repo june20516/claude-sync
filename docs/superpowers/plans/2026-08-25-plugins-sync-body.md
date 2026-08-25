@@ -468,6 +468,12 @@ def test_backup_base_gate_cites_the_rename_contract_not_the_old_reason():
     return out
 ```
 
+**11단계의 "기록을 건너뛰는 경우는 둘뿐이다"도 함께 고친다.** `base_staging` 실패가 세 번째
+경우다. 단 **게이트는 두 축이다** — 뒤의 둘(skip·스테이징 실패)은 스테이징 최종 파일 부재가
+막고, **푸시 실패는 `REPO_HAS_CONTENT=0`이 막는다**(그때 스테이징 파일은 이미 존재한다).
+"세 경우 모두 파일이 없어서 막힌다"고 쓰면 거짓이고, 그 문장을 믿는 사람이
+`REPO_HAS_CONTENT` 조건을 중복으로 보고 지운다.
+
 `sync-backup/SKILL.md`의 6단계 `"ok"` 분기 표 아래(현행 `:305` *"충돌이 있어도 백업 전체를 막지 않는다"* 문단 앞)에 문단을 넣는다.
 
 ```markdown
@@ -496,9 +502,13 @@ def test_backup_base_gate_cites_the_rename_contract_not_the_old_reason():
 
 ```python
     **base가 None이든 {}이든 같게 다룬다**(`if base else {}`). merge는 둘을 구별하지만
-    (None은 합집합 degrade, {}는 판정표) 복원은 삭제를 하지 않으므로 구별할 실익이 없다 —
-    양쪽 다 "케이스 7·8을 가를 이력이 없다"로 귀결한다. plan_mcp.py:35가 None 가능한
-    값을 그대로 넘긴다.
+    (None은 합집합 degrade, {}는 판정표) 복원 쪽은 `known`이 비면 **삭제 후보(local_stale,
+    케이스 4·5)로 가는 경로 자체가 닫히고**(`name in known`이 항상 거짓) 7·8도 both_changed로
+    뭉친다 — 두 입력이 같은 결과 버킷으로 수렴하므로 구별할 실익이 없다.
+    (**"복원은 삭제를 하지 않는다"고 쓰지 말 것** — restore_plan의 local_stale이 정확히
+    삭제 후보이고 restore가 그것을 사용자에게 묻는다. 근거가 틀리면 다음 사람이 `known`을
+    레포로 채우는 변경을 안전하다고 오해하고, 그러면 이력 없는 기기가 전 항목을 local_stale로
+    몰아 "다른 기기가 삭제했습니다"라는 거짓 문구를 띄운다.)
 ```
 
 - [ ] **Step 4: test를 실행하여 통과를 확인**
