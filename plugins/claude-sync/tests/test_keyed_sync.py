@@ -762,14 +762,40 @@ def test_dump_json_writes_the_same_bytes_as_before(tmp_path):
         assert f.read() == '{\n  "a": {\n    "ko": "한글"\n  },\n  "b": 1\n}\n'
 
 
-def test_dump_json_removes_its_temp_file_on_non_oserror_failure(tmp_path):
-    """OSError가 아닌 실패(직렬화 불가능한 값)도 .tmp를 지워야 한다.
+def test_dump_json_creates_nothing_when_serialization_fails(tmp_path):
+    """직렬화(json.dumps) 실패는 파일도 .tmp도 아예 만들지 않는다.
 
-    payload에 set처럼 JSON이 못 담는 값이 섞이면 json.dump가 TypeError를 던진다.
-    except를 OSError로 좁히면 이 경로에서 정리 코드가 아예 실행되지 않아 .tmp가
-    레포 디렉토리에 남고, 다음 `git add -A`가 그것을 커밋한다.
+    dump_json은 이제 json.dumps로 메모리에서 먼저 직렬화한 뒤에야 dump_bytes를
+    부른다(I1). payload에 set처럼 JSON이 못 담는 값이 섞이면 dump_bytes가
+    호출되기도 전에 TypeError가 나므로 .tmp가 생성조차 되지 않는다.
+
+    **이 단정은 dump_bytes의 except 절 폭과 무관하다** — 정리 코드가 있든 없든
+    항상 참이다(open이 아예 일어나지 않으므로). 정리 경로 자체를 검증하려면
+    test_dump_bytes_removes_its_temp_file_on_non_oserror_failure를 봐야 한다 —
+    거기서는 open이 성공한 뒤에 실패를 주입한다.
     """
     path = str(tmp_path / "x.json")
     with pytest.raises(TypeError):
         ks.dump_json({"b": {1, 2}}, path)
     assert os.listdir(str(tmp_path)) == []
+
+
+def test_dump_bytes_removes_its_temp_file_on_non_oserror_failure(tmp_path):
+    """OSError가 아닌 실패(bytes가 아닌 값)도 .tmp를 지워야 한다.
+
+    dump_bytes(data, path)에 bytes가 아닌 값을 넘기면 open(tmp, "wb")는 성공하고
+    f.write(data)가 TypeError를 던진다 — open이 이미 성공한 뒤에 터져야 .tmp가
+    디스크에 남은 상태에서 정리 코드가 실제로 실행되는 경로를 검증한다.
+
+    dump_json 쪽 테스트(위)는 직렬화가 dump_bytes 호출 전 메모리에서 끝나 버려
+    이 경로를 검증하지 못한다 — 정리 경로의 검증은 이 테스트가 유일하게 책임진다.
+    except를 OSError로 좁히면 TypeError가 정리 코드를 우회해 .tmp가 남고,
+    os.remove(tmp)를 지우면 성공 여부와 무관하게 .tmp가 남는다.
+    """
+    path = str(tmp_path / "x.json")
+    ks.dump_bytes(b"old", path)
+    with pytest.raises(TypeError):
+        ks.dump_bytes("not bytes", path)
+    assert os.listdir(str(tmp_path)) == ["x.json"]
+    with open(path, "rb") as f:
+        assert f.read() == b"old"
