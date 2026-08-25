@@ -7,6 +7,7 @@ import pytest
 
 import keyed_sync as ks
 import mcp_config as mc
+import plugin_config as pc
 from marks import requires_permission_bits
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
@@ -698,6 +699,7 @@ def test_every_hold_consuming_function_has_a_recording_hold_test():
 # 들어오고, 그 비대칭이 상위 버전 백업을 파괴한다(spec 4.4).
 RECOGNIZE_ADAPTERS = [
     (mc, b'{"version": 2, "scope": "user", "servers": {}}'),
+    (pc, b'{"version": 2, "scope": "user", "enabledPlugins": {}}'),
 ]
 
 
