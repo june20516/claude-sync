@@ -409,7 +409,7 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
 
     **base가 None이든 {}이든 같게 다룬다**(`if base else {}`). merge는 둘을 구별하지만
     (None은 합집합 degrade, {}는 판정표) 복원은 삭제를 하지 않으므로 구별할 실익이 없다 —
-    양쪽 다 "케이스 7·8을 가를 이력이 없다"로 귀결한다. plan_mcp.py:35가 None 가능한
+    양쪽 다 "케이스 7·8을 가를 이력이 없다"로 귀결한다. plan_mcp.py:36이 None 가능한
     값을 그대로 넘긴다.
     """
     local, repo = _normalized(local, normalize), _normalized(repo, normalize)

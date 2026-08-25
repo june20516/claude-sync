@@ -412,7 +412,7 @@ fi
 
 - `update_base.py "$MCP_STAGING" mcp-servers.json` — 올바른 호출.
 - `update_base.py "$SYNC_REPO" mcp-servers.json` — **금지.** `base ← 레포 파일 바이트`가 되어, 타 기기가 추가·변경한 서버(케이스 2·8)의 값이 base에 실린다. 그러면 다음 백업이 그것을 "이 기기가 삭제했다"로 오독해 **다른 기기의 서버를 경고 없이 지운다.**
-- 기록을 건너뛰는 경우는 **푸시 실패**와 **MCP 단계 skip** 둘뿐이다. 충돌(`conflicts`)이나 `local_stale`이 있다고 해서 전역으로 막지 않는다 — `next_base`가 이름 단위로 이미 그 서버의 base를 고정하고 있고, 전역 게이트는 나머지 서버의 base까지 얼려 정확도를 떨어뜨린다.
+- 기록을 건너뛰는 경우는 **푸시 실패**, **MCP 단계 skip**, **`base_staging` 실패** 셋이다 — 세 경우 모두 결과적으로 스테이징 최종 파일(`$MCP_STAGING/mcp-servers.json`)이 없으므로 게이트(`[ -f "$MCP_STAGING/mcp-servers.json" ]`)가 같은 방식으로 막는다. 충돌(`conflicts`)이나 `local_stale`이 있다고 해서 전역으로 막지 않는다 — `next_base`가 이름 단위로 이미 그 서버의 base를 고정하고 있고, 전역 게이트는 나머지 서버의 base까지 얼려 정확도를 떨어뜨린다.
 
 ### 12. 결과 보고
 
