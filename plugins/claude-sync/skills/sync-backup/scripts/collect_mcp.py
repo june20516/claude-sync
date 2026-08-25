@@ -67,7 +67,7 @@ def collect(repo_path, staging_dir, claude_json_path=None, base_dir=ss.BASE_DIR)
         os.replace(tmp, staged)
     except OSError as e:
         # 레포는 이미 갱신됐다. skipped로 접으면 "레포를 손대지 않았다"가 거짓이 된다.
-        # 키 이름을 reason과 가른다 — reason은 skipped 경로의 필드다(SKILL.md:292).
+        # 키 이름을 reason과 가른다 — reason은 SKILL.md "6단계 skipped 분기"의 필드다.
         out["base_staging"] = "failed"
         out["base_staging_reason"] = (
             "레포는 갱신됐으나 base 스테이징에 실패했다: %s (다음 백업이 복구한다)" % e)

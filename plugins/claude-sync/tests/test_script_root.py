@@ -583,6 +583,9 @@ def test_backup_reports_staging_failure_to_the_user():
     sec = section("sync-backup", "6. mcp-servers.json 생성 (키 단위 3-way 병합)")
     assert "`base_staging`" in sec
     assert "`base_staging_reason`" in sec
+    # 필드 이름만 보면 문단이 통째로 지워져도 통과한다(불변식 7). 이 문단의 값어치는
+    # "레포는 갱신됐지만"과 "skipped로 오해하지 않는다"라는 정반대 사실의 구별이다.
+    assert "레포는 갱신됐지만" in sec and "오해하지 않는다" in sec
 
 
 def test_backup_base_gate_cites_the_rename_contract_not_the_old_reason():
@@ -595,3 +598,14 @@ def test_backup_base_gate_cites_the_rename_contract_not_the_old_reason():
     text = read_skill("sync-backup")
     assert "status=ok일 때만 쓰므로" not in text
     assert "rename" in section("sync-backup", "10. 커밋 & 푸시")
+
+
+def test_backup_base_gate_distinguishes_push_failure_from_staging_failure():
+    """세 경우를 하나의 근거("스테이징 파일이 없다")로 뭉개면 거짓이 된다.
+
+    푸시 실패는 6단계가 끝난 뒤 일어나므로 그 시점에 스테이징 최종 파일은 이미
+    존재한다 — 막는 것은 `-f` 검사가 아니라 REPO_HAS_CONTENT=0이다. 이 구별이
+    지워지면 다음 사람이 REPO_HAS_CONTENT 조건을 중복으로 보고 지울 수 있다.
+    """
+    sec = section("sync-backup", "11. base(.sync-state) 갱신 규칙")
+    assert "REPO_HAS_CONTENT=0" in sec and "이미 존재한다" in sec
