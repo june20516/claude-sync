@@ -716,11 +716,14 @@ def test_mcp_adapter_passes_one_recognize_hook_to_all_three(tmp_path, monkeypatc
 
 
 def test_dump_json_leaves_old_file_intact_when_write_fails(tmp_path, monkeypatch):
-    """쓰기 도중 실패해도 이전 내용이 온전해야 한다.
+    """교체(os.replace)가 실패해도 이전 내용이 온전해야 한다.
 
-    open(path, "w")는 truncate가 먼저 일어난다. 잘린 파일은 다음 load_backup에서
-    {}로 degrade하고, 그러면 모든 항목이 케이스 4로 판정되어 restore가
-    "다른 기기가 삭제했습니다"라는 거짓 문구를 띄운다.
+    직접 open(path, "w")했다면 truncate가 먼저 일어나 잘린 파일이 다음 load_backup에서
+    {}로 degrade하고, 그러면 모든 항목이 케이스 4로 판정되어 restore가 "다른 기기가
+    삭제했습니다"라는 거짓 문구를 띄운다 — 그것이 원자적 쓰기가 막는 것이다.
+    이 테스트는 "교체 단계에서 실패해도 옛 내용이 남는가"만 본다. 쓰기 도중 실패의
+    실물 검증(open 성공 후 실제 쓰기가 실패하는 경로)은
+    test_dump_bytes_removes_its_temp_file_on_non_oserror_failure가 맡는다.
     """
     path = str(tmp_path / "x.json")
     ks.dump_json({"a": 1}, path)
@@ -763,16 +766,14 @@ def test_dump_json_writes_the_same_bytes_as_before(tmp_path):
 
 
 def test_dump_json_creates_nothing_when_serialization_fails(tmp_path):
-    """직렬화(json.dumps) 실패는 파일도 .tmp도 아예 만들지 않는다.
+    """직렬화가 실패하면 파일도 .tmp도 남지 않는다.
 
-    dump_json은 이제 json.dumps로 메모리에서 먼저 직렬화한 뒤에야 dump_bytes를
-    부른다(I1). payload에 set처럼 JSON이 못 담는 값이 섞이면 dump_bytes가
-    호출되기도 전에 TypeError가 나므로 .tmp가 생성조차 되지 않는다.
-
-    **이 단정은 dump_bytes의 except 절 폭과 무관하다** — 정리 코드가 있든 없든
-    항상 참이다(open이 아예 일어나지 않으므로). 정리 경로 자체를 검증하려면
-    test_dump_bytes_removes_its_temp_file_on_non_oserror_failure를 봐야 한다 —
-    거기서는 open이 성공한 뒤에 실패를 주입한다.
+    dump_json은 json.dumps로 메모리에서 먼저 직렬화한 뒤에야 dump_bytes를 부르므로(I1)
+    현재 구현에서는 .tmp가 생성조차 되지 않는다. 다만 이 단정이 관측하는 것은 "생성
+    여부"가 아니라 "종료 상태"다 — 직렬화를 열린 tmp로 스트리밍하도록 되돌리면서
+    정리를 OSError로 좁히면 이 단정이 깨진다. 그 변조를 잡는 것이 이 테스트의
+    존재 이유다(지난 라운드의 구멍). 정리 경로 자체는
+    test_dump_bytes_removes_its_temp_file_on_non_oserror_failure가 맡는다.
     """
     path = str(tmp_path / "x.json")
     with pytest.raises(TypeError):
@@ -799,3 +800,31 @@ def test_dump_bytes_removes_its_temp_file_on_non_oserror_failure(tmp_path):
     assert os.listdir(str(tmp_path)) == ["x.json"]
     with open(path, "rb") as f:
         assert f.read() == b"old"
+
+
+def test_dump_bytes_fsyncs_before_replace(tmp_path, monkeypatch):
+    """fsync 없이 replace하면 rename과 writeback 사이 크래시가 0바이트 파일을 publish한다.
+
+    원자성 테스트들은 fsync와 결합되지 않도록 일부러 os.replace를 표적으로 삼는다 —
+    그래서 이 줄(f.flush(); os.fsync(f.fileno()))을 지키는 책임은 이 테스트만 진다.
+    """
+    order = []
+    real_fsync, real_replace = ks.os.fsync, ks.os.replace
+    monkeypatch.setattr(ks.os, "fsync", lambda fd: order.append("fsync") or real_fsync(fd))
+    monkeypatch.setattr(ks.os, "replace", lambda a, b: order.append("replace") or real_replace(a, b))
+    ks.dump_bytes(b"x", str(tmp_path / "f"))
+    assert order == ["fsync", "replace"]
+
+
+def test_dump_json_routes_through_dump_bytes(tmp_path, monkeypatch):
+    """I1이 만든 코어 내부 edge(dump_json -> dump_bytes)를 고정한다.
+
+    어댑터->코어 라우팅(test_dump_backup_routes_through_ks_dump_json 등)은 이 edge를
+    지키지 못한다 — dump_json이 원자적 블록을 자기 안에 복사해도 어댑터 쪽 라우팅
+    테스트는 여전히 통과한다. 여기서 복사가 재발하면 fsync(I2)도 함께 조용히 사라진다.
+    """
+    calls = []
+    monkeypatch.setattr(ks, "dump_bytes", lambda data, target: calls.append((data, target)))
+    path = str(tmp_path / "x.json")
+    ks.dump_json({"a": 1}, path)
+    assert calls == [(b'{\n  "a": 1\n}\n', path)]
