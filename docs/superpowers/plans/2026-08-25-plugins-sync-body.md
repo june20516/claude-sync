@@ -645,6 +645,13 @@ Step 1의 편집이 곧 구현이다. `tests/test_keyed_sync.py` 상단에 `re`�
 - [ ] **Step 4b: 변조 확인 (필수)**
 
 - 임시 복사본에 빈 `lib/plugin_config.py`를 만들고 `import keyed_sync as ks` 한 줄만 넣기 → **완전성 가드가 FAIL해야 한다.** 이것이 Task 4에서 실제로 일어날 일이다. FAIL하지 않으면 정규식이 잘못됐다
+
+> **실행 중 확정:** Task 1의 I1 수정으로 `lib/sync_state.py`가 `ks.dump_bytes`를 쓰게 되면서
+> **어댑터가 아닌 모듈이 이 스캔에 걸린다.** 위 코드를 문언대로 쓰면 즉시 FAIL한다.
+> 해법은 `NON_ADAPTER_KEYED_SYNC_IMPORTERS = {"sync_state"}`를 두되 **그 목록이 거짓이
+> 되는 순간 잡히도록** 하는 것이다 — 목록의 모듈이 `ks.parse_base|load_backup|parse_backup`을
+> 호출하기 시작하면 같은 테스트가 FAIL한다. "import 기준 스캔 + 자기검증 예외 목록"이
+> "호출 기준 스캔"보다 이른 시점에 걸리므로 이쪽을 택했다(빈 스텁도 분류를 강제한다).
 - `RECOGNIZE_ADAPTERS`에서 `mc`를 빼기 → 완전성 가드가 FAIL해야 한다
 - `mc.parse_backup`이 다른 훅(`lambda obj: obj`)을 쓰도록 바꾸기 → 파라미터화된 가드가 FAIL해야 한다
 - root가 아닌 환경에서 `requires_permission_bits`의 조건을 `True`로 바꾸기 → 네 테스트가 skip으로 표시되는지 확인한다(마커가 실제로 붙었는지 검증)
