@@ -26,6 +26,14 @@ import sync_state as ss  # noqa: E402
 # **설치는 한다.** 행동 보류 키는 코어가 action_held 버킷에만 넣으므로 자동으로 빠진다.
 INSTALL_BUCKETS = ("add", "needs_secret")
 
+# 등록 후보가 되는 버킷. to_register와 skipped_always_known이 **같은 집합**을 훑어야
+# 한다 — 후자는 전자가 always-known으로 걸러 낸 나머지를 보고하는 자리라, 두 열거가
+# 갈리면 등록도 보고도 되지 않는 항목이 생긴다. needs_secret을 넣는 것은 **방어다**:
+# route_new는 secret_keys(value)가 비지 않을 때만 그 버킷에 넣는데 이 섹션의 훅은
+# _no_secrets(SECTION_SECRET_KEYS)라 오늘은 **항상** 빈다. 그래서 지금은 어느 쪽을
+# 써도 결과가 같고, 증상이 없는 채로 그 섹션에 되물을 키가 생기는 날 조용히 갈린다.
+REGISTER_BUCKETS = ("add", "needs_secret")
+
 
 def _plan_sections(local, repo, base, hooks, skipped):
     """섹션별 restore_plan. skipped 섹션은 계획을 내지 않는다."""
@@ -45,6 +53,28 @@ def _plan_sections(local, repo, base, hooks, skipped):
     return out
 
 
+def _install_dependencies(install):
+    """설치 키 → 먼저 등록해야 할 마켓플레이스 이름 (9.3.2).
+
+    등록이 실패한 마켓플레이스의 플러그인은 설치를 시도하지 않는다 — 시도하면 CLI가
+    모호한 문구로 실패해 거짓 실패를 양산한다. always-known 다섯은 등록 단계가 애초에
+    없으므로 의존을 걸지 않는다(걸면 설치가 영영 차단된다).
+
+    **marketplace_of가 None인 갈래는 오늘 도달할 수 없다** — install ⊆ restorable이고
+    _plugin_restorable은 marketplace_of(key)가 None이면 거짓을 돌려주므로 그런 키는
+    unrestorable로 빠져 install에 들어오지 않는다. 그래도 거르는 이유는 빠졌을 때의
+    실패 모양이다: None은 ALWAYS_KNOWN에 없으므로 그대로 통과해 {"키": null}이 실리고,
+    SKILL.md는 존재하지 않는 등록 단계를 기다리며 그 플러그인을 영영 차단한다 —
+    조용하다. **도달 가능한 경로가 있다는 뜻으로 읽지 말 것.**
+    """
+    out = {}
+    for key in install:
+        marketplace = pc.marketplace_of(key)
+        if marketplace is not None and marketplace not in pc.ALWAYS_KNOWN:
+            out[key] = marketplace
+    return out
+
+
 def build_plan(backup_path, settings_path=None, installed_path=None, held_path=None,
                base_dir=ss.BASE_DIR):
     """복원 계획.
@@ -56,6 +86,16 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     도메인상 비밀이 없는 섹션이다). 그 셋을 전부 마스킹 훅에 통과시키는 것은 근거를
     구조로 바꾸기 위해서다: enabledPlugins의 정규화가 오늘 항등(_identity)이라는 사실에
     기대면, 그 섹션에 마스킹이 도입되는 순간 훅을 우회하는 자리 하나만 조용히 남는다.
+
+    **최상위 status는 섹션 skip을 반영하지 않는다(의도).** 그 값은 "계획 수립을
+    수행했는가"다 — 접힌 섹션이 있어도 나머지 섹션의 계획은 유효하고, 최상위를 skipped로
+    접으면 마켓플레이스 등록처럼 멀쩡히 낼 수 있는 단계까지 함께 버려진다(9.3.6의 부분
+    skip이 전체 skip으로 바뀐다). 그 대가로 **restore에서는 반대 방향이 위험하다**:
+    installed_plugins.json 판정 불가로 두 섹션이 접힌 실행의 출력은
+    {"status": "ok", "install": [], "disable_after_install": [], "config_keys": {}}이라
+    소비자가 최상위만 읽으면 "복원할 것이 없습니다"로 보고하고 **조용히 아무것도
+    복원하지 않는다.** 섹션 단위 사실은 sections[<섹션>]["status"]에만 있고, 소비자는
+    그것을 **반드시 따로 읽어야 한다.**
     """
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)
@@ -75,7 +115,8 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     configs = sections["pluginConfigs"]
 
     # 1단계 — 등록. always-known 다섯은 건너뛴다(등록이 무의미하거나 반드시 실패한다).
-    to_register = [name for name in markets.get("add", []) + markets.get("needs_secret", [])
+    to_register = [name for bucket in REGISTER_BUCKETS
+                   for name in markets.get(bucket, [])
                    if name not in pc.ALWAYS_KNOWN]
     marketplace_add = [
         {"name": name,
@@ -113,7 +154,8 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
         "sections": sections,
         "marketplace_add": marketplace_add,
         "skipped_always_known": sorted(
-            name for name in markets.get("add", []) if name in pc.ALWAYS_KNOWN),
+            name for bucket in REGISTER_BUCKETS for name in markets.get(bucket, [])
+            if name in pc.ALWAYS_KNOWN),
         "install": install,
         "disable_after_install": disable_after_install,
         # 코어가 needs_secret으로 라우팅할 때 부른 것과 **같은 훅**으로 키 목록을 만든다.
@@ -125,11 +167,7 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
         "repo_values": {k: masked["enabledPlugins"][k] for k in decided
                         if k in masked["enabledPlugins"]},
         "local_values": {k: local_masked[k] for k in decided if k in local_masked},
-        # 9.3.2 — 등록이 실패한 마켓플레이스의 플러그인은 설치를 시도하지 않는다.
-        # 시도하면 CLI가 모호한 문구로 실패해 거짓 실패를 양산한다.
-        "depends_on": {k: pc.marketplace_of(k) for k in install
-                       if pc.marketplace_of(k) not in pc.ALWAYS_KNOWN
-                       and pc.marketplace_of(k) is not None},
+        "depends_on": _install_dependencies(install),
         # 훅 묶음의 reason을 쓴다 — 자유 함수 unrestorable_reason에 repo를 따로 넘기면
         # 판정(restorable)과 사유가 **다른 repo**를 볼 수 있고 양쪽 다 무증상이다
         # (Task 6 quality review I2). build_hooks가 둘에 같은 repo를 닫아 준다.
