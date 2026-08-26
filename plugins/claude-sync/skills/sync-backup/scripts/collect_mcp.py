@@ -50,6 +50,11 @@ def collect(repo_path, staging_dir, claude_json_path=None, base_dir=ss.BASE_DIR)
     mc.dump_backup(result["next_base"], tmp)
     mc.dump_backup(servers, repo_file)
 
+    # 이 블록이 **쓰기 뒤에** 있어도 되는 이유는 예외를 던질 수 없는 순수 계산이기
+    # 때문이다. collect_plugins는 반대로 쓰기 **앞에** 둔다 — 거기 보고 블록은
+    # held_kinds를 부르고 그것이 분류 불가에 ValueError를 던지기 때문이다.
+    # 던질 수 있는 계산이 여기 들어오면 그때 앞으로 옮긴다: 레포를 이미 고친 뒤에
+    # 던지면 그 예외가 부르는 skipped의 문구("레포 파일은 손대지 않았다")가 거짓이 된다.
     out = {
         "status": "ok",
         "conflicts": {
