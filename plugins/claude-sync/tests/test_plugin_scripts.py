@@ -1038,6 +1038,10 @@ def test_plan_installs_a_plugin_that_only_plugin_configs_names(tmp_path):
 
     enabledPlugins의 add가 **비어 있는** 것을 함께 못박는다 — 그 섹션이 install을
     대신 채우면 이 단정이 pluginConfigs 기여를 재지 못한다.
+
+    같은 fixture로 "부재는 false가 아니다"를 계획 층위에서 못박는다 (1-c C4) —
+    conf@m은 **설치 대상이면서** 레포 enabledPlugins에 없다(= 매니페스트 기본값에
+    위임). disable 가드가 부재를 false로 접으면 이 플러그인이 설치 직후 꺼진다.
     """
     out = build_plan(tmp_path, local={},
                      repo={"extraKnownMarketplaces": {"m": GH},
@@ -1046,6 +1050,7 @@ def test_plan_installs_a_plugin_that_only_plugin_configs_names(tmp_path):
     assert out["sections"]["enabledPlugins"]["add"] == []
     assert out["install"] == ["conf@m"]
     assert out["depends_on"] == {"conf@m": "m"}
+    assert out["disable_after_install"] == []
 
 
 def test_plan_gives_marketplace_add_arguments(tmp_path):
@@ -1094,6 +1099,93 @@ def test_plan_disables_only_what_install_would_leave_wrong(tmp_path):
                      repo={"enabledPlugins": {"on@m": True, "off@m": False},
                            "extraKnownMarketplaces": {"m": GH}})
     assert out["disable_after_install"] == ["off@m"]
+
+
+def test_plan_disables_nothing_outside_the_install_list(tmp_path):
+    """disable은 **설치 직후**의 값 맞추기다 — 그 범위를 install 밖으로 넓히면 이미
+    로컬에 있는 항목까지 대상이 된다.
+
+    wait@m은 케이스 9로 사용자 선택을 기다리는 중인데 레포 값이 false다. 범위가
+    넓어지면 선택을 묻기도 전에 disable 명령이 나간다. 같은 fixture에서 install에
+    **있는** off@m은 대상이 되는 것을 함께 못박는다 — 안 그러면 "아무것도 disable하지
+    않는다"로 저절로 참이 된다.
+    """
+    out = build_plan(tmp_path, local={"enabledPlugins": {"wait@m": True}},
+                     repo={"enabledPlugins": {"wait@m": False, "off@m": False},
+                           "extraKnownMarketplaces": {"m": GH}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["both_changed"] == ["wait@m"]     # 레포 값이 false인 미설치 대상
+    assert out["install"] == ["off@m"]
+    assert out["disable_after_install"] == ["off@m"]
+
+
+def test_plan_sorts_install_across_both_contributing_sections(tmp_path):
+    """install은 두 섹션의 기여를 이어 붙인다 — 정렬하지 않으면 순서가 섹션 순서에
+    끌려가 비결정적으로 보인다.
+
+    **삽입 순서와 정렬 순서가 다른** 이름을 쓴다: enabledPlugins가 zeta@m을,
+    pluginConfigs가 alpha@m을 낸다. 이어 붙인 그대로면 [zeta@m, alpha@m]이다.
+    """
+    out = build_plan(tmp_path, local={},
+                     repo={"enabledPlugins": {"zeta@m": True},
+                           "extraKnownMarketplaces": {"m": GH},
+                           "pluginConfigs": {"alpha@m": {"options":
+                                                         {"apiKey": pc.SENTINEL}}}})
+    section = out["sections"]
+    assert section["enabledPlugins"]["add"] == ["zeta@m"]
+    assert section["pluginConfigs"]["needs_secret"] == ["alpha@m"]
+    assert out["install"] == ["alpha@m", "zeta@m"]
+
+
+def test_plan_carries_both_values_for_every_decided_key(tmp_path):
+    """8.6 — SKILL.md가 케이스 8·9의 값을 알아야 한다. 없으면 레포 파일을 다시 파싱해야
+    하고 그것이 "파서 두 벌"이다.
+
+    세 갈래(repo_ahead·both_changed·value_held)와 install을 **동시에** 채우고, 같은 키의
+    레포 값과 로컬 값이 **서로 다르게** 만든다 — 한쪽을 비우거나 두 출처를 뒤바꾸는
+    회귀가 각각 따로 드러나야 하기 때문이다. 판정 대상이 아닌 두 키(local_ahead의
+    mine@m, local_only의 solo@m)를 함께 두어 목록이 decided로 좁혀지는 것도 잰다.
+    """
+    base = {"enabledPlugins": {"ahead@m": True, "both@m": True, "mine@m": True}}
+    local = {"enabledPlugins": {"ahead@m": True, "both@m": ["2.0.0"], "mine@m": False,
+                                "held@m": True, "solo@m": True}}
+    repo = {"enabledPlugins": {"ahead@m": False, "both@m": False, "mine@m": True,
+                               "held@m": ["1.0.0"], "new@m": True},
+            "extraKnownMarketplaces": {"m": GH}}
+    out = build_plan(tmp_path, local=local, repo=repo, base=base)
+    section = out["sections"]["enabledPlugins"]
+    assert section["repo_ahead"] == ["ahead@m"]        # 케이스 8
+    assert section["both_changed"] == ["both@m"]       # 케이스 9
+    assert section["value_held"] == ["held@m"]         # H3
+    assert section["local_ahead"] == ["mine@m"]        # 케이스 7 — 판정 대상이 아니다
+    assert section["local_only"] == ["solo@m"]         # 케이스 1 — 판정 대상이 아니다
+    assert out["install"] == ["new@m"]
+    assert out["repo_values"] == {"ahead@m": False, "both@m": False,
+                                  "held@m": ["1.0.0"], "new@m": True}
+    # new@m은 로컬에 없다 — 없는 키를 넣으면 SKILL.md가 "값이 바뀐다"고 잘못 말한다.
+    assert out["local_values"] == {"ahead@m": True, "both@m": ["2.0.0"], "held@m": True}
+
+
+def test_plan_reads_base_of_each_section_from_that_section(tmp_path):
+    """base를 안 읽거나 엉뚱한 섹션에서 읽으면 삭제 후보(케이스 4·5)가 통째로 사라진다 —
+    로컬 신규(케이스 1)로 보이므로 예외도 빈 결과도 나지 않는다.
+
+    세 섹션의 base 키를 **모두 다르게** 둔다. 한 섹션의 base를 세 섹션에 돌려 쓰면
+    나머지 둘의 키가 base에 없어 local_only로 새는 것이 드러난다.
+    """
+    local = {"enabledPlugins": {"gone@m": True},
+             "extraKnownMarketplaces": {"m": GH},
+             "pluginConfigs": {"conf@m": {"options": {"token": "t"}}}}
+    base = {"enabledPlugins": {"gone@m": True},
+            "extraKnownMarketplaces": {"m": GH},
+            "pluginConfigs": {"conf@m": {"options": {"token": pc.SENTINEL}}}}
+    out = build_plan(tmp_path, local=local, repo={}, base=base)
+    for section, key in (("enabledPlugins", "gone@m"),
+                         ("extraKnownMarketplaces", "m"),
+                         ("pluginConfigs", "conf@m")):
+        assert out["sections"][section]["local_stale"] == [key]
+        # base를 못 읽었을 때 이 키가 흘러가는 곳이다. 비어 있어야 위 단정이 공허하지 않다.
+        assert out["sections"][section]["local_only"] == []
 
 
 def test_plan_never_disables_a_key_absent_from_the_repo(tmp_path):
