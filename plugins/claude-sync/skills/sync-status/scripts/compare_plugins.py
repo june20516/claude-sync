@@ -35,9 +35,15 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
 
     **최상위 status는 섹션 skip을 반영하지 않는다(의도).** 그 값은 "비교를 수행했는가"다
     — 읽기 전용이므로 collect의 근거("이 스크립트가 레포를 갱신했는가")는 여기 적용되지
-    않고, 같은 결론에 다른 근거가 선다. 세 섹션이 전부 접힌 실행에서도 ok가 나오므로
+    않고, 같은 결론에 다른 근거가 선다. 두 섹션이 접힌 실행에서도 ok가 나오므로
     소비자는 최상위만 보고 "동일"이라고 말하면 안 된다 — 섹션 단위 사실은
     sections[<섹션>]["status"]에만 있고, 그것을 **반드시 따로 읽어야 한다.**
+
+    **"세 섹션이 전부"는 도달할 수 없다.** skipped를 만드는 곳은 read_hold_inputs
+    하나뿐이고 거기 들어갈 수 있는 키는 enabledPlugins·pluginConfigs 둘뿐이다 —
+    extraKnownMarketplaces는 auto와도 보류 파일과도 무관해 어느 실패 경로로도 접히지
+    않는다(spec 3.4). 이 전제를 틀리게 읽으면 소비자 쪽에 **절대 실행되지 않는**
+    "모든 섹션이 접혔습니다" 분기가 생긴다.
     """
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)

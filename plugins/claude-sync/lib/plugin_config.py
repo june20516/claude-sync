@@ -835,9 +835,17 @@ def build_hooks(local, repo, *, auto_ids, held_state, _context=None):
     없는 마켓플레이스의 플러그인이 전부 unrestorable로 접혀 **첫 복원이 통째로 빈다.**
     """
     # _context는 hooks_and_context 전용 내부 통로다 — 외부 호출부가 임의의 컨텍스트를
-    # 끼워 넣으라는 자리가 아니라, 훅이 닫는 컨텍스트와 보고에 넘길 컨텍스트를 **같은
+    # 끼워 넣으라는 자리가 아니라, 훅이 닫는 세 값과 보고에 넘길 컨텍스트의 값을 **같은
     # 객체**로 만들기 위한 것이다. 그래서 밑줄로 사적 표시를 하고 기본값을 둔다
     # (기존 호출부는 안 넘기므로 서명 변경이 호환된다).
+    #
+    # **_context를 넘기면 local·auto_ids는 이 함수에서 한 번도 쓰이지 않는다** — 둘의
+    # 유일한 사용처가 바로 아래 fallback의 held_context 호출이다. 반면 held_state는
+    # 계속 산다: 다음 줄의 released가 그것을 읽는다. 그래서 _context와 auto_ids가 서로
+    # 다른 입력에서 왔으면 훅의 보류 판정(_context 안의 auto_ids)과 release 탈출구
+    # (held_state)가 다른 세계를 보게 되는데, 여기에 그것을 잡는 장치는 없다.
+    # 그러므로 _context는 **반드시 같은 입력에서 만든 것**이어야 하고, 그 일관성을
+    # 보장하는 유일한 자리가 hooks_and_context다 — 밑줄 접두사가 뜻하는 바가 이것이다.
     context = _context if _context is not None else held_context(
         local, repo, auto_ids=auto_ids, held_state=held_state)
     released = frozenset(held_state.get("release", {}).get("enabledPlugins", []))
@@ -871,10 +879,18 @@ def hooks_and_context(local, repo, *, auto_ids, held_state):
     대신 이것을 부르면 (local, repo)를 한 번만 받으므로 갈릴 자리가 없다.
 
     컨텍스트는 **한 번만** 만들어 build_hooks에 _context로 건네고 그대로 돌려준다 —
-    훅이 닫은 것과 여기서 돌려주는 것이 **같은 객체**다. 동일성이 객체 identity로
-    성립하므로, held_context가 언젠가 순수하지 않게 되어도(경로를 읽거나 시각을 보거나
-    캐시를 타도) 두 값이 갈릴 자리가 없다. 두 번 불러 "입력이 같으니 결과도 같다"에
-    기대면 그 등식을 지탱하는 것이 구조가 아니라 함수의 성질뿐이다.
+    훅이 닫는 세 값(auto_ids·directory_names·held_configs)이 여기서 돌려주는 dict의
+    값과 **같은 객체**다. 동일성이 객체 identity로 성립하므로, held_context가 언젠가
+    순수하지 않게 되어도(경로를 읽거나 시각을 보거나 캐시를 타도) 두 값이 갈릴 자리가
+    없다. 두 번 불러 "입력이 같으니 결과도 같다"에 기대면 그 등식을 지탱하는 것이
+    구조가 아니라 함수의 성질뿐이다.
+
+    **닫히는 것은 세 값이지 dict가 아니다.** build_hooks가
+    `_make_hold(section, released=released, **context)`로 **풀어서** 넘기므로 훅의
+    자유변수는 ('auto_ids', 'directory_names', 'held_configs', 'released', 'section')
+    이고 context dict는 어디에도 닫히지 않는다. 그래서 돌려받은 dict를 손대면 비대칭이
+    나온다 — `context["auto_ids"] = ...` 같은 **재바인딩은 훅에 반영되지 않고**,
+    `context["held_configs"]`의 **제자리 변형은 반영된다**(값이 같은 객체라서).
     """
     context = held_context(local, repo, auto_ids=auto_ids, held_state=held_state)
     return (build_hooks(local, repo, auto_ids=auto_ids, held_state=held_state,

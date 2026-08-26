@@ -816,9 +816,17 @@ def test_compare_does_not_reach_the_base_history_at_all():
 
 
 def test_compare_skips_sections_the_same_way_backup_does(tmp_path):
-    """스킬마다 다른 범위로 접으면 사용자가 두 명령에서 다른 상태를 본다."""
+    """스킬마다 다른 범위로 접으면 사용자가 두 명령에서 다른 상태를 본다.
+
+    **최상위 status는 섹션 skip을 반영하지 않는다.** 반영하게 만들면 세 섹션 중 둘만
+    접힌 이 실행이 통째로 "플러그인 비교 건너뜀"으로 읽혀, 멀쩡히 계산된
+    extraKnownMarketplaces 비교가 사용자에게 도달하지 않는다. collect 쪽 대칭 단정은
+    test_collect_skips_two_sections_when_auto_flags_are_unavailable에 있다 — 한쪽만
+    잠가 두면 같은 규칙을 공유한다는 말이 한쪽에서만 참이 된다.
+    """
     out = compare(tmp_path, local={"enabledPlugins": {"p@m": True}},
                   installed=str(tmp_path / "none-installed.json"))
+    assert out["status"] == "ok"
     assert out["sections"]["enabledPlugins"]["status"] == "skipped"
     assert out["sections"]["pluginConfigs"]["status"] == "skipped"
     assert out["sections"]["extraKnownMarketplaces"]["status"] == "ok"
