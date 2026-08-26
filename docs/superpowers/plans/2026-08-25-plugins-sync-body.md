@@ -3719,10 +3719,23 @@ git commit -m "feat(restore): plan_plugins.py plan — 섹션별 복원 계획�
 - Modify: `plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py` (`apply_base`·`read_choices`·`main`)
 - Modify: `plugins/claude-sync/lib/plugin_config.py` (`choice_list`·`next_held_state`·`write_held_state`)
 - Modify: `plugins/claude-sync/tests/test_plugin_scripts.py`
+- Modify: `plugins/claude-sync/tests/test_plugin_config.py` (술어 공유 측정)
 
 - [ ] **Step 1: 실패하는 test 작성**
 
-`tests/test_plugin_scripts.py` 끝에 추가한다.
+먼저 헬퍼 하나를 `tests/test_plugin_scripts.py`의 `staged_doc` 옆에 더한다. 스테이징
+파일의 **원문**을 재는 자리다 — dict 동등성 단정은 값을 담는 필드가 나중에 하나라도
+생기면 그것을 보지 못한다(형제 `plan_mcp`의 `test_apply_base_never_writes_plaintext_secret`
+이 같은 처방이다).
+
+```python
+def staged_text(staging):
+    """스테이징 파일의 **원문**. dict 동등성으로는 새 필드에 실린 평문을 보지 못한다."""
+    with open(os.path.join(staging, pc.BACKUP_RELPATH), encoding="utf-8") as f:
+        return f.read()
+```
+
+그리고 같은 파일 끝에 추가한다.
 
 ```python
 EMPTY_CHOICES = {section: {"keep_stale": [], "keep_local": []} for section in pc.SECTIONS}
@@ -3817,14 +3830,57 @@ def test_value_held_keys_are_removed_from_base_without_any_override(tmp_path):
 def test_release_lifts_the_hold_and_lands_on_case7(tmp_path):
     """7.3 — 해제만 하면 base에 키가 없어 케이스 9로 떨어진다. 약속과 반대다."""
     held_path = str(tmp_path / "plugins-held.json")
-    _, doc = apply_base(tmp_path,
-                        choices={"enabledPlugins": {"release": ["p@m"]}},
-                        local={"enabledPlugins": {"p@m": True}},
-                        repo={"enabledPlugins": {"p@m": ["1.0.0"]}},
-                        held=held_path)
+    result, doc = apply_base(tmp_path,
+                             choices={"enabledPlugins": {"release": ["p@m"]}},
+                             local={"enabledPlugins": {"p@m": True}},
+                             repo={"enabledPlugins": {"p@m": ["1.0.0"]}},
+                             held=held_path)
     assert doc["enabledPlugins"]["p@m"] == ["1.0.0"]     # keep_local이 동시에 걸렸다
+    # ④의 강제분도 **보고에 실린다.** 싣지 않으면 SKILL.md가 "로컬 유지를 고르신 항목"
+    # 목록에서 이 키를 빼고 안내해, 사용자는 base가 전진한 사실을 볼 길이 없다.
+    assert result["sections"]["enabledPlugins"]["kept_local"] == ["p@m"]
     with open(held_path, encoding="utf-8") as f:
         assert json.load(f)["release"]["enabledPlugins"] == ["p@m"]
+
+
+def test_release_and_keep_local_naming_the_same_key_report_it_once(tmp_path):
+    """④의 합류에는 중복 제거가 걸린다 — 없으면 kept_local에 같은 키가 두 번 실린다.
+
+    SKILL.md가 그 목록을 그대로 렌더링하므로 사용자가 같은 항목을 두 줄로 본다.
+    ③과 ④가 같은 키를 가리키는 것은 모순 입력이 아니다: 사용자가 케이스 8·9에서
+    "로컬 유지"를 고르면서 같은 키의 H3를 함께 푸는 갈래가 그것이다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_local": ["p@m"], "release": ["p@m"]}},
+        local={"enabledPlugins": {"p@m": True}},
+        repo={"enabledPlugins": {"p@m": ["1.0.0"]}})
+    assert result["sections"]["enabledPlugins"]["kept_local"] == ["p@m"]
+    assert doc["enabledPlugins"]["p@m"] == ["1.0.0"]     # 적용 자체는 됐다
+
+
+def test_keep_local_wins_over_keep_stale_on_the_same_key(tmp_path):
+    """②③이 겹치면 ③이 이긴다 — ③이 뒤에 돌기 때문이고, 그 순서에는 근거가 있다.
+
+    ③은 `key in masked` 가드를 가지므로 **레포에 값이 있을 때만** 적용된다. 그런데
+    ②(케이스 4·5)는 "레포가 그 키를 잃었다"는 뜻이라, 둘이 겹치는 입력은 이미 모순이다.
+    순서를 뒤집으면 그 모순 입력이 정당한 선택을 조용히 덮어 base에서 키가 사라지고
+    다음 백업이 케이스 1(로컬 신규)로 착지한다.
+
+    **kept_stale은 그때도 요청을 그대로 보고한다** — 같은 보고의 base_keys가 그 키를
+    담으므로 소비자가 대조할 수 있다는 것이 그 비대칭을 받아들이는 근거다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_stale": ["p@m"], "keep_local": ["p@m"]}},
+        local={"enabledPlugins": {"p@m": False}},
+        repo={"enabledPlugins": {"p@m": True}},
+        base={"enabledPlugins": {"p@m": True}})
+    assert doc["enabledPlugins"]["p@m"] is True
+    section = result["sections"]["enabledPlugins"]
+    assert section["kept_stale"] == ["p@m"]
+    assert section["kept_local"] == ["p@m"]
+    assert section["base_keys"] == ["p@m"]
 
 
 def test_release_list_is_sorted_regardless_of_where_the_entries_came_from(tmp_path):
@@ -3880,6 +3936,84 @@ def test_declined_config_is_recorded_with_the_masked_repo_fingerprint(tmp_path):
     with open(held_path, encoding="utf-8") as f:
         assert json.load(f)["pluginConfigs"] == {
             "delta@m": pc.value_fingerprint(masked["delta@m"])}
+
+
+def test_declining_again_refreshes_the_fingerprint_of_a_changed_repo_value(tmp_path):
+    """6.4 — 레포 값이 바뀐 뒤 같은 키를 다시 거절하면 지문이 **갱신돼야** 한다.
+
+    갱신이 죽으면 낡은 지문이 남아 H4가 다시 매치되지 않고, 사용자는 같은 항목을
+    **매 restore마다 다시** 받는다. 예외도 빈 결과도 없이 조용하다.
+
+    이전 파일에 실재하지 않는 지문을 두어 "이전 값을 그대로 옮긴 것"과 구별한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    with open(held_path, "w", encoding="utf-8") as f:
+        json.dump({"pluginConfigs": {"delta@m": "0" * 64},
+                   "release": {"enabledPlugins": []}}, f)
+    repo = {"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-new"}}}}
+    apply_base(tmp_path, choices={"pluginConfigs": {"declined": ["delta@m"]}},
+               local={}, repo=repo, held=held_path)
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo["pluginConfigs"])
+    fresh = pc.value_fingerprint(masked["delta@m"])
+    assert fresh != "0" * 64
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] == {"delta@m": fresh}
+
+
+def test_held_file_directory_is_created_on_a_machine_that_never_backed_up(tmp_path):
+    """~/.claude/.sync-state/를 아무도 먼저 만들지 않는다 — write_base가 만드는 것은
+    그 안의 base뿐이고, 백업을 한 번도 하지 않은 기기에는 그 디렉토리가 없다.
+
+    빠지면 FileNotFoundError가 스크립트의 except 튜플에 걸려 {"status": "skipped"}로
+    접히고, 사용자의 decline이 **영영 기록되지 않는다.** 다른 테스트는 전부 이미 있는
+    tmp 디렉토리를 주므로 이 줄이 일하는 자리를 재지 못한다.
+    """
+    held_path = str(tmp_path / "fresh-state" / "plugins-held.json")
+    assert not os.path.exists(os.path.dirname(held_path))
+    apply_base(tmp_path, choices={"pluginConfigs": {"declined": ["delta@m"]}},
+               local={}, repo={"pluginConfigs": {"delta@m": {"options": {}}}},
+               held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] != {}
+
+
+def test_the_held_file_is_untouched_when_the_staging_write_fails(tmp_path):
+    """스테이징(base) 먼저, 보류 파일 나중 — 그 순서를 지키는 fixture.
+
+    스테이징 디렉토리 자리에 **일반 파일**을 두면 os.makedirs가 OSError로 죽는다.
+    순서가 뒤바뀌면 그 시점에 보류 파일이 이미 쓰여 있고, 그러면 H3가 풀린 채로 base에
+    키가 없어 다음 백업이 케이스 9로 떨어진다 — 약속과 반대다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    (tmp_path / "blocked").write_text("not a directory", encoding="utf-8")
+    with pytest.raises(OSError):
+        apply_base(tmp_path, choices={"pluginConfigs": {"declined": ["delta@m"]}},
+                   local={}, repo={"pluginConfigs": {"delta@m": {"options": {}}}},
+                   held=held_path, staging="blocked")
+    assert not os.path.exists(held_path)
+
+
+def test_apply_base_never_writes_a_plaintext_secret(tmp_path):
+    """형제 plan_mcp의 같은 가드와 짝이다 — dict 동등성이 아니라 **원문**을 훑는다.
+
+    "값이 실리는 자리가 구조적으로 없다"는 결론은 오늘 참이지만, 값을 담는 필드가
+    나중에 하나라도 생기면 dict 대조 단정은 그것을 보지 못한다. 전진 갈래(ahead@m)와
+    keep_local 갈래(kept@m)를 한 fixture에 함께 둔다 — 값이 base로 들어가는 자리가
+    그 둘뿐이라서다.
+    """
+    _, doc = apply_base(
+        tmp_path,
+        choices={"pluginConfigs": {"keep_local": ["kept@m"]}},
+        local={"pluginConfigs": {"ahead@m": {"options": {"apiKey": "sk-ahead"}},
+                                 "kept@m": {"options": {"other": "x"}}}},
+        repo={"pluginConfigs": {"ahead@m": {"options": {"apiKey": "sk-ahead"}},
+                                "kept@m": {"options": {"apiKey": "sk-kept"}}}})
+    raw = staged_text(str(tmp_path / "staging"))
+    assert "sk-ahead" not in raw
+    assert "sk-kept" not in raw
+    # 두 갈래가 실제로 base에 들어갔다 — 아니면 위 두 단정이 공허하다.
+    assert doc["pluginConfigs"]["ahead@m"] == {"options": {"apiKey": pc.SENTINEL}}
+    assert doc["pluginConfigs"]["kept@m"] == {"options": {"apiKey": pc.SENTINEL}}
 
 
 def test_configured_entry_is_dropped_from_the_held_file(tmp_path):
@@ -4072,6 +4206,36 @@ def test_apply_base_cli_skips_when_the_choices_json_is_not_an_object(tmp_path):
     assert str(choices_path) in json.loads(proc.stdout)["reason"]
 
 
+def test_apply_base_cli_writes_the_staging_file(tmp_path):
+    """main()의 인자 배선을 **성공 경로로** 한 번 실행한다 (형제 plan_mcp와 같은 가드).
+
+    거부 갈래만 재면 배선이 무가드로 남는다. backup_path와 staging_dir이 뒤바뀌면
+    os.makedirs가 레포의 plugins.json 자리에 디렉토리를 만들려다 FileExistsError로
+    접혀 {"status": "skipped"} + **종료 코드 0**이 된다 — SKILL.md는 그것을 정상으로
+    읽고 base는 전혀 전진하지 않는다. 이 함수가 .tmp 규칙에서 스스로를 제외하면서까지
+    막으려던 바로 그 실패 모양이다.
+
+    격리 HOME에 settings.json과 installed_plugins.json을 함께 넣는다 — 하나라도 없으면
+    섹션이 접혀 스테이징 문서가 비고, 아래 단정이 배선과 무관하게 참이 된다.
+    """
+    home = tmp_path / "home"
+    (home / ".claude" / "plugins").mkdir(parents=True, exist_ok=True)
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"enabledPlugins": {"p@m": True}}), encoding="utf-8")
+    (home / ".claude" / "plugins" / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {}}), encoding="utf-8")
+    choices_path = tmp_path / "choices.json"
+    choices_path.write_text(json.dumps(EMPTY_CHOICES), encoding="utf-8")
+    repo_dir = write_repo(tmp_path, {"enabledPlugins": {"p@m": True}})
+    staging = str(tmp_path / "staging")
+    proc = run_script(tmp_path, plan_script(), "apply-base",
+                      os.path.join(repo_dir, pc.BACKUP_RELPATH), staging,
+                      str(choices_path))
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "ok"
+    assert staged_doc(staging)["enabledPlugins"] == {"p@m": True}
+
+
 def test_skipped_section_keeps_the_previous_base_in_the_staged_document(tmp_path):
     """7.5 — 판정하지 못한 섹션을 {}로 덮으면 그 섹션의 이력이 통째로 사라진다.
 
@@ -4094,12 +4258,17 @@ def test_this_runs_decline_takes_effect_on_the_base_immediately(tmp_path):
     이전 상태를 넘기면 H4가 아직 걸리지 않아 그 키가 base로 전진하고, 다음 실행에서야
     보류로 판정되어 얼어붙은 base가 남는다. 로컬과 레포의 마스킹 결과가 **같아야**
     next_base가 전진을 시도하므로(그래야 이 단정이 공허하지 않다) 옵션 키 집합을 맞춘다.
+
+    레포 값에 **평문**을 넣는다. SENTINEL을 넣으면 마스킹이 항등이 되어 원본과 마스킹된
+    값의 지문이 같아지고, value_held를 **정규화 없이** 손으로 조립하는 회귀가 이 단정에
+    드러나지 않는다 — H4의 지문은 마스킹된 레포 값으로 계산되므로, 평문을 그대로 hold에
+    넘기면 지문이 어긋나 보류가 통째로 비고 이 키가 base로 전진한다.
     """
     _, doc = apply_base(
         tmp_path,
         choices={"pluginConfigs": {"declined": ["delta@m"]}},
         local={"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-real"}}}},
-        repo={"pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}})
+        repo={"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-plain"}}}})
     assert "delta@m" not in doc["pluginConfigs"]
 
 
@@ -4236,6 +4405,55 @@ def test_release_does_not_advance_the_base_of_the_other_section(tmp_path):
     assert result["sections"]["pluginConfigs"]["kept_local"] == []
 ```
 
+`tests/test_plugin_config.py`에는 술어 공유를 재는 둘을 더한다(8.2 열거형 대조 절 앞).
+**오늘 `enabledPlugins`의 정규화가 항등이라 이 갈림은 어떤 값 fixture로도 드러나지
+않는다** — 그래서 재는 것이 값이 아니라 술어의 동일성이다.
+
+```python
+def test_h3_held_kinds_and_release_share_one_extended_value_predicate(monkeypatch):
+    """"레포 값이 불리언이 아닌가"를 세 곳이 각자 적으면 그중 하나가 갈려도 무증상이다.
+
+    갈리는 자리는 셋이다 — hold의 H3, held_kinds의 extended_value, next_held_state의
+    release 정리. 한 곳만 **원본** 레포를 보게 되면 ⑴ release 항목이 조용히 유지되거나
+    사라지고 ⑵ 같은 실행의 pluginConfigs 지문이 H4와 어긋나 decline이 영영 매치되지
+    않는다. 오늘 enabledPlugins의 정규화가 항등이라 그 갈림은 **결과가 같아** 어떤
+    fixture로도 드러나지 않는다 — 그래서 재는 것은 값이 아니라 술어의 **동일성**이다.
+
+    술어를 뒤집어 셋이 함께 따라가는지 본다. 한 곳이라도 자기 판을 되살리면 그 자리만
+    옛 판정(불리언 → 확장 값 아님)을 내어 그 줄이 갈라낸다.
+    """
+    monkeypatch.setattr(pc, "_extended_value", lambda repo_norm, key: True)
+    repo = {"enabledPlugins": {"p@m": True}, "extraKnownMarketplaces": {},
+            "pluginConfigs": {}}
+    hooks = pc.build_hooks({}, repo, auto_ids=frozenset(), held_state=pc.EMPTY_HELD)
+    assert hooks["enabledPlugins"]["hold"]({}, repo["enabledPlugins"])["value"] == {"p@m"}
+    assert pc.held_kinds("enabledPlugins", ["p@m"], auto_ids=frozenset(),
+                         directory_names=frozenset(), held_configs={},
+                         repo_norm=repo["enabledPlugins"])["extended_value"] == ["p@m"]
+    previous = {"pluginConfigs": {}, "release": {"enabledPlugins": ["p@m"]}}
+    assert pc.next_held_state(previous, pc.normalized_sections(repo),
+                              {})["release"]["enabledPlugins"] == ["p@m"]
+
+
+def test_next_held_state_reads_only_normalized_values(monkeypatch):
+    """정규화가 값을 바꾸는 섹션에서 이 함수가 **어느 쪽을 보는지** 고정한다.
+
+    enabledPlugins의 정규화는 오늘 항등이라 이 갈림이 무증상이다. 정규화를 잠시
+    "모든 값을 불리언으로 좁히는" 것으로 바꿔 두 세계를 갈라놓으면, 원본을 보는 판은
+    release 항목을 유지하고 정규화된 값을 보는 판은 정리한다.
+
+    normalized_sections를 거쳐 넘기는 것이 계약이므로 여기서도 그것을 거친다 — 그래야
+    호출부가 원본을 그대로 넘기게 되는 회귀까지 같은 단정이 덮는다.
+    """
+    monkeypatch.setitem(pc.SECTION_NORMALIZE, "enabledPlugins",
+                        lambda mapping: {k: True for k in mapping})
+    repo = {"enabledPlugins": {"p@m": ["1.0.0"]}, "extraKnownMarketplaces": {},
+            "pluginConfigs": {}}
+    previous = {"pluginConfigs": {}, "release": {"enabledPlugins": ["p@m"]}}
+    state = pc.next_held_state(previous, pc.normalized_sections(repo), {})
+    assert state["release"]["enabledPlugins"] == []
+```
+
 - [ ] **Step 2: test를 실행하여 실패를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_plugin_scripts.py -q`
@@ -4243,11 +4461,64 @@ def test_release_does_not_advance_the_base_of_the_other_section(tmp_path):
 
 - [ ] **Step 3: 구현**
 
-`lib/plugin_config.py`에 셋을 더한다.
+`lib/plugin_config.py`에 넷을 더하고 둘을 고친다.
+
+정규화 표를 문서 층위로 여는 함수. **훅이 아니라 표를 직접 읽는 자리를 여기 하나로**
+모은다 — `next_held_state`는 훅보다 **먼저** 계산돼야 하므로(훅의 H4가 이번 실행의
+decline을 봐야 한다) 훅에서 `normalize`를 빌려 올 수 없다.
 
 ```python
-# ------------------------------------- 선택 반영 (9.3.7)·보류 기록 (6.4·7.3)
+def normalized_sections(sections):
+    """문서 하나를 섹션별 정규화로 통과시킨다. 값만 좁히고 키 집합은 그대로다.
 
+    **훅(build_hooks)이 아니라 표를 직접 읽는 자리가 있는 것은 순서 때문이다** —
+    next_held_state는 훅보다 **먼저** 계산돼야 하고(훅의 H4가 이번 실행의 decline을
+    봐야 한다), 그래서 훅에서 normalize를 빌려 올 수 없다. build_hooks가 싣는 것과
+    **같은 표**를 쓰는 것이 그 대응이고, 직접 읽는 자리를 이 함수 하나로 모으는 것이
+    그 대응을 지킬 수 있게 하는 조건이다 — build_hooks가 언젠가 이 표를 감싸면
+    **여기도 같이 감싸야 한다.**
+    """
+    return {section: SECTION_NORMALIZE[section](sections.get(section, {}))
+            for section in SECTIONS}
+```
+
+H3의 술어를 모듈 함수로 뽑는다. **세 곳이 같은 것을 부른다** — `_make_hold`의 H3,
+`held_kinds`의 `extended_value`, `next_held_state`의 release 정리. 셋 중 하나만
+원본 레포를 보게 되면 release 항목이 조용히 갈리고 지문이 H4와 어긋난다.
+
+```python
+def _extended_value(repo_norm, key):
+    """레포 값이 불리언이 아닌가 — 버전 제약 등 **확장 값**인가 (H3의 술어).
+
+    **세 곳이 같은 것을 물어야 한다** — _make_hold의 H3, held_kinds의 extended_value,
+    next_held_state의 release 정리. 각자 적으면 한 곳만 원본 레포를 보게 되는 갈림이
+    나고, 그러면 ⑴ release 항목이 조용히 유지되거나 사라지고 ⑵ 같은 실행의
+    pluginConfigs 지문이 H4와 어긋나 **decline이 영영 매치되지 않는다**(매 restore마다
+    다시 묻는다). 오늘 enabledPlugins의 정규화가 항등(_identity)이라 그 갈림은
+    무증상이고, 그래서 어떤 변조도 그것을 잡지 못한다.
+
+    **정규화된 매핑을 받는 것이 계약이다.** 원본을 넘기면 그 섹션에 마스킹이 도입되는
+    날 예외도 빈 결과도 없이 판정만 반대로 선다.
+    """
+    return key in repo_norm and not isinstance(repo_norm[key], bool)
+```
+
+그 셋이 그것을 부르게 고친다(앞의 둘).
+
+```python
+            if (section == "enabledPlugins"                                  # H3
+                    and _extended_value(repo, key) and key not in released):
+```
+
+```python
+        if "extended_value" in kinds and _extended_value(repo_norm, key):
+            kinds["extended_value"].append(key)
+```
+
+선택 반영·보류 기록 셋. `next_held_state`는 **정규화된 문서**를 받는다 — 원본을 받아
+여기서 다시 정규화하면 계층을 우회하는 자리가 하나 더 생긴다.
+
+```python
 def choice_list(choices, section, key):
     """선택 결과 JSON에서 문자열 목록만 꺼낸다.
 
@@ -4263,7 +4534,7 @@ def choice_list(choices, section, key):
     return [v for v in values if isinstance(v, str)] if isinstance(values, list) else []
 
 
-def next_held_state(previous, repo, choices):
+def next_held_state(previous, repo_norm, choices):
     """apply-base가 기록할 다음 보류 상태 (6.4·7.3).
 
     declined — 이번에 값을 입력한 항목(configured)은 빼고 이번에 건너뛴 항목을 더한다.
@@ -4274,8 +4545,12 @@ def next_held_state(previous, repo, choices):
     configured가 필요한 이유: 사용자가 마음을 바꿔 값을 입력했는데 항목이 남아 있으면
     지문이 그대로 매치되어 **영영 보류 상태로 남는다** — 6.4가 "그때 항목을 파일에서
     지운다"고 정한 자리다.
+
+    **정규화된 문서(normalized_sections의 결과)를 받는다.** 원본을 받아 여기서 다시
+    정규화하면 계층을 우회하는 자리가 하나 더 생긴다 — release 판정은 H3와, 지문은
+    H4와 **같은 값**을 봐야 하고, 그 술어는 _extended_value 하나로 공유한다.
     """
-    masked = SECTION_NORMALIZE["pluginConfigs"](repo.get("pluginConfigs", {}))
+    masked = repo_norm["pluginConfigs"]
     configured = set(choice_list(choices, "pluginConfigs", "configured"))
     declined = {key: value for key, value in previous["pluginConfigs"].items()
                 if key in masked and key not in configured}
@@ -4283,14 +4558,11 @@ def next_held_state(previous, repo, choices):
         if key in masked:
             declined[key] = value_fingerprint(masked[key])
 
-    plugins = repo.get("enabledPlugins", {})
-
-    def still_extended(key):
-        return key in plugins and not isinstance(plugins[key], bool)
-
-    released = [key for key in previous["release"]["enabledPlugins"] if still_extended(key)]
+    plugins = repo_norm["enabledPlugins"]
+    released = [key for key in previous["release"]["enabledPlugins"]
+                if _extended_value(plugins, key)]
     released += [key for key in choice_list(choices, "enabledPlugins", "release")
-                 if still_extended(key) and key not in released]
+                 if _extended_value(plugins, key) and key not in released]
     return {"pluginConfigs": declined, "release": {"enabledPlugins": sorted(released)}}
 
 
@@ -4309,21 +4581,20 @@ def write_held_state(state, held_path=None):
     ks.dump_json(payload, path)
 ```
 
-`skills/sync-restore/scripts/plan_plugins.py`에 `apply_base`·`read_choices`를 더하고 `main`을 확장한다. 모듈 docstring의 사용법에도 서브명령을 더한다.
+`skills/sync-restore/scripts/plan_plugins.py`에 `_next_base_sections`·`apply_base`·
+`read_choices`를 더하고 `main`을 확장한다. 모듈 docstring의 사용법에도 서브명령을 더한다.
+
+**섹션 루프는 `_next_base_sections`가 맡는다** — `build_plan`이 `_plan_sections`에
+위임하는 것과 같은 층위다. 같은 모양의 루프를 `apply_base` 몸통에 인라인하면 이 파일이
+스스로 만든 대칭이 새 함수 하나에서 깨지고, `apply_base`의 몸통이 "읽기 → 계산 → 쓰기"
+세 국면으로 읽히지 않는다.
 
 ```python
-def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_path=None,
-               held_path=None, base_dir=ss.BASE_DIR):
-    """복원 후 로컬 기준으로 다음 base를 계산하고 override 셋을 적용해 스테이징에 쓴다.
+def _next_base_sections(local, repo, base, hooks, skipped, choices, next_held):
+    """섹션별 다음 base와 그 보고. _plan_sections와 **같은 층위의 짝**이다.
 
-    ① next_base(복원 후 로컬, 이전 base, 레포 값)  — 정규화는 코어가 한다
-    ② keep_stale(케이스 4·5의 "유지")   → base에서 키 삭제  (그 이력은 잊는다)
-    ③ keep_local(케이스 8·9의 "로컬 유지") → base[k] ← 레포 값 (그 이력은 잊는다)
-    ④ release(H3 탈출구) → ②③과 별개로 보류를 풀고 **동시에 ③을 적용한다**
-
-    ④가 ③을 함께 걸지 않으면 base에 그 키가 없어(5.3) 다음 백업이 케이스 9로 떨어지고
-    레포 값이 그대로 남는다 — 약속과 반대다. ③을 함께 걸면 same(repo, base)이므로
-    케이스 7(로컬만 변경) → 로컬 값 push → 레포 값이 불리언 → H3 자연 해제로 이어진다.
+    앞의 다섯 인자는 _plan_sections와 같고, 뒤의 둘만 base 경로에만 있는 입력이다 —
+    사용자의 선택(choices)과 **이번 실행의** 보류 상태(next_held).
 
     **value_held를 스스로 계산해 next_base에 넘긴다.** merge 경로와 달리 여기서는
     아무도 대신 계산해 주지 않는다. 넘기지 않으면 보류 키가 base에 얼어붙어, 보류가
@@ -4334,43 +4605,30 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
     실패했거나 사용자가 건너뛴 항목은 로컬에 없으니 자동으로 빠진다(10.4).
     여기에 "복원을 시도한 목록"을 넘기면 그 안전장치가 사라진다.
 
-    **이 함수는 .tmp+rename 규칙에서 제외된다.** 그 규칙은 "레포 쓰기가 성공한 뒤에
-    rename"인데 apply-base에는 **레포 쓰기가 없다** — 그대로 적용하면 rename 트리거가
-    영영 오지 않아 게이트가 언제나 거짓이 되고 restore 경로의 base가 전혀 전진하지
-    않는다. 여기서는 **파일 존재가 곧 "계산 성공"**이다(9.3.7).
+    **④의 keep_local 동시 적용은 enabledPlugins 한 섹션에만 건다.** 두 섹션은 키가 같은
+    문자열이라 이 목록이 섹션을 넘어 새면 사용자가 고르지도 않은 pluginConfigs 항목까지
+    base가 레포 값으로 전진한다 — 실제 설정 차이가 케이스 8·9 대신 케이스 7로 착지해
+    다음 백업에서 로컬 값이 레포를 덮는다. 9.3.7의 섹션 중첩이 막으려는 위험의 다른
+    입구이고, 선택 JSON의 중첩만으로는 막히지 않는다(release는 그 JSON이 아니라 보류
+    파일에서도 온다). **불필요한 특수 케이스로 읽고 지우지 말 것.**
 
-    **최상위 status는 섹션 skip을 반영하지 않는다** — build_plan·collect_plugins·
-    compare_plugins와 같은 계약이다. 접힌 섹션이 있어도 나머지 섹션의 base는 유효하고,
-    최상위를 skipped로 접으면 소비자가 "반영할 것이 없다"로 읽어 정상 처리된 섹션까지
-    함께 버린다. 섹션 사실은 sections[<섹션>]["status"]에만 있다.
+    **②와 ③이 같은 키에 겹치면 ③이 이긴다** — ③이 뒤에 돌기 때문이다. 임의의 순서가
+    아니라 ③이 `key in masked` 가드를 갖는 데서 나온다: ③은 레포에 값이 있을 때만
+    적용되고, 그때 ②(케이스 4·5 = "레포가 그 키를 잃었다")는 이미 모순 입력이다.
+    순서를 뒤집으면 그 모순 입력이 정당한 선택을 조용히 덮는다.
 
     **kept_stale은 요청을, kept_local은 적용한 것을 보고한다.** 비대칭으로 보이지만 둘
     다 "이 실행이 만든 base 상태"를 말한다 — keep_stale은 그 키가 base에 있었든 없었든
     결과가 "없음"이라 요청이 곧 결과이고, keep_local은 레포에 값이 없으면 얹을 값 자체가
     없다. 그때도 요청을 그대로 보고하면 SKILL.md가 반영되지 않은 선택을 반영됐다고
-    안내한다.
+    안내한다. **예외는 바로 위의 모순 입력 하나다** — 같은 키가 ②③에 함께 오면 ③이
+    이겨 그 키가 nb에 남는데도 kept_stale에 실린다. 같은 보고의 base_keys가 그 키를
+    담으므로 소비자가 대조할 수는 있다.
 
-    **파일 두 개를 쓰는 순서가 계약이다.** 스테이징(base) 먼저, 보류 파일 나중.
-    반대로 하면 release가 기록된 뒤 base 쓰기가 실패했을 때 H3가 풀린 채로 base에 키가
-    없어 다음 백업이 케이스 9로 떨어진다. 이 순서에서는 보류 파일 쓰기가 실패해도
-    "다시 묻는다"에 그친다. **이 순서를 지키는 테스트는 없다** — 두 쓰기 사이에 실패를
-    주입해야 갈리는데 그 fixture가 없다. 알고 받아들이는 구멍이다.
+    **base_keys는 형제 plan_mcp의 base_names와 이름이 다르다(의도).** 그쪽은 서버
+    "이름"의 평면 매핑이고 이쪽은 섹션 안의 "키"다 — 같은 restore 흐름이 두 출력을 함께
+    읽으므로 이름이 같으면 층위가 다른 두 목록을 한 종류로 렌더링하게 된다.
     """
-    local = pc.read_local_sections(settings_path)
-    repo = pc.load_backup(backup_path)
-    base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
-    auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
-
-    # **이번 실행의** 보류 상태로 훅을 만든다. 이것이 실제로 결과를 가르는 곳은 H4다 —
-    # 이번에 declined된 pluginConfigs 키가 곧바로 value_held가 되어 base에서 빠진다.
-    # 이전 상태를 넘기면 그 키가 base로 전진했다가 다음 실행에서야 보류로 판정되어
-    # 얼어붙은 base가 남는다(5.3).
-    # release 쪽은 이 선택으로 결과가 갈리지 않는다 — 아래 ③이 그 키에 레포 값을 다시
-    # 얹으므로 H3가 걸렸든 풀렸든 nb의 최종 값이 같다. 그래도 같은 상태를 넘기는 것은
-    # 훅과 아래 루프가 **한 보류 상태**를 보게 하기 위해서다.
-    next_held = pc.next_held_state(held_state, repo, choices)
-    hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=next_held)
-
     previous_base = base or {}
     doc, report = {}, {}
     for section in pc.SECTIONS:
@@ -4394,6 +4652,7 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
             nb.pop(key, None)
         keep_local = list(pc.choice_list(choices, section, "keep_local"))
         if section == "enabledPlugins":
+            # ④ — H3 탈출구의 동시 적용. **이 섹션에만 건다**(위 docstring).
             keep_local += [key for key in next_held["release"]["enabledPlugins"]
                            if key not in keep_local]
         kept_local = []
@@ -4404,11 +4663,69 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
         doc[section] = nb
         report[section] = {"status": "ok", "kept_stale": stale, "kept_local": kept_local,
                            "base_keys": sorted(nb)}
+    return doc, report
+
+
+def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_path=None,
+               held_path=None, base_dir=ss.BASE_DIR):
+    """복원 후 로컬 기준으로 다음 base를 계산하고 override 셋을 적용해 스테이징에 쓴다.
+
+    ① next_base(복원 후 로컬, 이전 base, 레포 값)  — 정규화는 코어가 한다
+    ② keep_stale(케이스 4·5의 "유지")   → base에서 키 삭제  (그 이력은 잊는다)
+    ③ keep_local(케이스 8·9의 "로컬 유지") → base[k] ← 레포 값 (그 이력은 잊는다)
+    ④ release(H3 탈출구) → ②③과 별개로 보류를 풀고 **동시에 ③을 적용한다**
+       (**enabledPlugins 한 섹션에만 건다** — 근거는 _next_base_sections)
+
+    ④가 ③을 함께 걸지 않으면 base에 그 키가 없어(5.3) 다음 백업이 케이스 9로 떨어지고
+    레포 값이 그대로 남는다 — 약속과 반대다. ③을 함께 걸면 same(repo, base)이므로
+    케이스 7(로컬만 변경) → 로컬 값 push → 레포 값이 불리언 → H3 자연 해제로 이어진다.
+
+    **섹션 루프와 그 보고는 _next_base_sections가 맡는다** — build_plan이 _plan_sections에
+    위임하는 것과 같은 층위다. 이 몸통에 남는 것은 읽기 → 계산 → 쓰기 세 국면뿐이다.
+
+    **이 함수는 .tmp+rename 규칙에서 제외된다.** 그 규칙은 "레포 쓰기가 성공한 뒤에
+    rename"인데 apply-base에는 **레포 쓰기가 없다** — 그대로 적용하면 rename 트리거가
+    영영 오지 않아 게이트가 언제나 거짓이 되고 restore 경로의 base가 전혀 전진하지
+    않는다. 여기서는 **파일 존재가 곧 "계산 성공"**이다(9.3.7).
+
+    **최상위 status는 섹션 skip을 반영하지 않는다** — build_plan·collect_plugins·
+    compare_plugins와 같은 계약이다. 접힌 섹션이 있어도 나머지 섹션의 base는 유효하고,
+    최상위를 skipped로 접으면 소비자가 "반영할 것이 없다"로 읽어 정상 처리된 섹션까지
+    함께 버린다. 섹션 사실은 sections[<섹션>]["status"]에만 있다.
+
+    **파일 두 개를 쓰는 순서가 계약이다.** 스테이징(base) 먼저, 보류 파일 나중.
+    반대로 하면 release가 기록된 뒤 base 쓰기가 실패했을 때 H3가 풀린 채로 base에 키가
+    없어 다음 백업이 케이스 9로 떨어진다. 이 순서에서는 보류 파일 쓰기가 실패해도
+    "다시 묻는다"에 그친다. **이 순서를 재는 fixture는 스테이징 디렉토리 자리에 일반
+    파일을 두는 것이다** — os.makedirs가 그 자리에서 OSError로 죽으므로, 순서가 뒤집혀
+    있으면 그 시점에 보류 파일이 이미 쓰여 있다.
+    """
+    local = pc.read_local_sections(settings_path)
+    repo = pc.load_backup(backup_path)
+    base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
+    auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
+
+    # **이번 실행의** 보류 상태로 훅을 만든다. 이것이 실제로 결과를 가르는 곳은 H4다 —
+    # 이번에 declined된 pluginConfigs 키가 곧바로 value_held가 되어 base에서 빠진다.
+    # 이전 상태를 넘기면 그 키가 base로 전진했다가 다음 실행에서야 보류로 판정되어
+    # 얼어붙은 base가 남는다(5.3).
+    # release 쪽은 이 선택으로 결과가 갈리지 않는다 — 아래 ③이 그 키에 레포 값을 다시
+    # 얹으므로 H3가 걸렸든 풀렸든 nb의 최종 값이 같다. 그래도 같은 상태를 넘기는 것은
+    # 훅과 아래 루프가 **한 보류 상태**를 보게 하기 위해서다.
+    next_held = pc.next_held_state(held_state, pc.normalized_sections(repo), choices)
+    hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=next_held)
+
+    doc, report = _next_base_sections(local, repo, base, hooks, skipped, choices,
+                                      next_held)
 
     os.makedirs(staging_dir, exist_ok=True)
     pc.dump_backup(doc, os.path.join(staging_dir, pc.BACKUP_RELPATH))
     # 보류 파일을 읽지 못했다면 쓰지 않는다 — 빈 상태로 덮으면 사용자의 선택이 조용히
     # 사라진다. 그 경우 SKILL.md가 파일을 지울 경로를 안내한다(6.4).
+    # **게이트는 한 섹션에 걸리는데 파일은 두 섹션의 상태를 담는다.** pluginConfigs만
+    # 접힌 실행에서는 enabledPlugins가 정상 처리되므로 release 선택이 base에는 반영되고
+    # (④) 파일에는 남지 않아, 다음 백업에서 H3가 다시 걸려 **그 해제가 1회용이 된다.**
+    # 그래도 이 게이트가 옳다 — 빈 상태로 덮으면 declined 전부가 조용히 사라진다.
     if "pluginConfigs" not in skipped:
         pc.write_held_state(next_held, held_path)
     return {"status": "ok", "sections": report}
@@ -4451,11 +4768,11 @@ def read_choices(path):
 - `value_held=value_held`를 지우기(코어 기본값 `frozenset()`) → 보류 키 base 제거 테스트가 잡아야 한다. **MCP 어댑터가 구조적으로 검증하지 못하는 경로다**
 - release의 `keep_local` 동시 적용을 지우기 → 케이스 7 착지 테스트가 잡아야 한다
 - `keep_stale`을 `nb[key] = masked.get(key)`로 바꾸기 → base에 `None`이 들어가 **영원히 다시 묻는** 상태가 된다. `keep_stale` 테스트가 잡아야 한다
-- `next_held_state`의 `still_extended` 정리를 지우기 → release 정리 테스트가 잡아야 한다
+- `next_held_state`의 release 정리(`_extended_value` 조건)를 지우기 → release 정리 테스트가 잡아야 한다
 - `configured` 차감을 지우기 → 그 테스트가 잡아야 한다
 - 지문 대상을 `masked` 대신 `repo`(원본)로 바꾸기 → `pluginConfigs`는 마스킹이 값을 바꾸므로 지문 테스트가 잡아야 한다
 - `if "pluginConfigs" not in skipped` 가드를 지우기 → 깨진 파일 보존 테스트가 잡아야 한다
-- 두 파일의 쓰기 순서를 맞바꾸기 → **어떤 테스트도 잡지 못한다.** 알고 받아들이는 구멍이고, 근거는 docstring에 남긴다
+- 두 파일의 쓰기 순서를 맞바꾸기 → **닫힌다.** 스테이징 디렉토리 자리에 **일반 파일**을 두면 `os.makedirs`가 `FileExistsError`로 죽고, 그 시점에 보류 파일이 쓰였는지로 순서가 갈린다. `test_the_held_file_is_untouched_when_the_staging_write_fails`가 잡아야 한다. (**앞선 판의 "어떤 테스트도 잡지 못한다"는 틀렸다** — 실패를 두 쓰기 **사이**에 주입할 필요가 없다. 첫 쓰기 자체를 실패시키면 같은 것이 갈린다.)
 - `pc.dump_backup(doc, ...)`의 경로에 `.tmp`를 붙이기 → 직접 쓰기 테스트가 잡아야 한다
 - `choice_list`의 `isinstance(v, str)` 필터를 지우기 → 형태 어긋남 테스트가 잡아야 한다
 - **최상위 `status`를 `"skipped" if skipped else "ok"`로 바꾸기** → 최상위 status 테스트가 잡아야 한다. 이 계약이 뒤집히면 두 섹션이 접힌 실행에서 정상 처리된 마켓플레이스 섹션까지 버려진다
@@ -4472,16 +4789,27 @@ def read_choices(path):
 - **`choice_list`의 `choices.get(section)`을 `choices.get(section) or {}`로 완화(섹션 값 타입 검사 제거)** → 섹션 값이 리스트·문자열·정수면 `section_choices.get`이 `AttributeError`로 restore를 세운다. 바로 위의 `isinstance(v, str)` 변조가 재는 것은 **원소** 타입뿐이라 **섹션 값** 타입은 이 변조가 처음 잰다 — `choice_list` docstring이 약속한 "형태가 어긋나도 세우지 않는다"의 나머지 절반이다. **`None` 갈래만으로는 잡히지 않는다**(`None or {}`가 그대로 빈 선택이 된다) — 리스트·문자열·정수 갈래를 fixture에 넣고, 다른 정상 섹션의 선택이 **적용됨**을 함께 단정할 것
 - **보류 파일 payload에서 `"version": HELD_SCHEMA_VERSION`을 지우기** → `read_held_state`의 버전 게이트(`claims_newer_schema`)가 읽을 필드가 사라진다. **지금은 무증상이라** 스키마를 올리는 시점에야, 그것도 이 파일만 게이트를 못 타는 형태로 드러난다. 대응 테스트가 잡아야 한다
 
+- **`value_held`를 `value_held_for` 대신 손으로 조립하기**(`hooks[section]["hold"]`를 **정규화 없이** 부르기) → 이 함수가 스스로 주석에 적은 함정 둘 중 **정규화 쪽**이다. H4의 지문이 마스킹된 레포 값에서 나오므로 평문을 그대로 넘기면 보류가 통째로 비고, 사용자가 보류해 둔 pluginConfigs가 base로 전진한다. `test_this_runs_decline_takes_effect_on_the_base_immediately`가 잡아야 한다 — **그 fixture의 레포 값은 평문이어야 한다.** `SENTINEL`을 두면 마스킹이 항등이 되어 원본과 마스킹된 값의 지문이 같아지고 이 변조가 무증상이 된다
+- **release 강제분을 base에는 적용하되 `kept_local` 보고에서 빼기** → SKILL.md가 "로컬 유지를 고르신 항목"에서 그 키를 빼고 안내해 사용자가 base 전진을 볼 길이 없다. ④의 **보고 계약**이다
+- **release 합류의 중복 제거 가드(`if key not in keep_local`) 지우기** → 사용자가 같은 키에 ③과 ④를 함께 고른 갈래에서 `kept_local`에 같은 키가 두 번 실린다. 모순 입력이 아니라 실재하는 조합이므로 대응 테스트가 있어야 한다
+- **②③의 적용 순서 뒤집기**(`keep_stale`의 `pop`을 `keep_local` 뒤로) → **오늘 어떤 테스트도 잡지 못하는 것으로 판정됐으나 그것은 fixture 공백이었다.** 같은 키를 ②③에 함께 두면 갈린다: ③은 `key in masked` 가드를 가져 레포에 값이 있을 때만 적용되고, 그때 ②는 이미 모순 입력이라 ③이 이기는 것이 옳다. 뒤집으면 모순 입력이 정당한 선택을 조용히 덮는다. 대응 테스트가 있어야 한다
+- **보류 파일의 `os.makedirs` 지우기** → 이 줄이 일하는 유일한 자리는 백업을 한 번도 하지 않은 기기의 `~/.claude/.sync-state/`다(`.sync-state/base`는 `write_base`가 만들지만 디렉토리 자체는 아무도 먼저 만들지 않는다). 빠지면 `FileNotFoundError` → `{"status": "skipped"}`로 접혀 **decline이 영영 기록되지 않는다.** 이미 존재하는 tmp 디렉토리를 주는 fixture로는 잡히지 않는다 — **없는 디렉토리를 주는 fixture**가 필요하다
+- **재보류 시 지문 갱신 차단**(`declined[key] = ...`을 `setdefault`로) → 레포 값이 바뀐 뒤 같은 키를 다시 거절하면 낡은 지문이 남아 H4가 다시 매치되지 않고 **매 restore마다 다시 묻는다.** 이전 파일에 실재하지 않는 지문을 둔 fixture여야 "이전 값을 그대로 옮긴 것"과 구별된다
+- **`main`의 `apply_base(args[1], args[2], ...)`를 맞바꾸기** → `staging_dir` 자리에 레포 `plugins.json`의 **파일 경로**가 들어가 `os.makedirs`가 `FileExistsError`로 접히고 `{"status": "skipped"}` + **종료 코드 0**이 된다. SKILL.md는 정상으로 읽고 base는 전혀 전진하지 않는다 — 이 task가 `.tmp` 규칙에서 스스로를 제외하면서까지 막으려던 실패 모양이다. **거부 갈래 둘만으로는 잡히지 않는다**; 형제 `plan_mcp`의 `test_apply_base_cli_writes_staging_file`과 같은 **성공 경로** 테스트가 있어야 한다(격리 HOME에 `settings.json`과 `installed_plugins.json`을 함께 넣을 것 — 하나라도 없으면 섹션이 접혀 단정이 배선과 무관하게 참이 된다)
+- **`_extended_value`를 부르는 셋 중 하나가 자기 판을 되살리기**(`_make_hold`의 H3 / `held_kinds` / `next_held_state`, 각각 따로) → 오늘 `enabledPlugins`의 정규화가 항등이라 **결과가 같아 어떤 값 fixture로도 드러나지 않는다.** 술어를 monkeypatch로 뒤집어 셋이 함께 따라가는지를 재는 테스트가 각각 잡아야 한다
+- **`next_held_state`에 `normalized_sections(repo)` 대신 `repo`(원본)를 넘기기** → `pluginConfigs`는 마스킹이 값을 바꾸므로 지문 테스트가 잡아야 한다. `enabledPlugins` 쪽은 오늘 무증상이고, 그 절반을 재는 것이 바로 위 항목이다
+
 - [ ] **Step 5: Commit**
 
 ```bash
 git add plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py \
-        plugins/claude-sync/lib/plugin_config.py plugins/claude-sync/tests/test_plugin_scripts.py
+        plugins/claude-sync/lib/plugin_config.py \
+        plugins/claude-sync/tests/test_plugin_scripts.py \
+        plugins/claude-sync/tests/test_plugin_config.py
 git commit -m "feat(restore): apply-base — 선택 override 넷과 plugins-held.json 소유"
 ```
 
 ---
-
 ### Task 11: 상태 기계 — 보류의 다회차 커버리지
 
 **근거:** spec 7.3, 5.3, 14.2 #4 / plan ① Task 9 quality review I2
