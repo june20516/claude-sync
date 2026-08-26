@@ -771,10 +771,21 @@ def orphaned(merged_plugins, merged_marketplaces):
 def build_hooks(local, repo, *, auto_ids, held_state):
     """섹션별 훅 묶음 {섹션: {"normalize", "hold", "restorable", "secret_keys"}}.
 
-    **레포를 읽은 뒤에 불러야 한다**(spec 9.1.1의 4단계 > 2단계). H3는 "레포 값이
-    불리언이 아님", H4는 "지문이 현재 레포 값과 일치"이므로 레포 없이는 둘 다 계산할 수
-    없고, 순서를 뒤집으면 둘 다 항상 빈 집합이 되어 버전 제약이 true로 덮이고 6.4의
-    탈출구가 무증상으로 죽는다.
+    **레포를 읽은 뒤에 불러야 한다**(spec 9.1.1의 4단계 > 2단계). 여기서 레포에 의존하는
+    것은 **훅을 만드는 시점의 레포를 클로저로 닫는 셋**이다 —
+      H2의 레포 쪽 방어  held_context의 directory_marketplaces가 레포에 이미 실린
+                         directory 출처를 본다. 비면 기기 B에 등록할 소스가 없는 항목이
+                         보류되지 않고 케이스 3(삭제)으로 레포에서 지워진다.
+      restorable         "레포에 그 마켓플레이스의 소스가 있는가"(8.1)를 repo_marketplaces로
+                         판정한다. 비면 그 조건이 항상 거짓이 되어 판정이 무너진다.
+      reason             unrestorable_reason에 넘길 같은 repo를 닫는다. 비면 "레포에 소스가
+                         없다"를 볼 수 없어 **전부 복원 가능으로 판정**된다.
+
+    **H1·H3·H4는 이 셋에 들지 않는다.** 코어가 hold(local, repo)를 부를 때 레포를 넘기므로
+    순서를 뒤집어도 그대로 계산된다. 그래서 이 뒤집기가 조용하다 — 보류 네 종류 중 셋이
+    멀쩡히 동작하고 H2 하나만 무증상으로 죽으므로, 순서를 지키는 것 말고는 드러날 자리가
+    없다. (이 문단의 앞 판은 근거를 H3·H4로 적었는데 사실이 아니었다. 그 문장을 믿고
+    순서를 바꾸면 정확히 위의 셋이 죽는다.)
 
     코어가 보는 계약은 normalize(mapping)·hold(local, repo)·restorable(key, value)·
     secret_keys(value) 넷뿐이고, 그 서명 밖의 입력(auto 집합, **다른 섹션**인
