@@ -3746,7 +3746,10 @@ def apply_base(tmp_path, choices=None, local=None, repo=None, base=None,
     repo_dir = write_repo(tmp_path, repo if repo is not None else {})
     merged = json.loads(json.dumps(EMPTY_CHOICES))
     for section, values in (choices or {}).items():
-        merged.setdefault(section, {}).update(values)
+        if isinstance(values, dict):
+            merged.setdefault(section, {}).update(values)
+        else:
+            merged[section] = values    # 형태가 어긋난 섹션 값을 그대로 넘기는 갈래
     result = plan_plugins.apply_base(
         os.path.join(repo_dir, pc.BACKUP_RELPATH),
         str(tmp_path / staging), merged,
@@ -4033,8 +4036,6 @@ def test_apply_base_sorts_the_reported_base_keys(tmp_path):
 @pytest.mark.parametrize("args", [[], ["apply-base"], ["apply-base", "a", "b"],
                                   ["apply-base", "a", "b", "c", "d"],
                                   ["bogus", "a", "b", "c"]])
-
-
 def test_apply_base_cli_rejects_wrong_invocations(tmp_path, args):
     """서브커맨드 이름 검사와 개수 검사가 **둘 다** 필요하다.
 
@@ -4132,6 +4133,107 @@ def test_local_only_entries_do_not_enter_the_base(tmp_path):
                         repo={"enabledPlugins": {"shared@m": True}})
     assert "mine@m" not in doc["enabledPlugins"]
     assert doc["enabledPlugins"]["shared@m"] is True     # 합의된 키는 전진한다
+
+
+def test_held_file_carries_the_schema_version(tmp_path):
+    """read_held_state의 버전 게이트(claims_newer_schema)가 읽는 필드다.
+
+    빠져도 지금은 read_held_state가 통과하므로 **무증상이다** — 나중에 스키마를 올릴 때
+    이 파일만 게이트를 타지 못하고 낡은 형태로 조용히 통과한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    apply_base(tmp_path, choices={"pluginConfigs": {"declined": ["delta@m"]}},
+               local={}, repo={"pluginConfigs": {"delta@m": {"options": {}}}},
+               held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        payload = json.load(f)
+    assert payload["pluginConfigs"] != {}        # 파일이 실제로 내용을 담았다
+    assert payload["version"] == pc.HELD_SCHEMA_VERSION
+
+
+@pytest.mark.parametrize("broken", [["p@m"], "p@m", 7, None])
+def test_apply_base_ignores_a_section_whose_choices_are_not_an_object(tmp_path, broken):
+    """choice_list가 약속한 "형태가 어긋나도 세우지 않는다"의 나머지 절반.
+
+    원소 타입은 test_apply_base_ignores_unknown_and_non_string_choice_entries가 재지만
+    **섹션 값** 자체가 dict가 아닌 갈래는 그 테스트가 닿지 않는다 — SKILL.md가
+    {"enabledPlugins": ["p@m"]}처럼 평면 목록을 내보내면 section_choices.get이
+    AttributeError로 restore를 세운다.
+
+    정상 섹션의 선택을 함께 넣어 "선택을 통째로 무시한다"와 구별한다.
+    **None 갈래만으로는 구별이 서지 않는다** — 검사를 `choices.get(section) or {}`로
+    완화해도 None은 그대로 빈 선택이 된다. 리스트·문자열·정수 갈래가 그 회귀를 잡는다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": broken,
+                 "extraKnownMarketplaces": {"keep_stale": ["gone"]}},
+        local={"enabledPlugins": {"p@m": True},
+               "extraKnownMarketplaces": {"gone": GH, "stay": GH}},
+        repo={"enabledPlugins": {}, "extraKnownMarketplaces": {"stay": GH}},
+        base={"enabledPlugins": {"p@m": True},
+              "extraKnownMarketplaces": {"gone": GH, "stay": GH}})
+    assert result["sections"]["enabledPlugins"]["kept_stale"] == []
+    assert doc["enabledPlugins"] == {"p@m": True}        # 어긋난 섹션의 base는 그대로다
+    assert result["sections"]["extraKnownMarketplaces"]["kept_stale"] == ["gone"]
+    assert "gone" not in doc["extraKnownMarketplaces"]
+    assert "stay" in doc["extraKnownMarketplaces"]
+
+
+def test_declined_ids_absent_from_the_repo_are_ignored(tmp_path):
+    """SKILL.md가 레포에 없는 id를 declined로 보내면 KeyError로 restore가 통째로 선다.
+
+    레포에 있는 항목을 함께 넣어 "declined를 통째로 무시한다"와 구별한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    repo = {"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-real"}}}}
+    apply_base(tmp_path,
+               choices={"pluginConfigs": {"declined": ["ghost@m", "delta@m"]}},
+               local={}, repo=repo, held=held_path)
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo["pluginConfigs"])
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] == {
+            "delta@m": pc.value_fingerprint(masked["delta@m"])}
+
+
+def test_previous_declined_entries_are_dropped_when_the_repo_loses_the_key(tmp_path):
+    """6.4 — 레포에 없는 항목은 정리한다.
+
+    남겨 두면 같은 값이 레포에 되돌아왔을 때 사용자가 다시 고르지 않았는데도 지문이
+    매치되어 **조용히 보류로 복귀한다.** 레포에 남아 있는 항목을 함께 두어 "전부
+    지운다"와 구별한다 — 그쪽은 지문까지 그대로 옮겨져야 한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    with open(held_path, "w", encoding="utf-8") as f:
+        json.dump({"pluginConfigs": {"gone@m": "0" * 64, "stay@m": "1" * 64},
+                   "release": {"enabledPlugins": []}}, f)
+    apply_base(tmp_path, local={},
+               repo={"pluginConfigs": {"stay@m": {"options": {}}}}, held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] == {"stay@m": "1" * 64}
+
+
+def test_release_does_not_advance_the_base_of_the_other_section(tmp_path):
+    """release의 keep_local 동시 적용은 **enabledPlugins 한 섹션의 것이다.**
+
+    두 섹션은 키가 같은 문자열이라, 이 목록이 섹션을 넘어 새면 사용자가 고르지도 않은
+    pluginConfigs 항목까지 base가 레포 값으로 전진한다 — 실제 설정 차이가 케이스 8·9
+    대신 케이스 7로 착지해 로컬 값이 다음 백업에서 레포를 덮는다. 9.3.7의 섹션 중첩이
+    막으려는 위험의 다른 입구다.
+
+    로컬의 option 키 집합을 레포와 어긋나게 두어 next_base가 스스로 전진하지 못하게
+    한다 — 그래야 pluginConfigs에 값이 생기는 유일한 경로가 이 누수뿐이다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"release": ["p@m"]}},
+        local={"enabledPlugins": {"p@m": True},
+               "pluginConfigs": {"p@m": {"options": {"other": "x"}}}},
+        repo={"enabledPlugins": {"p@m": ["1.0.0"]},
+              "pluginConfigs": {"p@m": {"options": {"apiKey": "sk-real"}}}})
+    assert doc["enabledPlugins"]["p@m"] == ["1.0.0"]     # 해제 섹션은 전진한다
+    assert "p@m" not in doc["pluginConfigs"]             # 다른 섹션은 전진하지 않는다
+    assert result["sections"]["pluginConfigs"]["kept_local"] == []
 ```
 
 - [ ] **Step 2: test를 실행하여 실패를 확인**
@@ -4144,6 +4246,8 @@ def test_local_only_entries_do_not_enter_the_base(tmp_path):
 `lib/plugin_config.py`에 셋을 더한다.
 
 ```python
+# ------------------------------------- 선택 반영 (9.3.7)·보류 기록 (6.4·7.3)
+
 def choice_list(choices, section, key):
     """선택 결과 JSON에서 문자열 목록만 꺼낸다.
 
@@ -4180,8 +4284,10 @@ def next_held_state(previous, repo, choices):
             declined[key] = value_fingerprint(masked[key])
 
     plugins = repo.get("enabledPlugins", {})
+
     def still_extended(key):
         return key in plugins and not isinstance(plugins[key], bool)
+
     released = [key for key in previous["release"]["enabledPlugins"] if still_extended(key)]
     released += [key for key in choice_list(choices, "enabledPlugins", "release")
                  if still_extended(key) and key not in released]
@@ -4228,18 +4334,40 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
     실패했거나 사용자가 건너뛴 항목은 로컬에 없으니 자동으로 빠진다(10.4).
     여기에 "복원을 시도한 목록"을 넘기면 그 안전장치가 사라진다.
 
+    **이 함수는 .tmp+rename 규칙에서 제외된다.** 그 규칙은 "레포 쓰기가 성공한 뒤에
+    rename"인데 apply-base에는 **레포 쓰기가 없다** — 그대로 적용하면 rename 트리거가
+    영영 오지 않아 게이트가 언제나 거짓이 되고 restore 경로의 base가 전혀 전진하지
+    않는다. 여기서는 **파일 존재가 곧 "계산 성공"**이다(9.3.7).
+
+    **최상위 status는 섹션 skip을 반영하지 않는다** — build_plan·collect_plugins·
+    compare_plugins와 같은 계약이다. 접힌 섹션이 있어도 나머지 섹션의 base는 유효하고,
+    최상위를 skipped로 접으면 소비자가 "반영할 것이 없다"로 읽어 정상 처리된 섹션까지
+    함께 버린다. 섹션 사실은 sections[<섹션>]["status"]에만 있다.
+
+    **kept_stale은 요청을, kept_local은 적용한 것을 보고한다.** 비대칭으로 보이지만 둘
+    다 "이 실행이 만든 base 상태"를 말한다 — keep_stale은 그 키가 base에 있었든 없었든
+    결과가 "없음"이라 요청이 곧 결과이고, keep_local은 레포에 값이 없으면 얹을 값 자체가
+    없다. 그때도 요청을 그대로 보고하면 SKILL.md가 반영되지 않은 선택을 반영됐다고
+    안내한다.
+
     **파일 두 개를 쓰는 순서가 계약이다.** 스테이징(base) 먼저, 보류 파일 나중.
     반대로 하면 release가 기록된 뒤 base 쓰기가 실패했을 때 H3가 풀린 채로 base에 키가
     없어 다음 백업이 케이스 9로 떨어진다. 이 순서에서는 보류 파일 쓰기가 실패해도
-    "다시 묻는다"에 그친다.
+    "다시 묻는다"에 그친다. **이 순서를 지키는 테스트는 없다** — 두 쓰기 사이에 실패를
+    주입해야 갈리는데 그 fixture가 없다. 알고 받아들이는 구멍이다.
     """
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)
     base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
     auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
 
-    # 새 release가 반영된 상태로 훅을 만든다 — 그래야 해제된 키가 value_held에서 빠지고
-    # next_base가 그 키를 base에 남긴다.
+    # **이번 실행의** 보류 상태로 훅을 만든다. 이것이 실제로 결과를 가르는 곳은 H4다 —
+    # 이번에 declined된 pluginConfigs 키가 곧바로 value_held가 되어 base에서 빠진다.
+    # 이전 상태를 넘기면 그 키가 base로 전진했다가 다음 실행에서야 보류로 판정되어
+    # 얼어붙은 base가 남는다(5.3).
+    # release 쪽은 이 선택으로 결과가 갈리지 않는다 — 아래 ③이 그 키에 레포 값을 다시
+    # 얹으므로 H3가 걸렸든 풀렸든 nb의 최종 값이 같다. 그래도 같은 상태를 넘기는 것은
+    # 훅과 아래 루프가 **한 보류 상태**를 보게 하기 위해서다.
     next_held = pc.next_held_state(held_state, repo, choices)
     hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=next_held)
 
@@ -4247,6 +4375,8 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
     doc, report = {}, {}
     for section in pc.SECTIONS:
         if section in skipped:
+            # 판정하지 못한 섹션은 이전 base를 그대로 통과시킨다 — {}로 덮으면 다음
+            # 백업이 그 섹션 전체를 "로컬 신규"로 읽는다(collect_plugins와 같은 처방).
             doc[section] = previous_base.get(section, {})
             report[section] = pc.skipped_section(skipped[section])
             continue
@@ -4336,6 +4466,11 @@ def read_choices(path):
 - **`main`의 `args[0] == "apply-base"` 검사만 제거** / **`len(args) == 4`를 `len(args) >= 4`로** → CLI parametrize가 각각 잡아야 한다
 - **`except` 튜플에서 `ValueError` 제거** → 선택 결과 JSON 테스트가 잡아야 한다
 - **`kept_local.append(key)`를 `if key in masked` 블록 **밖**으로 옮기기** → 보고가 "실제로 적용한 것"이 아니라 "요청받은 것"이 된다. **현재 규정은 `kept_stale`이 요청을, `kept_local`이 적용을 보고하는 비대칭이다** — 어느 쪽이 계약인지 구현자가 정하고 docstring에 근거를 남길 것. 어느 쪽이든 대응 테스트가 있어야 한다
+- **`if section == "enabledPlugins"` 가드를 지워 release의 `keep_local` 동시 적용을 전 섹션으로 넓히기** → release한 id가 `pluginConfigs`에도 항목을 가지면, 사용자가 고르지도 않은 그 섹션의 base까지 레포 값으로 전진한다. 실제 설정 차이가 케이스 8·9 대신 **케이스 7로 착지**해 다음 백업에서 로컬 값이 레포를 덮는다. 앞머리가 말한 "한쪽 선택이 다른 섹션의 base를 조작한다"의 **다른 입구**이고, 선택 JSON의 섹션 중첩만으로는 막히지 않는다. 대응 테스트가 잡아야 한다 — **같은 fixture에서 `enabledPlugins` 쪽은 전진함을 함께 단정해야** 공허해지지 않는다
+- **`next_held_state`의 이전 declined 정리에서 `key in masked`를 지우기** → 레포에서 사라진 항목이 보류 파일에 남고, 같은 값이 레포에 되돌아오면 **사용자가 다시 고르지 않았는데 조용히 보류로 복귀한다.** spec 6.4가 문장으로 정한 동작이다. 대응 테스트가 잡아야 한다 — **레포에 남아 있는 declined 항목을 함께 둔 fixture여야** "전부 지운다"와 구별된다
+- **declined 기록의 `if key in masked` 가드를 지우기** → 레포에 없는 id가 `declined`로 오면 `KeyError`로 restore가 통째로 선다(SKILL.md의 대화가 만드는 JSON이므로 실재하는 갈래다). 대응 테스트가 잡아야 한다 — **레포에 있는 declined 항목을 함께 둔 fixture여야** "declined를 전부 무시한다"와 구별된다
+- **`choice_list`의 `choices.get(section)`을 `choices.get(section) or {}`로 완화(섹션 값 타입 검사 제거)** → 섹션 값이 리스트·문자열·정수면 `section_choices.get`이 `AttributeError`로 restore를 세운다. 바로 위의 `isinstance(v, str)` 변조가 재는 것은 **원소** 타입뿐이라 **섹션 값** 타입은 이 변조가 처음 잰다 — `choice_list` docstring이 약속한 "형태가 어긋나도 세우지 않는다"의 나머지 절반이다. **`None` 갈래만으로는 잡히지 않는다**(`None or {}`가 그대로 빈 선택이 된다) — 리스트·문자열·정수 갈래를 fixture에 넣고, 다른 정상 섹션의 선택이 **적용됨**을 함께 단정할 것
+- **보류 파일 payload에서 `"version": HELD_SCHEMA_VERSION`을 지우기** → `read_held_state`의 버전 게이트(`claims_newer_schema`)가 읽을 필드가 사라진다. **지금은 무증상이라** 스키마를 올리는 시점에야, 그것도 이 파일만 게이트를 못 타는 형태로 드러난다. 대응 테스트가 잡아야 한다
 
 - [ ] **Step 5: Commit**
 
