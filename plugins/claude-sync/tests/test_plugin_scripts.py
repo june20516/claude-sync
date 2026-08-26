@@ -1915,8 +1915,11 @@ def test_apply_base_cli_writes_the_staging_file(tmp_path):
     읽고 base는 전혀 전진하지 않는다. 이 함수가 .tmp 규칙에서 스스로를 제외하면서까지
     막으려던 바로 그 실패 모양이다.
 
-    격리 HOME에 settings.json과 installed_plugins.json을 함께 넣는다 — 하나라도 없으면
-    섹션이 접혀 스테이징 문서가 비고, 아래 단정이 배선과 무관하게 참이 된다.
+    격리 HOME에 settings.json과 installed_plugins.json을 함께 넣는다. 하나라도 빠지면
+    이 테스트는 조용히 통과하는 것이 아니라 **즉시 실패한다** — settings.json이 없으면
+    LocalConfigUnavailable로 최상위가 skipped가 되어 status 단정에서, installed_plugins.json이
+    없으면 섹션이 접혀 스테이징 문서가 비어 문서 단정에서 걸린다(둘 다 실측). 위험한 것은
+    그때 단정을 `== {}`로 약화하는 것이다 — **그 약화된 형태**가 배선과 무관하게 참이 된다.
     """
     home = tmp_path / "home"
     (home / ".claude" / "plugins").mkdir(parents=True, exist_ok=True)

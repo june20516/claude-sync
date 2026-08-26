@@ -515,6 +515,11 @@ def normalized_sections(sections):
     **같은 표**를 쓰는 것이 그 대응이고, 직접 읽는 자리를 이 함수 하나로 모으는 것이
     그 대응을 지킬 수 있게 하는 조건이다 — build_hooks가 언젠가 이 표를 감싸면
     **여기도 같이 감싸야 한다.**
+
+    부재 섹션을 {}로 채우는 것이 next_held_state의 직접 색인(repo_norm["pluginConfigs"])을
+    떠받친다. 오늘 유일한 호출부가 load_backup의 출력(항상 세 섹션)을 넘겨 도달 불가지만,
+    부분 문서를 넘기는 호출부가 생기는 날 이 채우기가 없으면 KeyError traceback이 난다 —
+    apply_base의 fail-closed 설계와 반대 방향이다.
     """
     return {section: SECTION_NORMALIZE[section](sections.get(section, {}))
             for section in SECTIONS}

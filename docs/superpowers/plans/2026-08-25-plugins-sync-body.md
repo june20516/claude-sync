@@ -4810,6 +4810,7 @@ git commit -m "feat(restore): apply-base — 선택 override 넷과 plugins-held
 ```
 
 ---
+
 ### Task 11: 상태 기계 — 보류의 다회차 커버리지
 
 **근거:** spec 7.3, 5.3, 14.2 #4 / plan ① Task 9 quality review I2

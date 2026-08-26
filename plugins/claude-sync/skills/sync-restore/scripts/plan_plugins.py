@@ -234,9 +234,11 @@ def _next_base_sections(local, repo, base, hooks, skipped, choices, next_held):
     이겨 그 키가 nb에 남는데도 kept_stale에 실린다. 같은 보고의 base_keys가 그 키를
     담으므로 소비자가 대조할 수는 있다.
 
-    **base_keys는 형제 plan_mcp의 base_names와 이름이 다르다(의도).** 그쪽은 서버
-    "이름"의 평면 매핑이고 이쪽은 섹션 안의 "키"다 — 같은 restore 흐름이 두 출력을 함께
-    읽으므로 이름이 같으면 층위가 다른 두 목록을 한 종류로 렌더링하게 된다.
+    **base_keys는 형제 plan_mcp의 base_names와 이름이 다르다(의도).** 두 필드의 모양은
+    같다(정렬된 문자열 리스트). 다른 것은 층위다 — 그쪽은 **문서 최상위**의 서버 이름
+    목록이고 이쪽은 **sections[<섹션>] 아래**의 plugin@marketplace 키 목록이다. 같은
+    restore 흐름이 두 출력을 함께 읽으므로, 이름이 같으면 층위가 다른 두 목록을 한
+    종류로 렌더링하게 된다.
     """
     previous_base = base or {}
     doc, report = {}, {}

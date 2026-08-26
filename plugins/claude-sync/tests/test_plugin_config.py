@@ -759,8 +759,11 @@ def test_next_held_state_reads_only_normalized_values(monkeypatch):
     "모든 값을 불리언으로 좁히는" 것으로 바꿔 두 세계를 갈라놓으면, 원본을 보는 판은
     release 항목을 유지하고 정규화된 값을 보는 판은 정리한다.
 
-    normalized_sections를 거쳐 넘기는 것이 계약이므로 여기서도 그것을 거친다 — 그래야
-    호출부가 원본을 그대로 넘기게 되는 회귀까지 같은 단정이 덮는다.
+    normalized_sections를 거쳐 넘기는 것이 계약이므로 여기서도 그것을 거친다. **다만 이
+    테스트가 덮는 것은 next_held_state 자신뿐이다** — pc.next_held_state를 직접 부르고
+    apply_base를 지나지 않으므로, 호출부가 원본을 그대로 넘기는 회귀는 여기서 잡히지 않는다.
+    그쪽은 스크립트 쪽 지문 테스트 넷이 덮는다(pluginConfigs가 마스킹 섹션이라 지문이
+    어긋나기 때문이다 — enabledPlugins 쪽만 남는 회귀에는 그 방어가 없다).
     """
     monkeypatch.setitem(pc.SECTION_NORMALIZE, "enabledPlugins",
                         lambda mapping: {k: True for k in mapping})
