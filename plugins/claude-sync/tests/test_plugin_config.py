@@ -727,6 +727,50 @@ def test_hold_and_held_kinds_never_diverge_when_fed_one_context():
         assert {key for names in kinds.values() for key in names} == both, section
 
 
+def test_h3_held_kinds_and_release_share_one_extended_value_predicate(monkeypatch):
+    """"레포 값이 불리언이 아닌가"를 세 곳이 각자 적으면 그중 하나가 갈려도 무증상이다.
+
+    갈리는 자리는 셋이다 — hold의 H3, held_kinds의 extended_value, next_held_state의
+    release 정리. 한 곳만 **원본** 레포를 보게 되면 ⑴ release 항목이 조용히 유지되거나
+    사라지고 ⑵ 같은 실행의 pluginConfigs 지문이 H4와 어긋나 decline이 영영 매치되지
+    않는다. 오늘 enabledPlugins의 정규화가 항등이라 그 갈림은 **결과가 같아** 어떤
+    fixture로도 드러나지 않는다 — 그래서 재는 것은 값이 아니라 술어의 **동일성**이다.
+
+    술어를 뒤집어 셋이 함께 따라가는지 본다. 한 곳이라도 자기 판을 되살리면 그 자리만
+    옛 판정(불리언 → 확장 값 아님)을 내어 그 줄이 갈라낸다.
+    """
+    monkeypatch.setattr(pc, "_extended_value", lambda repo_norm, key: True)
+    repo = {"enabledPlugins": {"p@m": True}, "extraKnownMarketplaces": {},
+            "pluginConfigs": {}}
+    hooks = pc.build_hooks({}, repo, auto_ids=frozenset(), held_state=pc.EMPTY_HELD)
+    assert hooks["enabledPlugins"]["hold"]({}, repo["enabledPlugins"])["value"] == {"p@m"}
+    assert pc.held_kinds("enabledPlugins", ["p@m"], auto_ids=frozenset(),
+                         directory_names=frozenset(), held_configs={},
+                         repo_norm=repo["enabledPlugins"])["extended_value"] == ["p@m"]
+    previous = {"pluginConfigs": {}, "release": {"enabledPlugins": ["p@m"]}}
+    assert pc.next_held_state(previous, pc.normalized_sections(repo),
+                              {})["release"]["enabledPlugins"] == ["p@m"]
+
+
+def test_next_held_state_reads_only_normalized_values(monkeypatch):
+    """정규화가 값을 바꾸는 섹션에서 이 함수가 **어느 쪽을 보는지** 고정한다.
+
+    enabledPlugins의 정규화는 오늘 항등이라 이 갈림이 무증상이다. 정규화를 잠시
+    "모든 값을 불리언으로 좁히는" 것으로 바꿔 두 세계를 갈라놓으면, 원본을 보는 판은
+    release 항목을 유지하고 정규화된 값을 보는 판은 정리한다.
+
+    normalized_sections를 거쳐 넘기는 것이 계약이므로 여기서도 그것을 거친다 — 그래야
+    호출부가 원본을 그대로 넘기게 되는 회귀까지 같은 단정이 덮는다.
+    """
+    monkeypatch.setitem(pc.SECTION_NORMALIZE, "enabledPlugins",
+                        lambda mapping: {k: True for k in mapping})
+    repo = {"enabledPlugins": {"p@m": ["1.0.0"]}, "extraKnownMarketplaces": {},
+            "pluginConfigs": {}}
+    previous = {"pluginConfigs": {}, "release": {"enabledPlugins": ["p@m"]}}
+    state = pc.next_held_state(previous, pc.normalized_sections(repo), {})
+    assert state["release"]["enabledPlugins"] == []
+
+
 # --- 8.2·8.3 열거형 대조 (14.4) ---
 
 def test_always_known_marketplaces_are_exactly_these_five():

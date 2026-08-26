@@ -69,6 +69,12 @@ def staged_doc(staging):
     return pc.load_backup(os.path.join(staging, pc.BACKUP_RELPATH))
 
 
+def staged_text(staging):
+    """스테이징 파일의 **원문**. dict 동등성으로는 새 필드에 실린 평문을 보지 못한다."""
+    with open(os.path.join(staging, pc.BACKUP_RELPATH), encoding="utf-8") as f:
+        return f.read()
+
+
 def collect(tmp_path, local=None, repo=None, base=None, installed=None, held=None):
     """기본값이 정상 경로다 — 각 테스트는 어긋나게 만들 것 하나만 지정한다."""
     return collect_plugins.collect(
@@ -1524,14 +1530,57 @@ def test_value_held_keys_are_removed_from_base_without_any_override(tmp_path):
 def test_release_lifts_the_hold_and_lands_on_case7(tmp_path):
     """7.3 — 해제만 하면 base에 키가 없어 케이스 9로 떨어진다. 약속과 반대다."""
     held_path = str(tmp_path / "plugins-held.json")
-    _, doc = apply_base(tmp_path,
-                        choices={"enabledPlugins": {"release": ["p@m"]}},
-                        local={"enabledPlugins": {"p@m": True}},
-                        repo={"enabledPlugins": {"p@m": ["1.0.0"]}},
-                        held=held_path)
+    result, doc = apply_base(tmp_path,
+                             choices={"enabledPlugins": {"release": ["p@m"]}},
+                             local={"enabledPlugins": {"p@m": True}},
+                             repo={"enabledPlugins": {"p@m": ["1.0.0"]}},
+                             held=held_path)
     assert doc["enabledPlugins"]["p@m"] == ["1.0.0"]     # keep_local이 동시에 걸렸다
+    # ④의 강제분도 **보고에 실린다.** 싣지 않으면 SKILL.md가 "로컬 유지를 고르신 항목"
+    # 목록에서 이 키를 빼고 안내해, 사용자는 base가 전진한 사실을 볼 길이 없다.
+    assert result["sections"]["enabledPlugins"]["kept_local"] == ["p@m"]
     with open(held_path, encoding="utf-8") as f:
         assert json.load(f)["release"]["enabledPlugins"] == ["p@m"]
+
+
+def test_release_and_keep_local_naming_the_same_key_report_it_once(tmp_path):
+    """④의 합류에는 중복 제거가 걸린다 — 없으면 kept_local에 같은 키가 두 번 실린다.
+
+    SKILL.md가 그 목록을 그대로 렌더링하므로 사용자가 같은 항목을 두 줄로 본다.
+    ③과 ④가 같은 키를 가리키는 것은 모순 입력이 아니다: 사용자가 케이스 8·9에서
+    "로컬 유지"를 고르면서 같은 키의 H3를 함께 푸는 갈래가 그것이다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_local": ["p@m"], "release": ["p@m"]}},
+        local={"enabledPlugins": {"p@m": True}},
+        repo={"enabledPlugins": {"p@m": ["1.0.0"]}})
+    assert result["sections"]["enabledPlugins"]["kept_local"] == ["p@m"]
+    assert doc["enabledPlugins"]["p@m"] == ["1.0.0"]     # 적용 자체는 됐다
+
+
+def test_keep_local_wins_over_keep_stale_on_the_same_key(tmp_path):
+    """②③이 겹치면 ③이 이긴다 — ③이 뒤에 돌기 때문이고, 그 순서에는 근거가 있다.
+
+    ③은 `key in masked` 가드를 가지므로 **레포에 값이 있을 때만** 적용된다. 그런데
+    ②(케이스 4·5)는 "레포가 그 키를 잃었다"는 뜻이라, 둘이 겹치는 입력은 이미 모순이다.
+    순서를 뒤집으면 그 모순 입력이 정당한 선택을 조용히 덮어 base에서 키가 사라지고
+    다음 백업이 케이스 1(로컬 신규)로 착지한다.
+
+    **kept_stale은 그때도 요청을 그대로 보고한다** — 같은 보고의 base_keys가 그 키를
+    담으므로 소비자가 대조할 수 있다는 것이 그 비대칭을 받아들이는 근거다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_stale": ["p@m"], "keep_local": ["p@m"]}},
+        local={"enabledPlugins": {"p@m": False}},
+        repo={"enabledPlugins": {"p@m": True}},
+        base={"enabledPlugins": {"p@m": True}})
+    assert doc["enabledPlugins"]["p@m"] is True
+    section = result["sections"]["enabledPlugins"]
+    assert section["kept_stale"] == ["p@m"]
+    assert section["kept_local"] == ["p@m"]
+    assert section["base_keys"] == ["p@m"]
 
 
 def test_release_list_is_sorted_regardless_of_where_the_entries_came_from(tmp_path):
@@ -1587,6 +1636,84 @@ def test_declined_config_is_recorded_with_the_masked_repo_fingerprint(tmp_path):
     with open(held_path, encoding="utf-8") as f:
         assert json.load(f)["pluginConfigs"] == {
             "delta@m": pc.value_fingerprint(masked["delta@m"])}
+
+
+def test_declining_again_refreshes_the_fingerprint_of_a_changed_repo_value(tmp_path):
+    """6.4 — 레포 값이 바뀐 뒤 같은 키를 다시 거절하면 지문이 **갱신돼야** 한다.
+
+    갱신이 죽으면 낡은 지문이 남아 H4가 다시 매치되지 않고, 사용자는 같은 항목을
+    **매 restore마다 다시** 받는다. 예외도 빈 결과도 없이 조용하다.
+
+    이전 파일에 실재하지 않는 지문을 두어 "이전 값을 그대로 옮긴 것"과 구별한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    with open(held_path, "w", encoding="utf-8") as f:
+        json.dump({"pluginConfigs": {"delta@m": "0" * 64},
+                   "release": {"enabledPlugins": []}}, f)
+    repo = {"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-new"}}}}
+    apply_base(tmp_path, choices={"pluginConfigs": {"declined": ["delta@m"]}},
+               local={}, repo=repo, held=held_path)
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo["pluginConfigs"])
+    fresh = pc.value_fingerprint(masked["delta@m"])
+    assert fresh != "0" * 64
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] == {"delta@m": fresh}
+
+
+def test_held_file_directory_is_created_on_a_machine_that_never_backed_up(tmp_path):
+    """~/.claude/.sync-state/를 아무도 먼저 만들지 않는다 — write_base가 만드는 것은
+    그 안의 base뿐이고, 백업을 한 번도 하지 않은 기기에는 그 디렉토리가 없다.
+
+    빠지면 FileNotFoundError가 스크립트의 except 튜플에 걸려 {"status": "skipped"}로
+    접히고, 사용자의 decline이 **영영 기록되지 않는다.** 다른 테스트는 전부 이미 있는
+    tmp 디렉토리를 주므로 이 줄이 일하는 자리를 재지 못한다.
+    """
+    held_path = str(tmp_path / "fresh-state" / "plugins-held.json")
+    assert not os.path.exists(os.path.dirname(held_path))
+    apply_base(tmp_path, choices={"pluginConfigs": {"declined": ["delta@m"]}},
+               local={}, repo={"pluginConfigs": {"delta@m": {"options": {}}}},
+               held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] != {}
+
+
+def test_the_held_file_is_untouched_when_the_staging_write_fails(tmp_path):
+    """스테이징(base) 먼저, 보류 파일 나중 — 그 순서를 지키는 fixture.
+
+    스테이징 디렉토리 자리에 **일반 파일**을 두면 os.makedirs가 OSError로 죽는다.
+    순서가 뒤바뀌면 그 시점에 보류 파일이 이미 쓰여 있고, 그러면 H3가 풀린 채로 base에
+    키가 없어 다음 백업이 케이스 9로 떨어진다 — 약속과 반대다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    (tmp_path / "blocked").write_text("not a directory", encoding="utf-8")
+    with pytest.raises(OSError):
+        apply_base(tmp_path, choices={"pluginConfigs": {"declined": ["delta@m"]}},
+                   local={}, repo={"pluginConfigs": {"delta@m": {"options": {}}}},
+                   held=held_path, staging="blocked")
+    assert not os.path.exists(held_path)
+
+
+def test_apply_base_never_writes_a_plaintext_secret(tmp_path):
+    """형제 plan_mcp의 같은 가드와 짝이다 — dict 동등성이 아니라 **원문**을 훑는다.
+
+    "값이 실리는 자리가 구조적으로 없다"는 결론은 오늘 참이지만, 값을 담는 필드가
+    나중에 하나라도 생기면 dict 대조 단정은 그것을 보지 못한다. 전진 갈래(ahead@m)와
+    keep_local 갈래(kept@m)를 한 fixture에 함께 둔다 — 값이 base로 들어가는 자리가
+    그 둘뿐이라서다.
+    """
+    _, doc = apply_base(
+        tmp_path,
+        choices={"pluginConfigs": {"keep_local": ["kept@m"]}},
+        local={"pluginConfigs": {"ahead@m": {"options": {"apiKey": "sk-ahead"}},
+                                 "kept@m": {"options": {"other": "x"}}}},
+        repo={"pluginConfigs": {"ahead@m": {"options": {"apiKey": "sk-ahead"}},
+                                "kept@m": {"options": {"apiKey": "sk-kept"}}}})
+    raw = staged_text(str(tmp_path / "staging"))
+    assert "sk-ahead" not in raw
+    assert "sk-kept" not in raw
+    # 두 갈래가 실제로 base에 들어갔다 — 아니면 위 두 단정이 공허하다.
+    assert doc["pluginConfigs"]["ahead@m"] == {"options": {"apiKey": pc.SENTINEL}}
+    assert doc["pluginConfigs"]["kept@m"] == {"options": {"apiKey": pc.SENTINEL}}
 
 
 def test_configured_entry_is_dropped_from_the_held_file(tmp_path):
@@ -1779,6 +1906,36 @@ def test_apply_base_cli_skips_when_the_choices_json_is_not_an_object(tmp_path):
     assert str(choices_path) in json.loads(proc.stdout)["reason"]
 
 
+def test_apply_base_cli_writes_the_staging_file(tmp_path):
+    """main()의 인자 배선을 **성공 경로로** 한 번 실행한다 (형제 plan_mcp와 같은 가드).
+
+    거부 갈래만 재면 배선이 무가드로 남는다. backup_path와 staging_dir이 뒤바뀌면
+    os.makedirs가 레포의 plugins.json 자리에 디렉토리를 만들려다 FileExistsError로
+    접혀 {"status": "skipped"} + **종료 코드 0**이 된다 — SKILL.md는 그것을 정상으로
+    읽고 base는 전혀 전진하지 않는다. 이 함수가 .tmp 규칙에서 스스로를 제외하면서까지
+    막으려던 바로 그 실패 모양이다.
+
+    격리 HOME에 settings.json과 installed_plugins.json을 함께 넣는다 — 하나라도 없으면
+    섹션이 접혀 스테이징 문서가 비고, 아래 단정이 배선과 무관하게 참이 된다.
+    """
+    home = tmp_path / "home"
+    (home / ".claude" / "plugins").mkdir(parents=True, exist_ok=True)
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"enabledPlugins": {"p@m": True}}), encoding="utf-8")
+    (home / ".claude" / "plugins" / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {}}), encoding="utf-8")
+    choices_path = tmp_path / "choices.json"
+    choices_path.write_text(json.dumps(EMPTY_CHOICES), encoding="utf-8")
+    repo_dir = write_repo(tmp_path, {"enabledPlugins": {"p@m": True}})
+    staging = str(tmp_path / "staging")
+    proc = run_script(tmp_path, plan_script(), "apply-base",
+                      os.path.join(repo_dir, pc.BACKUP_RELPATH), staging,
+                      str(choices_path))
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "ok"
+    assert staged_doc(staging)["enabledPlugins"] == {"p@m": True}
+
+
 def test_skipped_section_keeps_the_previous_base_in_the_staged_document(tmp_path):
     """7.5 — 판정하지 못한 섹션을 {}로 덮으면 그 섹션의 이력이 통째로 사라진다.
 
@@ -1801,12 +1958,17 @@ def test_this_runs_decline_takes_effect_on_the_base_immediately(tmp_path):
     이전 상태를 넘기면 H4가 아직 걸리지 않아 그 키가 base로 전진하고, 다음 실행에서야
     보류로 판정되어 얼어붙은 base가 남는다. 로컬과 레포의 마스킹 결과가 **같아야**
     next_base가 전진을 시도하므로(그래야 이 단정이 공허하지 않다) 옵션 키 집합을 맞춘다.
+
+    레포 값에 **평문**을 넣는다. SENTINEL을 넣으면 마스킹이 항등이 되어 원본과 마스킹된
+    값의 지문이 같아지고, value_held를 **정규화 없이** 손으로 조립하는 회귀가 이 단정에
+    드러나지 않는다 — H4의 지문은 마스킹된 레포 값으로 계산되므로, 평문을 그대로 hold에
+    넘기면 지문이 어긋나 보류가 통째로 비고 이 키가 base로 전진한다.
     """
     _, doc = apply_base(
         tmp_path,
         choices={"pluginConfigs": {"declined": ["delta@m"]}},
         local={"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-real"}}}},
-        repo={"pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}})
+        repo={"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-plain"}}}})
     assert "delta@m" not in doc["pluginConfigs"]
 
 
