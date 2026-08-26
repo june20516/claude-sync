@@ -1430,3 +1430,410 @@ def test_plan_cli_exits_zero_and_reports_skip(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["status"] == "skipped"
     assert json.loads(proc.stdout)["reason"]
+
+
+EMPTY_CHOICES = {section: {"keep_stale": [], "keep_local": []} for section in pc.SECTIONS}
+
+
+def run_script(tmp_path, script, *args):
+    """스크립트를 격리된 HOME으로 실행한다 (파일 상단 규율).
+
+    tmp_path를 받는 것은 HOME을 pytest가 정리하게 하기 위해서다 — 인자 검증이
+    느슨해지는 순간 스크립트가 진짜 ~/.claude를 읽는다.
+    """
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True, exist_ok=True)
+    return subprocess.run([sys.executable, script] + list(args),
+                          capture_output=True, text=True,
+                          env=dict(os.environ, HOME=str(home)))
+
+
+def apply_base(tmp_path, choices=None, local=None, repo=None, base=None,
+               installed=None, held=None, staging="staging"):
+    repo_dir = write_repo(tmp_path, repo if repo is not None else {})
+    merged = json.loads(json.dumps(EMPTY_CHOICES))
+    for section, values in (choices or {}).items():
+        merged.setdefault(section, {}).update(values)
+    result = plan_plugins.apply_base(
+        os.path.join(repo_dir, pc.BACKUP_RELPATH),
+        str(tmp_path / staging), merged,
+        settings_path=write_settings(tmp_path, **(local or {})),
+        installed_path=installed if installed is not None else write_installed(tmp_path),
+        held_path=held if held is not None else str(tmp_path / "plugins-held.json"),
+        base_dir=write_base_blob(tmp_path, base))
+    return result, staged_doc(str(tmp_path / staging))
+
+
+def test_apply_base_writes_the_final_name_directly(tmp_path):
+    """9.3.7 — .tmp+rename을 적용하면 rename 트리거가 없어 base가 영영 전진하지 않는다."""
+    _, doc = apply_base(tmp_path, local={"enabledPlugins": {"p@m": True}},
+                        repo={"enabledPlugins": {"p@m": True}})
+    assert doc["enabledPlugins"] == {"p@m": True}
+    assert not os.path.exists(os.path.join(str(tmp_path / "staging"),
+                                           pc.BACKUP_RELPATH + ".tmp"))
+
+
+def test_keep_stale_forgets_the_history_so_the_entry_returns(tmp_path):
+    """9.3.4 케이스 4·5 — base에서 지워야 다음 백업이 케이스 1로 push한다."""
+    _, doc = apply_base(tmp_path,
+                        choices={"enabledPlugins": {"keep_stale": ["X@m"]}},
+                        local={"enabledPlugins": {"X@m": True}},
+                        repo={"enabledPlugins": {}},
+                        base={"enabledPlugins": {"X@m": True}})
+    assert "X@m" not in doc["enabledPlugins"]
+
+
+def test_keep_local_records_the_repo_value_so_the_landing_is_case7(tmp_path):
+    """9.3.4 케이스 8·9 — base[k] ← 레포 값. base에서 지우면 케이스 1이 되어 뜻이 달라진다."""
+    _, doc = apply_base(tmp_path,
+                        choices={"enabledPlugins": {"keep_local": ["p@m"]}},
+                        local={"enabledPlugins": {"p@m": False}},
+                        repo={"enabledPlugins": {"p@m": True}},
+                        base={"enabledPlugins": {"p@m": True}})
+    assert doc["enabledPlugins"]["p@m"] is True
+
+
+def test_choices_are_nested_by_section(tmp_path):
+    """9.3.7 — 평면 목록이면 한쪽 선택이 다른 섹션의 base를 조작한다."""
+    _, doc = apply_base(tmp_path,
+                        choices={"enabledPlugins": {"keep_stale": ["p@m"]}},
+                        local={"enabledPlugins": {"p@m": True},
+                               "pluginConfigs": {"p@m": {"options": {}}}},
+                        repo={"enabledPlugins": {}, "pluginConfigs": {}},
+                        base={"enabledPlugins": {"p@m": True},
+                              "pluginConfigs": {"p@m": {"options": {}}}})
+    assert "p@m" not in doc["enabledPlugins"]
+    assert "p@m" in doc["pluginConfigs"]
+
+
+def test_value_held_keys_are_removed_from_base_without_any_override(tmp_path):
+    """5.3 — 보류가 있는 어댑터는 restore 경로에서 스스로 value_held를 넘겨야 한다.
+
+    넘기지 않으면 보류 키가 base에 얼어붙고, 보류가 풀리는 순간 케이스 3(삭제)이 난다.
+    """
+    _, doc = apply_base(tmp_path,
+                        local={"enabledPlugins": {"p@m": True}},
+                        repo={"enabledPlugins": {"p@m": ["1.0.0"]}},
+                        base={"enabledPlugins": {"p@m": True}})
+    assert "p@m" not in doc["enabledPlugins"]
+
+
+def test_release_lifts_the_hold_and_lands_on_case7(tmp_path):
+    """7.3 — 해제만 하면 base에 키가 없어 케이스 9로 떨어진다. 약속과 반대다."""
+    held_path = str(tmp_path / "plugins-held.json")
+    _, doc = apply_base(tmp_path,
+                        choices={"enabledPlugins": {"release": ["p@m"]}},
+                        local={"enabledPlugins": {"p@m": True}},
+                        repo={"enabledPlugins": {"p@m": ["1.0.0"]}},
+                        held=held_path)
+    assert doc["enabledPlugins"]["p@m"] == ["1.0.0"]     # keep_local이 동시에 걸렸다
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["release"]["enabledPlugins"] == ["p@m"]
+
+
+def test_release_list_is_sorted_regardless_of_where_the_entries_came_from(tmp_path):
+    """보고·기록의 순서가 실행마다 흔들리면 diff가 흔들린다.
+
+    이 catch는 **결정적이다** — 정렬 대상 released는 set이 아니라 리스트이고(이전
+    파일의 순서 + 이번 선택의 순서), 이 fixture는 그 결합 순서를 정렬의 역순
+    ["z@m", "a@m"]으로 만든다. 해시 순서에 기대지 않는다.
+
+    선택에 z@m을 함께 넣어 **중복 제거도 같이 잰다** — 빠지면 결과가
+    ["a@m", "z@m", "z@m"]이 되어 같은 단정이 갈라낸다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    with open(held_path, "w", encoding="utf-8") as f:
+        json.dump({"pluginConfigs": {}, "release": {"enabledPlugins": ["z@m"]}}, f)
+    apply_base(tmp_path,
+               choices={"enabledPlugins": {"release": ["a@m", "z@m"]}},
+               local={"enabledPlugins": {"a@m": True, "z@m": True}},
+               repo={"enabledPlugins": {"a@m": ["1.0.0"], "z@m": ["2.0.0"]}},
+               held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["release"]["enabledPlugins"] == ["a@m", "z@m"]
+
+
+def test_release_entry_is_cleared_once_the_repo_value_is_boolean(tmp_path):
+    """조건이 사라지면 항목도 사라진다 — H4의 지문 규칙과 같은 형태다.
+
+    이전 파일과 이번 선택 **양쪽에** p@m을 넣는다 — 두 목록이 각자 조건을 재므로
+    한쪽에만 넣으면 다른 쪽의 조건 검사를 지워도 이 단정이 통과한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    with open(held_path, "w", encoding="utf-8") as f:
+        json.dump({"pluginConfigs": {}, "release": {"enabledPlugins": ["p@m"]}}, f)
+    apply_base(tmp_path, choices={"enabledPlugins": {"release": ["p@m"]}},
+               local={"enabledPlugins": {"p@m": True}},
+               repo={"enabledPlugins": {"p@m": True}}, held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["release"]["enabledPlugins"] == []
+
+
+def test_declined_config_is_recorded_with_the_masked_repo_fingerprint(tmp_path):
+    """6.4 — 로컬 값이나 사용자 입력값을 지문에 넣으면 영영 매치되지 않는다.
+
+    레포 값에 **평문**을 넣는다. SENTINEL을 넣으면 마스킹이 항등이 되어 지문이 같아지고,
+    지문 대상을 masked에서 원본으로 바꾸는 회귀를 단정이 구별하지 못한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    repo = {"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-real"}}}}
+    apply_base(tmp_path, choices={"pluginConfigs": {"declined": ["delta@m"]}},
+               local={}, repo=repo, held=held_path)
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo["pluginConfigs"])
+    assert masked["delta@m"] != repo["pluginConfigs"]["delta@m"]   # 마스킹이 값을 바꿨다
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] == {
+            "delta@m": pc.value_fingerprint(masked["delta@m"])}
+
+
+def test_configured_entry_is_dropped_from_the_held_file(tmp_path):
+    """6.4 — 사용자가 마음을 바꿔 값을 입력하면 그 항목을 파일에서 지운다."""
+    held_path = str(tmp_path / "plugins-held.json")
+    with open(held_path, "w", encoding="utf-8") as f:
+        json.dump({"pluginConfigs": {"delta@m": "0" * 64},
+                   "release": {"enabledPlugins": []}}, f)
+    apply_base(tmp_path, choices={"pluginConfigs": {"configured": ["delta@m"]}},
+               local={}, repo={"pluginConfigs": {"delta@m": {"options": {}}}},
+               held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] == {}
+
+
+def test_held_file_is_not_written_when_it_could_not_be_read(tmp_path):
+    """깨진 파일을 빈 상태로 덮으면 사용자의 보류 선택이 조용히 사라진다."""
+    held_path = str(tmp_path / "plugins-held.json")
+    with open(held_path, "w", encoding="utf-8") as f:
+        f.write("{not json")
+    out, _ = apply_base(tmp_path, local={}, repo={}, held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        assert f.read() == "{not json"
+    assert out["sections"]["pluginConfigs"]["status"] == "skipped"
+
+
+def test_apply_base_ignores_unknown_and_non_string_choice_entries(tmp_path):
+    """선택 결과 JSON은 사용자 대화에서 만들어진다 — 형태가 어긋나도 죽지 않는다.
+
+    **해시 불가능한 원소를 함께 넣는다.** None·3만 넣으면 필터를 지워도 nb.pop(None)과
+    nb.pop(3)이 조용히 성공해 어떤 단정도 흔들리지 않는다 — 필터가 실제로 막는 것은
+    리스트·객체가 dict 키 자리에 들어가 TypeError로 죽는 갈래다.
+    그리고 보고에도 문자열만 실려야 한다 — SKILL.md가 그 목록을 사용자에게 보여 준다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_stale": [None, 3, ["x"], "p@m"],
+                                    "keep_local": [{"k": 1}, "q@m"]},
+                 "nonsense": {"keep_local": ["x"]}},
+        local={"enabledPlugins": {"p@m": True}},
+        repo={"enabledPlugins": {"q@m": True}},
+        base={"enabledPlugins": {"p@m": True}})
+    assert "p@m" not in doc["enabledPlugins"]
+    assert result["sections"]["enabledPlugins"]["kept_stale"] == ["p@m"]
+    assert result["sections"]["enabledPlugins"]["kept_local"] == ["q@m"]
+
+
+def test_failed_restore_does_not_advance_the_base(tmp_path):
+    """10.4 — 로컬이 그 값에 동의하지 않았으므로 base가 전진하면 안 된다.
+
+    "복원을 시도한 목록"이 아니라 **복원 후 다시 읽은 로컬**을 넘기는 것이 그 안전장치다.
+    """
+    _, doc = apply_base(tmp_path, local={"enabledPlugins": {}},
+                        repo={"enabledPlugins": {"failed@m": True}})
+    assert "failed@m" not in doc["enabledPlugins"]
+
+
+def test_apply_base_status_stays_ok_when_a_section_is_skipped(tmp_path):
+    """최상위 status는 "이 스크립트가 돌았는가"이고 섹션 skip을 반영하지 않는다.
+
+    반영하게 만들면 두 섹션이 접힌 실행에서 SKILL.md가 "반영할 것이 없다"로 읽고
+    **정상 처리된 마켓플레이스 섹션까지 조용히 버린다.** 섹션 사실은
+    sections[<섹션>]["status"]에만 있고 소비자는 그것을 따로 읽어야 한다.
+    collect_plugins·compare_plugins가 같은 계약을 쓴다.
+    """
+    result, _ = apply_base(tmp_path,
+                           local={"enabledPlugins": {"p@m": True}},
+                           repo={"enabledPlugins": {"p@m": True}},
+                           installed=str(tmp_path / "none-installed.json"))
+    assert result["status"] == "ok"
+    assert result["sections"]["enabledPlugins"]["status"] == "skipped"
+    assert result["sections"]["extraKnownMarketplaces"]["status"] == "ok"
+
+
+def test_apply_base_report_matches_the_document_it_staged(tmp_path):
+    """보고 세 필드가 비면 SKILL.md가 선택이 반영됐는지 확인할 길이 없다.
+
+    base_keys를 **실제로 쓴 문서와 대조한다** — 따로 만들면 갈리고, 갈려도 증상이 없다.
+    셋을 서로 다른 비지 않은 값으로 채워 하나만 하드코딩돼도 드러나게 한다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_stale": ["gone@m"], "keep_local": ["stay@m"]}},
+        local={"enabledPlugins": {"gone@m": True, "stay@m": False, "plain@m": True}},
+        repo={"enabledPlugins": {"stay@m": True, "plain@m": True}},
+        base={"enabledPlugins": {"gone@m": True, "stay@m": True, "plain@m": True}})
+    section = result["sections"]["enabledPlugins"]
+    assert section["kept_stale"] == ["gone@m"]
+    assert section["kept_local"] == ["stay@m"]
+    assert section["base_keys"] == sorted(doc["enabledPlugins"])
+    assert "gone@m" not in section["base_keys"]
+    assert doc["enabledPlugins"]["stay@m"] is True
+
+
+def test_keep_local_reports_only_what_it_could_apply(tmp_path):
+    """kept_local은 **적용한 것**을 보고한다 — 레포에 없는 키에는 걸 값이 없다.
+
+    kept_stale이 요청을 그대로 보고하는 것과 비대칭으로 보이지만 둘 다 "이 실행이
+    만든 base 상태"를 말한다: keep_stale은 키가 base에 없든 있든 결과가 "없음"이라
+    요청이 곧 결과이고, keep_local은 레포에 값이 없으면 만들 결과 자체가 없다.
+    요청을 그대로 보고하면 SKILL.md가 반영되지 않은 선택을 반영됐다고 안내한다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_local": ["ghost@m", "stay@m"]}},
+        local={"enabledPlugins": {"stay@m": False}},
+        repo={"enabledPlugins": {"stay@m": True}},
+        base={"enabledPlugins": {"stay@m": True}})
+    assert result["sections"]["enabledPlugins"]["kept_local"] == ["stay@m"]
+    assert "ghost@m" not in doc["enabledPlugins"]
+
+
+def test_apply_base_applies_choices_in_the_marketplace_section_too(tmp_path):
+    """세 섹션을 도는 루프인데 두 섹션만 재면 셋째가 조용히 빠져도 통과한다.
+
+    마켓플레이스는 auto·보류 파일 어느 실패로도 skip되지 않는 유일한 섹션이라,
+    루프가 좁아지면 **그 섹션만 아무 선택도 반영되지 않는다.**
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"extraKnownMarketplaces": {"keep_stale": ["gone"]}},
+        local={"extraKnownMarketplaces": {"gone": GH, "stay": GH}},
+        repo={"extraKnownMarketplaces": {"stay": GH}},
+        base={"extraKnownMarketplaces": {"gone": GH, "stay": GH}})
+    assert result["sections"]["extraKnownMarketplaces"]["kept_stale"] == ["gone"]
+    assert "gone" not in doc["extraKnownMarketplaces"]
+    # 섹션 전체가 죽으면 위 단정이 공허해진다 — 살아남은 키가 있어야 한다.
+    assert "stay" in doc["extraKnownMarketplaces"]
+
+
+def test_apply_base_sorts_the_reported_base_keys(tmp_path):
+    """정렬을 잃으면 보고가 삽입 순서를 따라가 diff가 실행마다 흔들린다.
+
+    keep_local이 nb **뒤에** 덧붙이므로 삽입 순서를 정렬 역순으로 만들 수 있다 —
+    zzz@m은 next_base가 먼저 얹고(aaa@m은 로컬에 없어 전진하지 못한다) aaa@m은
+    keep_local이 나중에 얹으므로 nb의 삽입 순서는 [zzz@m, aaa@m]이다. 이 fixture는
+    해시에 의존하지 않으므로 회귀를 **결정적으로** 잡는다.
+
+    **삽입 순서를 스테이징 파일에서 볼 수는 없다** — ks.dump_json이 sort_keys=True로
+    쓰기 때문에 doc은 언제나 정렬돼 있다. 그래서 정렬 회귀가 드러나는 자리는 보고의
+    base_keys 하나뿐이고, doc 쪽 단정은 "두 키가 실제로 있다"(fixture가 비지 않았다)를
+    맡는다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_local": ["aaa@m"]}},
+        local={"enabledPlugins": {"zzz@m": True}},
+        repo={"enabledPlugins": {"zzz@m": True, "aaa@m": True}},
+        base={"enabledPlugins": {"zzz@m": True}})
+    assert doc["enabledPlugins"] == {"zzz@m": True, "aaa@m": True}
+    assert result["sections"]["enabledPlugins"]["base_keys"] == ["aaa@m", "zzz@m"]
+
+
+@pytest.mark.parametrize("args", [[], ["apply-base"], ["apply-base", "a", "b"],
+                                  ["apply-base", "a", "b", "c", "d"],
+                                  ["bogus", "a", "b", "c"]])
+def test_apply_base_cli_rejects_wrong_invocations(tmp_path, args):
+    """서브커맨드 이름 검사와 개수 검사가 **둘 다** 필요하다.
+
+    처리되지 않은 IndexError도 종료 코드 1이므로, usage 문구를 함께 확인하지 않으면
+    개수 검사 제거를 잡지 못한다. plan 서브커맨드가 같은 모양의 테스트를 갖는다.
+    """
+    proc = run_script(tmp_path, plan_script(), *args)
+    assert proc.returncode == 1
+    assert "사용:" in proc.stderr
+
+
+def test_apply_base_cli_skips_when_the_choices_json_is_not_an_object(tmp_path):
+    """read_choices의 ValueError가 흡수되지 않으면 restore 흐름이 traceback으로 선다.
+
+    "형제 셋과 같은 except 튜플"이라는 주석이 지키는 것이 이 항목이다 —
+    10.3의 "종료 코드는 0이다, 그래야 안내가 보인다"가 여기서 깨진다.
+
+    **격리된 HOME에 settings.json을 넣는다.** 없으면 read_local_sections가 먼저
+    LocalConfigUnavailable로 접혀 status가 어차피 skipped가 되고, 그러면 이 단정은
+    read_choices와 무관하게 참이 된다. 사유가 **선택 결과 파일을 가리키는지**까지
+    확인해야 그 구별이 선다.
+    """
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True, exist_ok=True)
+    (home / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    choices_path = tmp_path / "choices.json"
+    choices_path.write_text("[]", encoding="utf-8")
+    repo_dir = write_repo(tmp_path, {})
+    proc = run_script(tmp_path, plan_script(), "apply-base",
+                      os.path.join(repo_dir, pc.BACKUP_RELPATH),
+                      str(tmp_path / "staging"), str(choices_path))
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "skipped"
+    assert str(choices_path) in json.loads(proc.stdout)["reason"]
+
+
+def test_skipped_section_keeps_the_previous_base_in_the_staged_document(tmp_path):
+    """7.5 — 판정하지 못한 섹션을 {}로 덮으면 그 섹션의 이력이 통째로 사라진다.
+
+    다음 백업이 그 섹션 전체를 "로컬 신규"로 읽어 타 기기 항목까지 되살리거나 지운다.
+    collect_plugins가 같은 처방을 갖는다. 이전 base에 **비지 않은 값**을 넣어야
+    "빈 base를 그대로 통과시킨 것"과 구별된다.
+    """
+    result, doc = apply_base(tmp_path,
+                             local={"enabledPlugins": {"p@m": True}},
+                             repo={"enabledPlugins": {"p@m": True}},
+                             base={"enabledPlugins": {"kept@m": True}},
+                             installed=str(tmp_path / "none-installed.json"))
+    assert result["sections"]["enabledPlugins"]["status"] == "skipped"
+    assert doc["enabledPlugins"] == {"kept@m": True}
+
+
+def test_this_runs_decline_takes_effect_on_the_base_immediately(tmp_path):
+    """6.4·5.3 — 훅에 **이번 실행의** 보류 상태를 넘겨야 declined 키가 base에서 빠진다.
+
+    이전 상태를 넘기면 H4가 아직 걸리지 않아 그 키가 base로 전진하고, 다음 실행에서야
+    보류로 판정되어 얼어붙은 base가 남는다. 로컬과 레포의 마스킹 결과가 **같아야**
+    next_base가 전진을 시도하므로(그래야 이 단정이 공허하지 않다) 옵션 키 집합을 맞춘다.
+    """
+    _, doc = apply_base(
+        tmp_path,
+        choices={"pluginConfigs": {"declined": ["delta@m"]}},
+        local={"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-real"}}}},
+        repo={"pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}})
+    assert "delta@m" not in doc["pluginConfigs"]
+
+
+def test_keep_local_writes_the_masked_repo_value_into_the_base(tmp_path):
+    """6.1 — keep_local이 얹는 값도 마스킹 훅을 거친다.
+
+    거치지 않으면 base에 평문이 남고, 다음 비교가 **마스킹된 로컬과 평문 base**를
+    견주게 되어 사라지지 않는 차이가 생긴다. enabledPlugins로 재면 그 섹션의 정규화가
+    항등이라 이 회귀가 드러날 자리가 없으므로 pluginConfigs로 잰다.
+
+    로컬의 option 키 집합을 레포와 어긋나게 두어 next_base가 스스로 전진하지 못하게
+    한다 — 그래야 doc에 남은 값이 keep_local이 얹은 것임이 확실해진다.
+    """
+    _, doc = apply_base(
+        tmp_path,
+        choices={"pluginConfigs": {"keep_local": ["delta@m"]}},
+        local={"pluginConfigs": {"delta@m": {"options": {"other": "x"}}}},
+        repo={"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-real"}}}})
+    assert doc["pluginConfigs"]["delta@m"] == {"options": {"apiKey": pc.SENTINEL}}
+
+
+def test_local_only_entries_do_not_enter_the_base(tmp_path):
+    """10.4 — next_base의 세 번째 인자가 **레포**여야 하는 이유.
+
+    로컬을 넘기면 모든 키가 자기 자신과 같아 base가 로컬 전체로 전진한다. 아직 레포에
+    올라가지 않은 이 기기의 항목이 "합의된 이력"이 되고, 다음 백업이 그것을 케이스 4
+    (타 기기 삭제)로 읽어 사용자에게 되묻는다.
+    """
+    _, doc = apply_base(tmp_path,
+                        local={"enabledPlugins": {"mine@m": True, "shared@m": True}},
+                        repo={"enabledPlugins": {"shared@m": True}})
+    assert "mine@m" not in doc["enabledPlugins"]
+    assert doc["enabledPlugins"]["shared@m"] is True     # 합의된 키는 전진한다

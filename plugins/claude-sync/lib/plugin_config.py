@@ -936,3 +936,66 @@ def value_held_for(section, hooks, local, repo):
     normalize = hooks[section]["normalize"]
     held = hooks[section]["hold"](normalize(local), normalize(repo))
     return frozenset(held["value"])
+
+
+# ------------------------------------- 선택 반영 (9.3.7)·보류 기록 (6.4·7.3)
+
+def choice_list(choices, section, key):
+    """선택 결과 JSON에서 문자열 목록만 꺼낸다.
+
+    이 JSON은 SKILL.md의 대화가 만든다 — 형태가 어긋나도 restore 전체를 세우지 않는다.
+    **섹션 키로 중첩한다**(9.3.7): enabledPlugins와 pluginConfigs는 키가 같은 문자열이라
+    평면 목록이면 어느 섹션의 선택인지 구별할 수 없고, 한쪽 선택이 다른 섹션의 base까지
+    조작한다.
+    """
+    section_choices = choices.get(section)
+    if not isinstance(section_choices, dict):
+        return []
+    values = section_choices.get(key)
+    return [v for v in values if isinstance(v, str)] if isinstance(values, list) else []
+
+
+def next_held_state(previous, repo, choices):
+    """apply-base가 기록할 다음 보류 상태 (6.4·7.3).
+
+    declined — 이번에 값을 입력한 항목(configured)은 빼고 이번에 건너뛴 항목을 더한다.
+               레포에 없는 항목은 정리한다. 지문은 **마스킹된 레포 값**으로 만든다.
+    release  — 레포 값이 불리언이 되었거나 키가 사라진 항목을 정리한다. 조건이 사라지면
+               항목도 사라진다(H4의 지문 규칙과 같은 형태).
+
+    configured가 필요한 이유: 사용자가 마음을 바꿔 값을 입력했는데 항목이 남아 있으면
+    지문이 그대로 매치되어 **영영 보류 상태로 남는다** — 6.4가 "그때 항목을 파일에서
+    지운다"고 정한 자리다.
+    """
+    masked = SECTION_NORMALIZE["pluginConfigs"](repo.get("pluginConfigs", {}))
+    configured = set(choice_list(choices, "pluginConfigs", "configured"))
+    declined = {key: value for key, value in previous["pluginConfigs"].items()
+                if key in masked and key not in configured}
+    for key in choice_list(choices, "pluginConfigs", "declined"):
+        if key in masked:
+            declined[key] = value_fingerprint(masked[key])
+
+    plugins = repo.get("enabledPlugins", {})
+
+    def still_extended(key):
+        return key in plugins and not isinstance(plugins[key], bool)
+
+    released = [key for key in previous["release"]["enabledPlugins"] if still_extended(key)]
+    released += [key for key in choice_list(choices, "enabledPlugins", "release")
+                 if still_extended(key) and key not in released]
+    return {"pluginConfigs": declined, "release": {"enabledPlugins": sorted(released)}}
+
+
+def write_held_state(state, held_path=None):
+    """보류 상태를 기록한다. **이 함수의 호출자는 plan_plugins.py apply-base 하나뿐이다.**
+
+    다른 스크립트가 쓰면 소유자가 둘이 되고, 그러면 backup이 사용자의 선택을 덮어쓴다.
+    ~/.claude/.sync-state/는 iter_synced_relpaths가 열거하지 않으므로 이 파일은
+    동기화 대상이 아니다 — 보류 선택이 타 기기로 번지지 않는다(기기별 선택이 의도다).
+    """
+    path = DEFAULT_HELD if held_path is None else held_path
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = {"version": HELD_SCHEMA_VERSION,
+               "pluginConfigs": state["pluginConfigs"],
+               "release": state["release"]}
+    ks.dump_json(payload, path)

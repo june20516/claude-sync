@@ -5,6 +5,11 @@
   plan_plugins.py plan <레포의 plugins.json 경로>
     복원 계획 JSON을 stdout에 낸다 (섹션별 버킷 11개 + 실행 보조).
 
+  plan_plugins.py apply-base <레포의 plugins.json 경로> <스테이징 디렉토리>
+                             <선택 결과 JSON 경로>
+    복원 후 로컬을 기준으로 다음 base를 계산해 스테이징에 쓰고, 이 기기의 보류
+    선택(plugins-held.json)을 갱신한다.
+
 CLI 실행과 비밀 값 입력은 SKILL.md의 대화 흐름이 맡는다 — 비밀이 스크립트 인자에
 남지 않게 하려는 것과, 9.3.4의 세 선택지가 대화형 확인이어야 하는 것이 같은 이유다.
 
@@ -194,16 +199,139 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     }
 
 
+def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_path=None,
+               held_path=None, base_dir=ss.BASE_DIR):
+    """복원 후 로컬 기준으로 다음 base를 계산하고 override 셋을 적용해 스테이징에 쓴다.
+
+    ① next_base(복원 후 로컬, 이전 base, 레포 값)  — 정규화는 코어가 한다
+    ② keep_stale(케이스 4·5의 "유지")   → base에서 키 삭제  (그 이력은 잊는다)
+    ③ keep_local(케이스 8·9의 "로컬 유지") → base[k] ← 레포 값 (그 이력은 잊는다)
+    ④ release(H3 탈출구) → ②③과 별개로 보류를 풀고 **동시에 ③을 적용한다**
+
+    ④가 ③을 함께 걸지 않으면 base에 그 키가 없어(5.3) 다음 백업이 케이스 9로 떨어지고
+    레포 값이 그대로 남는다 — 약속과 반대다. ③을 함께 걸면 same(repo, base)이므로
+    케이스 7(로컬만 변경) → 로컬 값 push → 레포 값이 불리언 → H3 자연 해제로 이어진다.
+
+    **value_held를 스스로 계산해 next_base에 넘긴다.** merge 경로와 달리 여기서는
+    아무도 대신 계산해 주지 않는다. 넘기지 않으면 보류 키가 base에 얼어붙어, 보류가
+    풀리는 순간 케이스 3(삭제)이 난다.
+
+    **레포 매핑 전체를 세 번째 인자로 넘긴다.** next_base의 계약은 "local과 merged가
+    같은 값을 갖는 키만 전진"이므로, 그 교집합이 곧 "실제로 복원에 성공한 항목"이 된다 —
+    실패했거나 사용자가 건너뛴 항목은 로컬에 없으니 자동으로 빠진다(10.4).
+    여기에 "복원을 시도한 목록"을 넘기면 그 안전장치가 사라진다.
+
+    **이 함수는 .tmp+rename 규칙에서 제외된다.** 그 규칙은 "레포 쓰기가 성공한 뒤에
+    rename"인데 apply-base에는 **레포 쓰기가 없다** — 그대로 적용하면 rename 트리거가
+    영영 오지 않아 게이트가 언제나 거짓이 되고 restore 경로의 base가 전혀 전진하지
+    않는다. 여기서는 **파일 존재가 곧 "계산 성공"**이다(9.3.7).
+
+    **최상위 status는 섹션 skip을 반영하지 않는다** — build_plan·collect_plugins·
+    compare_plugins와 같은 계약이다. 접힌 섹션이 있어도 나머지 섹션의 base는 유효하고,
+    최상위를 skipped로 접으면 소비자가 "반영할 것이 없다"로 읽어 정상 처리된 섹션까지
+    함께 버린다. 섹션 사실은 sections[<섹션>]["status"]에만 있다.
+
+    **kept_stale은 요청을, kept_local은 적용한 것을 보고한다.** 비대칭으로 보이지만 둘
+    다 "이 실행이 만든 base 상태"를 말한다 — keep_stale은 그 키가 base에 있었든 없었든
+    결과가 "없음"이라 요청이 곧 결과이고, keep_local은 레포에 값이 없으면 얹을 값 자체가
+    없다. 그때도 요청을 그대로 보고하면 SKILL.md가 반영되지 않은 선택을 반영됐다고
+    안내한다.
+
+    **파일 두 개를 쓰는 순서가 계약이다.** 스테이징(base) 먼저, 보류 파일 나중.
+    반대로 하면 release가 기록된 뒤 base 쓰기가 실패했을 때 H3가 풀린 채로 base에 키가
+    없어 다음 백업이 케이스 9로 떨어진다. 이 순서에서는 보류 파일 쓰기가 실패해도
+    "다시 묻는다"에 그친다. **이 순서를 지키는 테스트는 없다** — 두 쓰기 사이에 실패를
+    주입해야 갈리는데 그 fixture가 없다. 알고 받아들이는 구멍이다.
+    """
+    local = pc.read_local_sections(settings_path)
+    repo = pc.load_backup(backup_path)
+    base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
+    auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
+
+    # **이번 실행의** 보류 상태로 훅을 만든다. 이것이 실제로 결과를 가르는 곳은 H4다 —
+    # 이번에 declined된 pluginConfigs 키가 곧바로 value_held가 되어 base에서 빠진다.
+    # 이전 상태를 넘기면 그 키가 base로 전진했다가 다음 실행에서야 보류로 판정되어
+    # 얼어붙은 base가 남는다(5.3).
+    # release 쪽은 이 선택으로 결과가 갈리지 않는다 — 아래 ③이 그 키에 레포 값을 다시
+    # 얹으므로 H3가 걸렸든 풀렸든 nb의 최종 값이 같다. 그래도 같은 상태를 넘기는 것은
+    # 훅과 아래 루프가 **한 보류 상태**를 보게 하기 위해서다.
+    next_held = pc.next_held_state(held_state, repo, choices)
+    hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=next_held)
+
+    previous_base = base or {}
+    doc, report = {}, {}
+    for section in pc.SECTIONS:
+        if section in skipped:
+            # 판정하지 못한 섹션은 이전 base를 그대로 통과시킨다 — {}로 덮으면 다음
+            # 백업이 그 섹션 전체를 "로컬 신규"로 읽는다(collect_plugins와 같은 처방).
+            doc[section] = previous_base.get(section, {})
+            report[section] = pc.skipped_section(skipped[section])
+            continue
+        normalize = hooks[section]["normalize"]
+        masked = normalize(repo[section])
+        # 손으로 조립하지 않는다 — hold는 정규화된 입력을 받고 (local, repo) 순서가
+        # 뒤집히면 예외도 빈 결과도 없이 판정이 반대로 선다(Task 6 quality review I1).
+        value_held = pc.value_held_for(section, hooks, local[section], repo[section])
+        nb = ks.next_base(local[section],
+                          None if base is None else base.get(section, {}),
+                          repo[section],
+                          normalize=normalize, value_held=value_held)
+        stale = pc.choice_list(choices, section, "keep_stale")
+        for key in stale:
+            nb.pop(key, None)
+        keep_local = list(pc.choice_list(choices, section, "keep_local"))
+        if section == "enabledPlugins":
+            keep_local += [key for key in next_held["release"]["enabledPlugins"]
+                           if key not in keep_local]
+        kept_local = []
+        for key in keep_local:
+            if key in masked:
+                nb[key] = masked[key]
+                kept_local.append(key)
+        doc[section] = nb
+        report[section] = {"status": "ok", "kept_stale": stale, "kept_local": kept_local,
+                           "base_keys": sorted(nb)}
+
+    os.makedirs(staging_dir, exist_ok=True)
+    pc.dump_backup(doc, os.path.join(staging_dir, pc.BACKUP_RELPATH))
+    # 보류 파일을 읽지 못했다면 쓰지 않는다 — 빈 상태로 덮으면 사용자의 선택이 조용히
+    # 사라진다. 그 경우 SKILL.md가 파일을 지울 경로를 안내한다(6.4).
+    if "pluginConfigs" not in skipped:
+        pc.write_held_state(next_held, held_path)
+    return {"status": "ok", "sections": report}
+
+
+def read_choices(path):
+    """섹션으로 중첩된 선택 결과. **비밀 값은 담기지 않는다.**
+
+    사용자가 입력한 pluginConfigs 값은 여기 실리지 않고 `install --config`로 곧바로
+    전달된다 — 담으면 임시 파일에 평문 비밀이 남는다(9.3.7).
+    """
+    with open(path, "rb") as f:
+        data = json.loads(f.read())
+    if not isinstance(data, dict):
+        raise ValueError("선택 결과 JSON의 최상위가 객체가 아님: %s" % path)
+    return data
+
+
 def main():
     args = sys.argv[1:]
     if len(args) == 2 and args[0] == "plan":
         runner = lambda: build_plan(args[1])  # noqa: E731
+    elif len(args) == 4 and args[0] == "apply-base":
+        runner = lambda: apply_base(args[1], args[2], read_choices(args[3]))  # noqa: E731
     else:
         print("사용: plan_plugins.py plan <레포의 plugins.json 경로>", file=sys.stderr)
+        print("      plan_plugins.py apply-base <레포의 plugins.json 경로>"
+              " <스테이징 디렉토리> <선택 결과 JSON 경로>", file=sys.stderr)
         sys.exit(1)
     try:
         out = runner()
     # collect_plugins·compare_plugins와 같은 튜플을 쓴다. 갈리면 한쪽만 traceback으로 죽는다.
+    # ValueError를 잡는 이유 둘: 코어(keyed_sync)의 normalize 계약 위반 — 훅이 키 집합을
+    # 바꾼 경우 — 과, 선택 결과 JSON이 객체가 아니거나 깨진 경우(read_choices,
+    # json.JSONDecodeError도 ValueError의 하위다). 어느 쪽도 restore 흐름 전체를
+    # traceback으로 세우지 않는다(10.3).
     except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema, OSError, ValueError) as e:
         out = {"status": "skipped", "reason": str(e)}
         print("플러그인 복원 건너뜀: %s" % e, file=sys.stderr)
