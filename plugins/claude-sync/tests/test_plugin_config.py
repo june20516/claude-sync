@@ -618,10 +618,16 @@ def test_value_fingerprint_is_a_sha256_of_the_canonical_serialization():
         ks.fingerprint(value).encode("utf-8")).hexdigest()
 
 
-def test_build_hooks_gives_the_core_exactly_the_two_hook_contract():
-    """코어가 보는 계약은 hold(local, repo)와 normalize(mapping) 둘뿐이다.
+def test_build_hooks_gives_the_core_the_four_hook_contract():
+    """코어가 보는 계약은 normalize(mapping)·hold(local, repo)·restorable(key, value)·
+    secret_keys(value) 넷이다.
 
-    자기 섹션 밖의 입력(auto_ids·다른 섹션의 출처·보류 파일)은 어댑터가 클로저로 닫는다.
+    자기 섹션 밖의 입력(auto_ids·다른 섹션의 출처와 등록 가능 여부·보류 파일)은
+    어댑터가 클로저로 닫는다 — 이 테스트가 고정하는 것이 그 사실이다.
+
+    **`==`가 아니라 `>=`인 것은 의도된 개방이다.** 이후 task가 훅을 더 얹어도 여기서
+    깨지지 않아야 한다. 조이지 말 것 — 훅 하나하나의 배선은 이 줄이 아니라 아래
+    normalize 단정과 restorable·secret_keys 전용 테스트가 잡는다(변조로 실측했다).
     """
     hooks = hooks_for({name: {} for name in pc.SECTIONS},
                       {name: {} for name in pc.SECTIONS})
