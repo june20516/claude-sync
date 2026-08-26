@@ -2928,7 +2928,7 @@ git commit -m "feat(status): compare_plugins.py — 값 변경과 보류를 보�
 
 계획은 **판정의 단일 진입점**이다. SKILL.md가 레포 파일을 직접 파싱하면 "파서 두 벌"이 되살아나므로, 등록 인자·설정 키 목록·의존 관계·복원 불가 사유를 전부 계획에 실어 준다.
 
-**`enable`/`disable`은 멱등이 아니다**(같은 상태면 exit 1). 그래서 값을 맞추는 명령은 **현재 상태와 다를 때만** 낸다. 판정에는 **로컬의 현재 값**을 쓴다 — "설치 직후의 값은 `true`"는 `enabledPlugins`에서 온 설치 대상에만 참이다. `pluginConfigs`에서 온 키는 **이미 로컬에 설치돼 있을 수 있다**: 그 섹션의 `route_new`는 "그 섹션에" 레포 전용인 키를 훑을 뿐 플러그인 자체의 설치 여부와 무관하기 때문이다. 로컬에 값이 **없을 때만** 설치 직후의 `true`로 떨어진다. 상수 `true`를 쓰면 이미 꺼진 플러그인에 `disable`이 나가 `exit 1`의 거짓 실패가 되고, spec 10.1의 실패 수집에 실려 "복원이 실패했다"로 읽힌다.
+**`enable`/`disable`은 멱등이 아니다**(같은 상태면 exit 1). 그래서 값을 맞추는 명령은 **현재 상태와 다를 때만** 낸다. 판정에는 **로컬의 현재 값**을 쓴다 — "설치 직후의 값은 `true`"는 `enabledPlugins`에서 온 설치 대상에만 참이다. `pluginConfigs`에서 온 키는 **이미 로컬에 설치돼 있을 수 있다**: 그 섹션의 `route_new`는 "그 섹션에" 레포 전용인 키를 훑을 뿐 플러그인 자체의 설치 여부와 무관하기 때문이다. 로컬에 값이 **없을 때만** 설치 직후의 `true`로 떨어진다. 그 로컬 값은 `local_values` 페이로드와 **같은 정규화 훅**을 통과한 것을 쓴다 — 한쪽만 마스킹된 두 값을 비교하면 없어야 할 `enable`/`disable`이 CLI 명령으로 나간다. 상수 `true`를 쓰면 이미 꺼진 플러그인에 `disable`이 나가 `exit 1`의 거짓 실패가 되고, spec 10.1의 실패 수집에 실려 "복원이 실패했다"로 읽힌다.
 
 **부재는 `false`가 아니다.** 레포에 키가 아예 없는 항목을 `disable` 대상으로 삼지 않는다 — 매니페스트 기본값에 위임하는 상태이므로 의미가 반대다.
 
@@ -3144,28 +3144,34 @@ def test_plan_carries_both_values_for_every_decided_key(tmp_path):
     회귀가 각각 따로 드러나야 하기 때문이다. 판정 대상이 아닌 두 키(local_ahead의
     mine@m, local_only의 solo@m)를 함께 두어 목록이 decided로 좁혀지는 것도 잰다.
 
-    이름은 **버킷 순회 순서와 정렬 순서가 다르게** 골랐다 — 세 버킷이 내는 순서는
-    zeta@m·both@m·alpha@m인데 정렬 결과는 alpha@m·both@m·new@m·zeta@m이다. 두 순서가
-    같으면 아래 정렬 단정이 정렬 없이도 참이 되어 공허해진다.
+    **decided는 set이므로 정렬 전 순서를 이름으로 통제할 수 없다**(plan_plugins의 set
+    comprehension). 그 순서는 버킷 순회 순서가 아니라 **문자열 해시 순서**이고 실행마다
+    PYTHONHASHSEED에 끌려간다. 그래서 아래 정렬 단정은 정상 코드에서 **항상** 참이고,
+    sorted를 없앤 회귀는 원소 수가 n일 때 약 1 - 1/n! 확률로 잡힌다 — 결정적이지 않다.
+    **원소를 줄이면 그 확률이 떨어진다**(2원소면 절반을 놓친다). 그래서 decided를 여섯으로
+    채운다 — repo_ahead 둘 + both_changed 하나 + value_held 하나 + install 둘 → 1/720.
     """
-    base = {"enabledPlugins": {"zeta@m": True, "both@m": True, "mine@m": True}}
-    local = {"enabledPlugins": {"zeta@m": True, "both@m": ["2.0.0"], "mine@m": False,
-                                "alpha@m": True, "solo@m": True}}
-    repo = {"enabledPlugins": {"zeta@m": False, "both@m": False, "mine@m": True,
-                               "alpha@m": ["1.0.0"], "new@m": True},
+    base = {"enabledPlugins": {"zeta@m": True, "bravo@m": True, "both@m": True,
+                               "mine@m": True}}
+    local = {"enabledPlugins": {"zeta@m": True, "bravo@m": True, "both@m": ["2.0.0"],
+                                "mine@m": False, "alpha@m": True, "solo@m": True}}
+    repo = {"enabledPlugins": {"zeta@m": False, "bravo@m": False, "both@m": False,
+                               "mine@m": True, "alpha@m": ["1.0.0"], "new@m": True,
+                               "delta@m": True},
             "extraKnownMarketplaces": {"m": GH}}
     out = build_plan(tmp_path, local=local, repo=repo, base=base)
     section = out["sections"]["enabledPlugins"]
-    assert section["repo_ahead"] == ["zeta@m"]         # 케이스 8
-    assert section["both_changed"] == ["both@m"]       # 케이스 9
-    assert section["value_held"] == ["alpha@m"]        # H3
-    assert section["local_ahead"] == ["mine@m"]        # 케이스 7 — 판정 대상이 아니다
-    assert section["local_only"] == ["solo@m"]         # 케이스 1 — 판정 대상이 아니다
-    assert out["install"] == ["new@m"]
-    assert out["repo_values"] == {"zeta@m": False, "both@m": False,
-                                  "alpha@m": ["1.0.0"], "new@m": True}
-    # new@m은 로컬에 없다 — 없는 키를 넣으면 SKILL.md가 "값이 바뀐다"고 잘못 말한다.
-    assert out["local_values"] == {"zeta@m": True, "both@m": ["2.0.0"], "alpha@m": True}
+    assert section["repo_ahead"] == ["bravo@m", "zeta@m"]  # 케이스 8
+    assert section["both_changed"] == ["both@m"]           # 케이스 9
+    assert section["value_held"] == ["alpha@m"]            # H3
+    assert section["local_ahead"] == ["mine@m"]            # 케이스 7 — 판정 대상이 아니다
+    assert section["local_only"] == ["solo@m"]             # 케이스 1 — 판정 대상이 아니다
+    assert out["install"] == ["delta@m", "new@m"]
+    assert out["repo_values"] == {"zeta@m": False, "bravo@m": False, "both@m": False,
+                                  "alpha@m": ["1.0.0"], "new@m": True, "delta@m": True}
+    # new@m·delta@m은 로컬에 없다 — 없는 키를 넣으면 SKILL.md가 "값이 바뀐다"고 잘못 말한다.
+    assert out["local_values"] == {"zeta@m": True, "bravo@m": True,
+                                   "both@m": ["2.0.0"], "alpha@m": True}
     # decided를 정렬하지 않으면 집합 순회가 문자열 해시에 끌려가 **JSON 출력의 키 순서가
     # 실행마다 바뀐다.** dict를 ==로 비교하는 위의 두 단정은 순서를 보지 못하므로, install만
     # 정렬이 고정되고 같은 파일의 다른 출력은 아닌 비대칭이 남는다. 그것을 여기서 닫는다.
@@ -3328,7 +3334,8 @@ def plan_script():
                                         "plan_plugins.py"))
 
 
-@pytest.mark.parametrize("args", [[], ["bogus"], ["plan"], ["plan", "a", "b"]])
+@pytest.mark.parametrize("args",
+                         [[], ["bogus"], ["bogus", "x"], ["plan"], ["plan", "a", "b"]])
 def test_plan_cli_rejects_wrong_invocations(tmp_path, args):
     """호출부가 잘못한 경우에만 0이 아닌 종료 코드를 쓴다.
 
@@ -3336,6 +3343,10 @@ def test_plan_cli_rejects_wrong_invocations(tmp_path, args):
     `plan_plugins.py plan`이 usage 대신 IndexError traceback이 되는데, **종료 코드만
     보면 그 회귀가 보이지 않는다** — 처리되지 않은 예외도 1로 끝나기 때문이다.
     사용자가 자기 호출의 잘못을 알 수 있는 유일한 신호가 stderr의 usage다.
+
+    ["bogus", "x"]가 **이름 검사를 재는 유일한 케이스다.** 나머지 넷은 개수만으로도
+    걸리므로, 이 항목이 없으면 관문에서 `args[0] == "plan"`을 지워도 아무 테스트도
+    실패하지 않고 `plan_plugins.py bogus <경로>`가 usage 없이 계획을 낸다.
 
     HOME을 격리한다 — 지금은 인자 검증에서 먼저 나가 실제 ~/.claude를 읽지 않지만,
     갈래를 넓힌 뒤 검사가 느슨해지는 순간 진짜 홈을 읽는다(파일 상단 규율).
@@ -3503,12 +3514,23 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     """복원 계획.
 
     **평문 비밀이 실리지 않는 근거는 "값이 전부 정규화된다"가 아니다.** sections는 코어가
-    키 목록만 담아 돌려주므로(restore_plan) 값이 실리는 자리는 셋뿐이다 —
+    키 목록만 담아 돌려주므로(restore_plan) 값이 실리는 자리는 **넷**이다 —
     marketplace_add[].arg(마스킹된 레포 값에서 뽑은 source 문자열), config_keys(값이
     아니라 물어야 할 option 키 **이름**), repo_values/local_values(enabledPlugins 전용 —
-    도메인상 비밀이 없는 섹션이다). 그 셋을 전부 마스킹 훅에 통과시키는 것은 근거를
-    구조로 바꾸기 위해서다: enabledPlugins의 정규화가 오늘 항등(_identity)이라는 사실에
-    기대면, 그 섹션에 마스킹이 도입되는 순간 훅을 우회하는 자리 하나만 조용히 남는다.
+    도메인상 비밀이 없는 섹션이다), 그리고 unrestorable_reasons(아래). 그 넷을 전부
+    마스킹 훅에 통과시키는 것은 근거를 구조로 바꾸기 위해서다: enabledPlugins의 정규화가
+    오늘 항등(_identity)이라는 사실에 기대면, 그 섹션에 마스킹이 도입되는 순간 훅을
+    우회하는 자리 하나만 조용히 남는다.
+
+    **넷째는 값이 문자열 안에 들어가 있어 세는 눈에 걸리지 않는다.** unrestorable_reasons의
+    마켓플레이스 갈래는 레포 값의 source.source를 사유 문장에 **보간한다**
+    (plugin_config.unrestorable_reason의 (a)·(b) 갈래). 레포에
+    {"m": {"source": {"source": "X"}}}가 있으면 사유가 "'X' 출처로는 …"이 된다. 오늘
+    안전한 근거는 둘이다 — 그 값도 masked[section]을 거치고(위와 같은 훅), 그리고
+    extraKnownMarketplaces에는 도메인상 비밀이 없다. 나머지 두 섹션의 갈래는 값이 아니라
+    **키**에서 뽑은 마켓플레이스 이름만 넣으므로 값이 실리지 않는다.
+    **10.2의 사유 갈래를 늘릴 때 이 자리를 다시 셀 것** — pluginConfigs는 마스킹 대상
+    섹션이라(_redact_configs) 그 갈래가 값을 보간하기 시작하면 성질이 달라진다.
 
     **최상위 status는 섹션 skip을 반영하지 않는다(의도).** 그 값은 "계획 수립을
     수행했는가"다 — 접힌 섹션이 있어도 나머지 섹션의 계획은 유효하고, 최상위를 skipped로
@@ -3532,6 +3554,11 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 로컬 값도 **같은 훅**을 통과시킨다. compare_plugins.changed_detail이 양쪽을 둘 다
     # 정규화하는 것과 같은 규약이다 — 원본을 실으면 그 섹션에 마스킹이 도입될 때
     # 로컬 값만 마스킹 계층 전체를 우회하고, 예외도 빈 결과도 나지 않는다(6.1).
+    # **싣는 자리와 비교하는 자리가 같은 값을 봐야 한다.** local_values의 페이로드만
+    # 훅에 통과시키고 disable 판정은 원본으로 비교하면, 한쪽만 마스킹된 두 값이
+    # value_command에 들어가 없어야 할 enable/disable이 **CLI 명령으로** 나간다.
+    # 그래서 이 파일에는 **정규화를 거치지 않은 로컬 값을 꺼내 쓰는 자리가 없다** —
+    # local을 그대로 넘기는 곳은 코어와 훅뿐이고, 그쪽은 스스로 정규화한다.
     local_masked = hooks["enabledPlugins"]["normalize"](local["enabledPlugins"])
     plugins = sections["enabledPlugins"]
     markets = sections["extraKnownMarketplaces"]
@@ -3562,7 +3589,7 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     disable_after_install = [
         k for k in install
         if k in masked["enabledPlugins"]
-        and pc.value_command(local["enabledPlugins"].get(k, True),
+        and pc.value_command(local_masked.get(k, True),
                              masked["enabledPlugins"][k]) == "disable"]
 
     # 값을 맞춰야 하는 세 갈래에 양쪽 값을 실어 준다 — 케이스 8·9(repo_ahead·
@@ -3651,13 +3678,13 @@ if __name__ == "__main__":
 
 **로컬 상태·예외 흡수·최상위 status·사유 배선** — quality review가 SURVIVED로 실측한 자리다. 반드시 함께 돌린다.
 
-- `disable_after_install`의 `local["enabledPlugins"].get(k, True)`를 상수 `True`로 되돌리기 → `test_plan_does_not_disable_a_plugin_that_is_already_off_locally`가 잡아야 한다. 부재의 기본값을 `False`로 접는 반대 방향의 잘못된 fix도 함께 돌린다 — 그쪽은 disable 테스트 셋이 잡는다. **두 방향을 다 돌려야** "부재는 `true`"와 "로컬에 있으면 그 값"이 각각 고정된 것이 된다
+- `disable_after_install`의 `local_masked.get(k, True)`를 상수 `True`로 되돌리기 → `test_plan_does_not_disable_a_plugin_that_is_already_off_locally`가 잡아야 한다. 부재의 기본값을 `False`로 접는 반대 방향의 잘못된 fix도 함께 돌린다 — 그쪽은 disable 테스트 셋이 잡는다. **두 방향을 다 돌려야** "부재는 `true`"와 "로컬에 있으면 그 값"이 각각 고정된 것이 된다
 - `main()`의 except 튜플에서 `ValueError`를 빼기 → `test_plan_cli_skips_when_normalize_drops_a_key`가 잡아야 한다. 형제 둘과 같은 튜플을 쓴다는 주석의 주장이 그 항목에 대해 무보증이었던 자리다
 - 최상위 `"status": "ok"`를 `"skipped" if skipped else "ok"`로 바꾸기(= 섹션 skip을 반영) → `test_plan_skips_plugin_sections_when_auto_flags_are_unavailable`이 잡아야 한다. **두 의미 중 어느 쪽이 계약인지 정하는 것**이 이 변조의 요지다 — 정하지 않으면 SKILL.md가 최상위 `ok`만 읽고 "복원할 것이 없습니다"로 조용히 끝낸다
 - `unrestorable_reasons`의 `for section in pc.SECTIONS`를 `("enabledPlugins",)`로 좁히기 / `reason`에 넘기는 `value` 인자를 `None`으로 고정하기 → 둘 다 `test_plan_gives_reasons_for_unrestorable_marketplaces`가 잡아야 한다. 플러그인 갈래는 `value`를 **아예 보지 않으므로**(키만 본다) 마켓플레이스 케이스가 없으면 둘 다 SURVIVED한다
-- `decided = sorted(...)`의 `sorted`를 `list`로 바꾸기 → `test_plan_carries_both_values_for_every_decided_key`가 잡아야 한다. 버킷 순회 순서와 정렬 순서가 다른 이름을 써야만 잡힌다
-- CLI의 `len(args) == 2` 검사를 지우기 → `test_plan_cli_rejects_wrong_invocations`가 잡아야 한다. **종료 코드만 보면 잡히지 않는다** — 처리되지 않은 `IndexError`도 1로 끝나므로 stderr의 usage를 함께 봐야 한다
-- `"local_values"`를 정규화 전 원본(`local["enabledPlugins"]`)에서 꺼내기 / `REGISTER_BUCKETS`에서 `"needs_secret"`을 빼기 / `_install_dependencies`의 `marketplace is not None` 가드를 지우기 → **셋 다 통과한다.** 첫째는 `enabledPlugins`의 정규화가 항등이라 동작이 같고, 둘째는 그 섹션의 `secret_keys`가 `_no_secrets`라 `needs_secret`이 항상 비며, 셋째는 `install ⊆ restorable`이라 도달할 수 없는 방어다. 알고 받아들이는 무해한 변조이고, 그래서 셋의 근거는 **주석과 docstring으로만** 고정한다
+- `decided = sorted(...)`의 `sorted`를 `list`로 바꾸기 → `test_plan_carries_both_values_for_every_decided_key`가 잡아야 한다. **다만 결정적이지 않다** — `decided`는 set이라 정렬 전 순서가 이름이 아니라 **문자열 해시 순서**로 정해지고, 그것은 `PYTHONHASHSEED`에 끌려간다. 원소 수가 n일 때 약 1 - 1/n! 확률로 잡히므로 그 fixture는 decided를 **여섯**으로 채운다(1/720). 실측: 4원소 58/60, 6원소 60/60(`PYTHONHASHSEED` 1..60)
+- CLI의 `len(args) == 2` 검사를 지우기 / `args[0] == "plan"` 검사**만** 지우기 → 둘 다 `test_plan_cli_rejects_wrong_invocations`가 잡아야 한다. 개수 검사 쪽은 **종료 코드만 보면 잡히지 않는다** — 처리되지 않은 `IndexError`도 1로 끝나므로 stderr의 usage를 함께 봐야 한다. 이름 검사 쪽은 **인자가 정확히 둘인데 서브커맨드가 틀린** 케이스(`["bogus", "x"]`)가 parametrize에 있어야만 잡힌다 — 나머지 넷은 개수만으로도 걸리므로, 없으면 `plan_plugins.py bogus <경로>`가 usage 없이 계획을 낸다
+- `"local_values"`를 정규화 전 원본(`local["enabledPlugins"]`)에서 꺼내기 / **disable 판정의 로컬 쪽을 `local_masked` 대신 원본으로 되돌리기** / `REGISTER_BUCKETS`에서 `"needs_secret"`을 빼기 / `_install_dependencies`의 `marketplace is not None` 가드를 지우기 → **넷 다 통과한다.** 앞의 둘은 `enabledPlugins`의 정규화가 항등(`_identity`)이라 동작이 같고, 셋째는 그 섹션의 `secret_keys`가 `_no_secrets`라 `needs_secret`이 항상 비며, 넷째는 `install ⊆ restorable`이라 도달할 수 없는 방어다. 알고 받아들이는 무해한 변조이고, 그래서 넷의 근거는 **주석과 docstring으로만** 고정한다
 
 - [ ] **Step 5: Commit**
 
