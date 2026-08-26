@@ -317,6 +317,16 @@ def read_hold_inputs(installed_path=None, held_path=None):
     return auto_ids, held_state, skipped
 
 
+def skipped_section(reason):
+    """섹션 skip 갈래의 **보고 모양**. 세 스크립트가 같은 키를 쓰게 한다.
+
+    SKILL.md는 세 스크립트의 출력을 같은 코드로 읽는다. 스크립트 안의 리터럴로 두면
+    한쪽이 "message"로 써도 막는 것이 없고, 그러면 그 스크립트의 skip이 조용히 읽히지
+    않는다 — 섹션이 빠졌다는 사실 자체가 사용자에게 도달하지 않는다.
+    """
+    return {"status": "skipped", "reason": reason}
+
+
 # ---------------------------------------------------------------- 인식 계층 (4.4)
 
 def _all_sections(mapping):
@@ -836,6 +846,23 @@ def build_hooks(local, repo, *, auto_ids, held_state):
         }
         for section in SECTIONS
     }
+
+
+def hooks_and_context(local, repo, *, auto_ids, held_state):
+    """훅 묶음과 held_kinds용 컨텍스트를 **한 번의 입력으로** 함께 만든다.
+
+    스크립트가 build_hooks와 held_context를 따로 부르면 두 입력이 같다는 보장이
+    호출부의 규율뿐이다. 어긋나면 hold가 보류한 키를 held_kinds가 분류하지 못해
+    ValueError가 나고 그 섹션이 통째로 skipped가 된다 — 무엇도 잘못되지 않았는데
+    타 기기 항목이 pass-through로만 남는다. 세 스크립트가 같은 두 줄을 각자 쓰는
+    대신 이것을 부르면 (local, repo)를 한 번만 받으므로 갈릴 자리가 없다.
+
+    build_hooks가 내부에서 held_context를 다시 부르므로 계산은 두 번이지만 입력이
+    같아 결과가 같다. build_hooks의 서명을 바꾸지 않는 것은 그쪽에 이미 테스트가
+    걸려 있고, 이 함수의 목적이 계산 절약이 아니라 **입력을 하나로 묶는 것**이어서다.
+    """
+    return (build_hooks(local, repo, auto_ids=auto_ids, held_state=held_state),
+            held_context(local, repo, auto_ids=auto_ids, held_state=held_state))
 
 
 def value_held_for(section, hooks, local, repo):

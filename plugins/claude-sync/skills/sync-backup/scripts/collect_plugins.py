@@ -3,8 +3,10 @@
 
 사용: collect_plugins.py <레포 경로> <스테이징 디렉토리>
 
-`claude plugin list --json`을 호출하지 않고 stdin도 받지 않는다 — 데이터 소스는
-settings.json(세 섹션의 값)과 installed_plugins.json(auto 플래그)뿐이다(spec 3장).
+`claude plugin list --json`을 호출하지 않고 stdin도 받지 않는다 — 값의 원천은
+settings.json(세 섹션의 값)과 installed_plugins.json(auto 플래그) 둘뿐이다(spec 3장).
+세 번째로 읽는 로컬 파일이 하나 더 있다: ~/.claude/.sync-state/plugins-held.json.
+그것은 값의 원천이 아니라 **이 기기의 보류 선택**이고, 부재가 정상 상태다(6.4).
 
 base는 이 스크립트가 쓰지 않는다. 커밋 전에 실행되기 때문이다. next_base를 스테이징
 디렉토리에 plugins.json으로 써 두고, 레포가 실제로 그 내용을 갖게 된 뒤 SKILL.md가
@@ -52,6 +54,12 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
 
     스테이징은 <rel>.tmp로 쓰고 **레포 쓰기가 성공한 뒤에** rename한다 — 최종 파일의
     존재가 곧 "레포까지 반영됨"을 뜻해야 SKILL.md의 base 갱신 게이트가 참이 된다.
+
+    **최상위 status는 섹션 skip을 반영하지 않는다(의도).** 그 값은 "이 스크립트가 레포를
+    갱신했는가"이고, 섹션 하나가 접혀도 나머지 둘은 갱신됐으므로 ok다. 섹션 단위 사실은
+    sections[<섹션>]["status"]에만 있다 — SKILL.md는 그 둘을 다른 분기로 읽어야 한다.
+    최상위를 섹션 skip에 따라 바꾸면 전체 skip(레포를 손대지 않았다)과 부분 skip(레포를
+    갱신했다)이 같은 값으로 접혀, 정반대의 두 상태에 같은 안내가 나간다.
     """
     local = pc.read_local_sections(settings_path)
     repo_file = os.path.join(repo_path, pc.BACKUP_RELPATH)
@@ -59,8 +67,11 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
     base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
 
     auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
-    hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=held_state)
-    context = pc.held_context(local, repo, auto_ids=auto_ids, held_state=held_state)
+    # 훅과 보고 컨텍스트를 **한 번의 (local, repo)** 로 만든다. 따로 부르면 두 입력이
+    # 같다는 보장이 이 줄의 규율뿐이고, 어긋나면 held_kinds가 분류에 실패해 섹션이
+    # 통째로 skipped가 된다.
+    hooks, context = pc.hooks_and_context(local, repo, auto_ids=auto_ids,
+                                          held_state=held_state)
 
     previous_base = base or {}
     merged_doc, base_doc, sections = {}, {}, {}
@@ -70,7 +81,7 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
             # {}를 쓰게 되고, 타 기기의 항목이 status:"ok"인 채로 전량 소실된다.
             merged_doc[section] = repo[section]
             base_doc[section] = previous_base.get(section, {})
-            sections[section] = {"status": "skipped", "reason": skipped[section]}
+            sections[section] = pc.skipped_section(skipped[section])
             continue
         normalize = hooks[section]["normalize"]
         result = ks.merge(local[section], repo[section],
@@ -89,6 +100,8 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
             "deleted": result["deleted"],
             "local_stale": result["local_stale"],
             # 케이스 2(타 기기 추가)와 케이스 8(타 기기 변경)은 안내 문구가 다르다.
+            # 가르는 축은 **로컬에 그 키가 있는가**다 — present는 이 기기에도 있어
+            # 사용자가 값을 고르지만, absent는 restore가 그냥 설치한다.
             "repo_ahead": {
                 "present": [k for k in result["repo_ahead"] if k in local[section]],
                 "absent": [k for k in result["repo_ahead"] if k not in local[section]],
@@ -127,8 +140,9 @@ def main():
     try:
         out = collect(sys.argv[1], sys.argv[2])
     # collect_mcp·compare_plugins·plan_plugins와 같은 튜플을 쓴다. 갈리면 한쪽만
-    # traceback으로 죽는다. ValueError는 코어의 normalize 계약 위반(훅이 키 집합을 바꿈)과
-    # held_kinds의 분류 불가에서 온다 — 어느 쪽도 backup 흐름 전체를 세우지 않는다.
+    # traceback으로 죽는다. ValueError의 출처는 셋이다 — 코어의 normalize 계약 위반(훅이
+    # 키 집합을 바꿈), held_kinds의 분류 불가, dump_backup의 "섹션이 객체가 아님"(쓰기 전에
+    # 던지므로 손상 파일이 레포에 들어가지 않는다). 셋 다 backup 흐름 전체를 세우지 않는다.
     # AutoFlagsUnavailable·HeldStateUnavailable은 여기 없다 — 섹션 단위로 이미 흡수됐다.
     except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema, OSError, ValueError) as e:
         out = {"status": "skipped", "reason": str(e)}

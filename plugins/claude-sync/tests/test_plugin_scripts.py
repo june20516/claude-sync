@@ -5,6 +5,7 @@
 """
 import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -391,6 +392,97 @@ def test_second_backup_of_an_empty_device_is_not_skipped(tmp_path):
     assert second["status"] == "ok"
 
 
+def test_collect_splits_the_decision_table_into_report_buckets(tmp_path):
+    """판정표 여섯 케이스를 한 fixture에 심어 보고 배선을 통째로 잠근다.
+
+    SKILL.md는 이 네 필드만 보고 안내 문구를 고르므로, 배선이 어긋나면 판정 자체는
+    옳은데 **사용자가 정반대의 처방을 받는다** — 케이스 9(레포 값이 남았다)와
+    케이스 5(아예 빠졌다), 케이스 8(값을 고르라)과 케이스 2(restore가 설치한다)가
+    각각 뒤바뀐다. deleted·local_stale은 그 사실이 사용자에게 도달하는 **유일한 통로**라
+    비면 백업이 레포에서 항목을 지운 것이 어디에도 나오지 않는다.
+    레포 값을 전부 불리언으로 두는 것은 H3(비불리언 레포 값 보류)를 피해 이 여섯이
+    판정표를 타게 하기 위해서다.
+    """
+    out = collect(
+        tmp_path,
+        local={"enabledPlugins": {"c9@m": False, "c5@m": True,
+                                  "c8@m": False, "c4@m": True}},
+        repo={"enabledPlugins": {"c9@m": True, "c2@m": True,
+                                 "c8@m": True, "c3@m": True}},
+        base={"enabledPlugins": {"c9@m": {"v": 1}, "c5@m": False, "c8@m": False,
+                                 "c3@m": True, "c4@m": True}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["conflicts"] == {"repo_kept": ["c9@m"], "repo_absent": ["c5@m"]}
+    assert section["repo_ahead"] == {"present": ["c8@m"], "absent": ["c2@m"]}
+    assert section["deleted"] == ["c3@m"]
+    assert section["local_stale"] == ["c4@m"]
+    assert repo_doc(write_repo(tmp_path))["enabledPlugins"] == {
+        "c9@m": True, "c2@m": True, "c8@m": True}
+
+
+def test_collect_reports_base_staging_failure_without_claiming_skip(tmp_path,
+                                                                    monkeypatch):
+    """rename만 실패하면 레포는 **이미 갱신돼 있다** — status는 ok이고 사유는 별도 키다.
+
+    사유를 reason에 담으면 SKILL.md의 skipped 분기가 그 키 하나로 갈리므로, 레포를
+    고쳐 놓고 사용자에게 "레포 파일은 손대지 않았다"를 보여 준다. 갈래를 통째로 지우면
+    실패가 아무 데도 보고되지 않는다. 스테이징 최종 파일이 없어야 base 갱신 게이트가
+    막혀 base가 전진하지 않는다.
+    """
+    repo = write_repo(tmp_path)
+    staging = str(tmp_path / "staging")
+    staged = os.path.join(staging, pc.BACKUP_RELPATH)
+    real_replace = os.replace
+
+    def fail_on_rename(src, dst):
+        # 레포 파일도 basename이 같으므로 endswith가 아니라 staged 경로를 정확히 맞춘다 —
+        # 아니면 레포 쓰기가 먼저 걸려 collect가 try/except에 닿기도 전에 죽는다.
+        if str(dst) == staged:
+            raise OSError("rename failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(collect_plugins.os, "replace", fail_on_rename)
+    out = collect_plugins.collect(
+        repo, staging,
+        settings_path=write_settings(tmp_path, enabledPlugins={"mine@m": True}),
+        installed_path=write_installed(tmp_path),
+        held_path=str(tmp_path / "none-held.json"),
+        base_dir=write_base_blob(tmp_path))
+    assert out["status"] == "ok"
+    assert out["base_staging"] == "failed"
+    assert "reason" not in out
+    assert "다음 백업이 복구한다" in out["base_staging_reason"]
+    assert repo_doc(repo)["enabledPlugins"] == {"mine@m": True}
+    assert not os.path.exists(staged)
+
+
+def test_orphaned_is_computed_from_the_merged_document_not_the_local_one(tmp_path):
+    """7.6 — 고아 판정의 대상은 **레포에 실릴 문서**다.
+
+    섹션이 skip된 실행에서 둘이 갈린다: 로컬에는 없고 레포에만 있는 고아가 그대로
+    남는데, 로컬에서 계산하면 그것이 보고에서 사라진다.
+    """
+    out = collect(tmp_path,
+                  local={"enabledPlugins": {}},
+                  repo={"enabledPlugins": {"alpha@bar": True}},
+                  installed=str(tmp_path / "none-installed.json"))
+    assert out["sections"]["enabledPlugins"]["status"] == "skipped"
+    assert out["orphaned"] == ["alpha@bar"]
+
+
+def test_collect_cli_rejects_wrong_argument_count():
+    """호출부가 잘못한 경우에만 0이 아닌 종료 코드를 쓴다.
+
+    데이터 문제의 skip(종료 코드 0)과 배선 실수(1)를 가르는 유일한 신호다 —
+    0으로 접으면 SKILL.md가 인자를 잘못 넘겨도 성공으로 보인다.
+    """
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills",
+                          "sync-backup", "scripts", "collect_plugins.py")
+    proc = subprocess.run([sys.executable, os.path.abspath(script)],
+                          capture_output=True, text=True)
+    assert proc.returncode == 1
+
+
 def test_collect_reports_orphaned_without_blocking(tmp_path):
     """7.6 — 차단하지 않는다. 최상위 orphaned로 보고만 한다."""
     out = collect(tmp_path,
@@ -475,7 +567,6 @@ def test_collect_builds_the_report_before_touching_the_repo(tmp_path, monkeypatc
 
 def test_collect_exits_zero_and_reports_skip_from_the_cli(tmp_path):
     """10.3 — 종료 코드는 0이다. 그래야 안내가 보인다."""
-    import subprocess
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills",
                           "sync-backup", "scripts", "collect_plugins.py")
     home = tmp_path / "home"
