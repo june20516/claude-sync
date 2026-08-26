@@ -5396,6 +5396,7 @@ git commit -m "docs: plugins.json이 키 단위로 병합된다는 사실을 여
 | 고정 `.tmp` 이름은 동시 실행에서 원자성이 무력화된다. 코드베이스에 락이 하나도 없어(전수 grep 0건) 동시 실행을 전제하지 않는 설계와는 일관된다. `mkstemp`로 바꾸면 잔존 파일 이름이 무작위가 되어 `.gitignore` 대응이 어려워지는 역효과가 있다 | Task 1 quality review M3 |
 | `sync_state.write_base`의 `data is None` 삭제 분기가 `<path>.tmp`를 지우지 않는다. base 디렉토리를 walk하는 코드가 없어 현재 영향은 없다 | Task 1 quality review M4 |
 | 백업 레포에 `.gitignore`가 없다(`bootstrap.sh`가 만들지 않는다). `*.tmp` 한 줄이 값싼 보험이다 | Task 1 quality review |
+| `/sync-status`의 `unrestorable`이 **키 목록뿐**이라 "의사 출처라 원래 불가능"과 "레포에 소스가 없으니 백업한 기기에서 올려라"를 가르지 못한다. 어댑터가 훅 다섯 번째 키로 `reason`을 이미 준비해 뒀으므로 `unrestorable_reasons` 별도 키를 얹으면 기존 리스트 모양을 깨지 않고 해소된다. **spec 9.2는 status에 구별만 요구하고 사유는 요구하지 않으므로** 넣으려면 spec부터 고쳐야 한다 | Task 8 implementer 관찰 |
 | `conflicts`·`repo_ahead`의 보고 분할이 `collect_mcp.py`와 `collect_plugins.py`에 축자 중복이다. 같은 소비자(SKILL.md)가 읽는 같은 모양인데 정의가 두 곳이라 한쪽만 고쳐질 수 있다. 코어에 넣는 것은 계층이 어긋나므로(코어는 값 무관 판정이지 보고 층이 아니다) 다른 자리를 찾아야 한다. 현재는 **양쪽 다 테스트로 잠겨** 표류 위험이 낮다 | Task 7 quality review I-3 |
 | 보류 종류를 하나 더하려면 네 곳(`_make_hold`의 `if` / `HELD_KINDS` / `held_kinds`의 `if` / 배선)을 동시에 고쳐야 하고 어긋나면 런타임 `ValueError`로만 드러난다. 그 `ValueError`가 fail-closed 가드로 설계된 것이고 다섯 번째 종류는 계획에 없어 YAGNI로 미뤘다 | Task 5 quality review I-2 |
 | `test_keyed_sync.py`의 `RECOGNIZE_HOOK_CALL`이 별칭 `ks.`를 하드코딩한다. `NON_ADAPTER_KEYED_SYNC_IMPORTERS`의 모듈이 **별칭을 바꾸면서** 세 함수를 부르기 시작하면 자기검증이 우회된다(이중 변경이라 실현 가능성은 낮고, `test_sync_state.py`의 `ss.ks` 몽키패치가 그 별칭을 못박고 있다). 면제 목록이 커지면 AST로 올릴 것 | Task 3 quality review M-1 |
