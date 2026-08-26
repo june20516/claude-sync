@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from marks import requires_permission_bits  # noqa: E402
 import plugin_config as pc  # noqa: E402
 import collect_plugins  # noqa: E402
+import compare_plugins  # noqa: E402
 
 GH = {"source": {"source": "github", "repo": "june20516/suberpower"}}
 DIR_SOURCE = {"source": {"source": "directory", "path": "/x"}}
@@ -601,3 +602,296 @@ def test_collect_cli_skips_when_normalize_drops_a_key(tmp_path, monkeypatch, cap
     assert out["status"] == "skipped"
     assert out["reason"]
     assert repo_doc(repo)["enabledPlugins"] == {"gone@m": True}
+
+
+# --------------------------------------------------------------- compare_plugins
+
+def compare(tmp_path, local=None, repo=None, installed=None, held=None):
+    """기본값이 정상 경로다. 레포는 항상 파일이 있는 상태로 둔다(부재는 별도 갈래다)."""
+    repo_dir = write_repo(tmp_path, repo if repo is not None else {})
+    return compare_plugins.compare(
+        os.path.join(repo_dir, pc.BACKUP_RELPATH),
+        settings_path=write_settings(tmp_path, **(local or {})),
+        installed_path=installed if installed is not None else write_installed(tmp_path),
+        held_path=held if held is not None else str(tmp_path / "none-held.json"))
+
+
+def compare_script():
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                        "skills", "sync-status", "scripts",
+                                        "compare_plugins.py"))
+
+
+def test_compare_reports_value_changes_not_just_key_sets(tmp_path):
+    """결함 B — check_status.py의 키 집합 비교는 켬/끔 변경을 못 봤다."""
+    out = compare(tmp_path, local={"enabledPlugins": {"p@m": False}},
+                  repo={"enabledPlugins": {"p@m": True}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["changed"] == ["p@m"]
+    assert section["only_local"] == [] and section["only_repo"] == []
+
+
+def test_compare_converges_masked_secrets_to_in_sync(tmp_path):
+    """로컬 평문과 레포 마스킹을 원본끼리 비교하면 영구히 "변경됨"이 된다."""
+    out = compare(tmp_path,
+                  local={"pluginConfigs": {"p@m": {"options": {"k": "sk-real"}}}},
+                  repo={"pluginConfigs": {"p@m": {"options": {"k": pc.SENTINEL}}}})
+    assert out["sections"]["pluginConfigs"]["changed"] == []
+
+
+def test_compare_keeps_held_keys_out_of_the_three_buckets(tmp_path):
+    """9.2 — "backup 시 추가"는 거짓이고 사용자가 해소할 수도 없다."""
+    out = compare(tmp_path, local={"enabledPlugins": {"dep@m": True}},
+                  installed=write_installed(tmp_path,
+                                            {"dep@m": [{"scope": "user", "auto": True}]}))
+    section = out["sections"]["enabledPlugins"]
+    assert section["only_local"] == []
+    assert section["held"]["auto"] == ["dep@m"]
+
+
+def test_compare_stays_silent_after_the_user_declined_a_config(tmp_path):
+    """6.5 — base를 읽지 않고도 보류를 알아야 status가 조용해진다."""
+    repo = {"pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}}
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo["pluginConfigs"])
+    held = tmp_path / "plugins-held.json"
+    held.write_text(json.dumps({
+        "version": 1,
+        "pluginConfigs": {"delta@m": pc.value_fingerprint(masked["delta@m"])},
+        "release": {"enabledPlugins": []}}), encoding="utf-8")
+    out = compare(tmp_path, local={}, repo=repo, held=str(held))
+    section = out["sections"]["pluginConfigs"]
+    assert section["only_repo"] == []
+    assert section["held"]["declined"] == ["delta@m"]
+
+
+def test_compare_reports_again_when_the_repo_value_changes(tmp_path):
+    """지문이 달라지면 자동으로 해제된다 — 6.4가 약속한 동작이다."""
+    held = tmp_path / "plugins-held.json"
+    held.write_text(json.dumps({"pluginConfigs": {"delta@m": "0" * 64},
+                                "release": {"enabledPlugins": []}}), encoding="utf-8")
+    out = compare(tmp_path, local={},
+                  repo={"pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}},
+                  held=str(held))
+    assert out["sections"]["pluginConfigs"]["only_repo"] == ["delta@m"]
+
+
+def test_compare_classifies_declined_configs_from_the_normalized_repo_value(tmp_path):
+    """held_kinds에 넘기는 repo_norm은 **정규화된** 레포 값이어야 한다 (H4).
+
+    H4의 지문은 코어가 마스킹한 레포 값으로 계산된다. 보고 쪽에 원본을 넘기면 평문이
+    남아 있는 레포 파일에서 지문이 어긋나 "보류로 판정했는데 종류를 못 찾는" 상태가 되고,
+    held_kinds가 ValueError를 던져 섹션이 통째로 skipped가 된다. 위의 declined 테스트는
+    레포 값이 이미 마스킹돼 있어 이 어긋남을 재지 못한다(정규화가 멱등이라 결과가 같다).
+    """
+    plain = {"options": {"k": "plain"}}
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"]({"p@m": plain})["p@m"]
+    held = tmp_path / "plugins-held.json"
+    held.write_text(json.dumps({"pluginConfigs": {"p@m": pc.value_fingerprint(masked)}}),
+                    encoding="utf-8")
+    out = compare(tmp_path, local={"pluginConfigs": {"p@m": plain}},
+                  repo={"pluginConfigs": {"p@m": plain}}, held=str(held))
+    section = out["sections"]["pluginConfigs"]
+    assert section["status"] == "ok"
+    assert section["held"]["declined"] == ["p@m"]
+    assert section["changed"] == [] and section["only_local"] == []
+
+
+def test_compare_marks_unrestorable_repo_only_entries(tmp_path):
+    """9.2 — "restore 시 설치"가 아니라 "이 기기에서는 복원할 수 없습니다"로 말해야 한다."""
+    out = compare(tmp_path, local={}, repo={"enabledPlugins": {"p@nowhere": True}})
+    assert out["sections"]["enabledPlugins"]["unrestorable"] == ["p@nowhere"]
+
+
+def test_compare_leaves_restorable_repo_only_entries_out_of_unrestorable(tmp_path):
+    """복원 가능한 항목까지 unrestorable로 접으면 사용자에게 되돌릴 수단이 없다 (8.1).
+
+    restorable에 넘기는 값이 **그 섹션의 레포 값**이어야 이 단정이 성립한다. 문서 전체나
+    로컬 매핑을 넘기면 마켓플레이스 쪽에서 marketplace_arg가 None을 돌려주어 정상 항목이
+    전부 unrestorable이 된다 — enabledPlugins는 값을 보지 않으므로 무증상이다.
+    """
+    out = compare(tmp_path, local={},
+                  repo={"enabledPlugins": {"p@m": True},
+                        "extraKnownMarketplaces": {"m": GH}})
+    plugins = out["sections"]["enabledPlugins"]
+    markets = out["sections"]["extraKnownMarketplaces"]
+    assert plugins["only_repo"] == ["p@m"] and plugins["unrestorable"] == []
+    assert markets["only_repo"] == ["m"] and markets["unrestorable"] == []
+
+
+def test_compare_distinguishes_installed_extended_values(tmp_path):
+    """9.2·8.4 — H3는 행동 보류가 아니므로 "설치됨"과 "미설치"를 문구가 갈라야 한다."""
+    installed = compare(tmp_path, local={"enabledPlugins": {"p@m": True}},
+                        repo={"enabledPlugins": {"p@m": ["1.0.0"]}})
+    assert installed["sections"]["enabledPlugins"]["held"]["extended_value"] == ["p@m"]
+    assert installed["sections"]["enabledPlugins"]["not_installed"] == []
+    missing = compare(tmp_path, local={}, repo={"enabledPlugins": {"p@m": ["1.0.0"]}})
+    assert missing["sections"]["enabledPlugins"]["not_installed"] == ["p@m"]
+
+
+def test_compare_splits_the_three_buckets_without_swapping_them(tmp_path):
+    """네 갈래를 한 fixture에 심어 보고 배선을 잠근다.
+
+    버킷이 맞바뀌면 판정은 옳은데 사용자가 정반대의 처방을 받는다 — only_local("backup
+    시 레포에 추가")과 only_repo("restore 시 이 기기에 추가")는 방향이 반대다. 각 버킷에
+    **비지 않은 값**이 나오는 것이 하드코딩과 구별하는 유일한 방법이다.
+    레포 값을 불리언으로 두는 것은 H3(비불리언 레포 값 보류)를 피해 네 키가 전부
+    판정표를 타게 하기 위해서다.
+    """
+    out = compare(tmp_path,
+                  local={"enabledPlugins": {"mine@m": True, "both@m": True,
+                                            "same@m": True}},
+                  repo={"enabledPlugins": {"theirs@m": True, "both@m": False,
+                                           "same@m": True}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["only_local"] == ["mine@m"]
+    assert section["only_repo"] == ["theirs@m"]
+    assert section["changed"] == ["both@m"]
+    assert section["unrestorable"] == ["theirs@m"]      # 레포에 'm'의 소스가 없다
+    assert section["not_installed"] == []
+    assert section["held"] == {"auto": [], "local_marketplace": [],
+                               "extended_value": []}
+
+
+def test_compare_reports_directory_marketplace_holds_by_kind(tmp_path):
+    """H2 — 이 기기에 등록할 소스가 없는 항목은 보류이고, 종류가 local_marketplace다.
+
+    이 종류에 비지 않은 값이 나오는 fixture가 없으면 held의 배선이 하드코딩과
+    구별되지 않는다. 두 섹션이 **각각** 자기 종류로 분류되는지도 함께 잠근다.
+    """
+    doc = {"enabledPlugins": {"p@d": True},
+           "extraKnownMarketplaces": {"d": DIR_SOURCE}}
+    out = compare(tmp_path, local={}, repo=doc)
+    plugins = out["sections"]["enabledPlugins"]
+    markets = out["sections"]["extraKnownMarketplaces"]
+    assert plugins["held"]["local_marketplace"] == ["p@d"]
+    assert markets["held"]["local_marketplace"] == ["d"]
+    assert plugins["only_repo"] == [] and markets["only_repo"] == []
+    # 보류 키 중 로컬에 없는 것 — "레포 값을 보존합니다"만 말하면 거짓이 되는 항목이다.
+    assert plugins["not_installed"] == ["p@d"]
+    assert markets["not_installed"] == ["d"]
+
+
+def test_compare_never_reads_or_writes_base(tmp_path, monkeypatch):
+    """읽기 전용 스킬이다 — base를 읽으면 status와 backup의 판정이 갈린다."""
+    def boom(*args, **kwargs):
+        raise AssertionError("compare_plugins가 base를 읽었다")
+
+    monkeypatch.setattr(compare_plugins.pc, "parse_base", boom)
+    assert compare(tmp_path, local={"enabledPlugins": {"p@m": True}})["status"] == "ok"
+
+
+def test_compare_does_not_reach_the_base_history_at_all():
+    """위 테스트는 pc.parse_base 경로만 막는다 — 이력 모듈 자체를 들이지 않는 것이 성질이다.
+
+    sync_state를 import하면 read_base의 바이트를 직접 파싱하는 우회가 한 줄로 가능해지고,
+    그러면 읽기 전용이라는 이 스크립트의 계약이 monkeypatch로 확인되지 않는다.
+    """
+    with open(compare_plugins.__file__, encoding="utf-8") as f:
+        assert "sync_state" not in f.read()
+
+
+def test_compare_skips_sections_the_same_way_backup_does(tmp_path):
+    """스킬마다 다른 범위로 접으면 사용자가 두 명령에서 다른 상태를 본다."""
+    out = compare(tmp_path, local={"enabledPlugins": {"p@m": True}},
+                  installed=str(tmp_path / "none-installed.json"))
+    assert out["sections"]["enabledPlugins"]["status"] == "skipped"
+    assert out["sections"]["pluginConfigs"]["status"] == "skipped"
+    assert out["sections"]["extraKnownMarketplaces"]["status"] == "ok"
+    assert "auto 판정 불가" in out["sections"]["enabledPlugins"]["reason"]
+    # 세 스크립트가 **같은 키**로 skip을 보고해야 SKILL.md가 같은 코드로 읽는다.
+    assert out["sections"]["enabledPlugins"] == pc.skipped_section(
+        out["sections"]["enabledPlugins"]["reason"])
+
+
+def test_compare_skips_only_plugin_configs_when_the_held_file_is_broken(tmp_path):
+    """6.4 — 없음은 정상이고 깨짐은 한 섹션만 skip이다."""
+    held = tmp_path / "plugins-held.json"
+    held.write_text("{not json", encoding="utf-8")
+    out = compare(tmp_path, local={"enabledPlugins": {"p@m": True}}, held=str(held))
+    assert out["sections"]["pluginConfigs"]["status"] == "skipped"
+    assert out["sections"]["pluginConfigs"]["reason"]
+    assert out["sections"]["enabledPlugins"]["status"] == "ok"
+
+
+@pytest.mark.parametrize("broken", ["installed", "held"])
+def test_compare_and_collect_fold_the_same_sections(tmp_path, broken):
+    """두 스킬의 skip 범위가 갈리면 사용자가 같은 기기에서 다른 상태를 본다.
+
+    범위는 read_hold_inputs 하나가 정한다 — 스크립트가 각자 접으면 backup은 두 섹션을
+    접는데 status는 안 접는 비대칭이 생기고, 예외 종류가 같아 보여 흔적을 남기지 않는다.
+    """
+    def folded(out):
+        return sorted(k for k, v in out["sections"].items() if v["status"] == "skipped")
+
+    if broken == "installed":
+        kwargs = {"installed": str(tmp_path / "none-installed.json")}
+    else:
+        held = tmp_path / "plugins-held.json"
+        held.write_text("{not json", encoding="utf-8")
+        kwargs = {"held": str(held)}
+    kwargs["local"] = {"enabledPlugins": {"p@m": True}}
+    from_status = folded(compare(tmp_path, **kwargs))
+    assert from_status == folded(collect(tmp_path, **kwargs))
+    assert from_status != []
+
+
+def test_compare_cli_rejects_wrong_argument_count():
+    """호출부가 잘못한 경우에만 0이 아닌 종료 코드를 쓴다."""
+    proc = subprocess.run([sys.executable, compare_script()],
+                          capture_output=True, text=True)
+    assert proc.returncode == 1
+
+
+def test_compare_cli_exits_zero_and_reports_skip(tmp_path):
+    """10.3 — 종료 코드는 0이다. 그래야 안내가 보인다."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    repo = write_repo(tmp_path, {"enabledPlugins": {"theirs@m": True}})
+    proc = subprocess.run(
+        [sys.executable, compare_script(), os.path.join(repo, pc.BACKUP_RELPATH)],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)))
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "skipped"
+
+
+def test_compare_cli_skips_when_normalize_drops_a_key(tmp_path, monkeypatch, capsys):
+    """normalize 계약 위반(ValueError)도 traceback이 아니라 skipped로 접힌다.
+
+    세 스크립트의 except 튜플이 갈리면 같은 어댑터 결함에서 한쪽만 죽는다.
+    """
+    repo = write_repo(tmp_path, {"enabledPlugins": {"gone@m": True}})
+    monkeypatch.setitem(pc.SECTION_NORMALIZE, "enabledPlugins", drops_a_key)
+    monkeypatch.setattr(pc, "DEFAULT_SETTINGS",
+                        write_settings(tmp_path, enabledPlugins={"gone@m": True}))
+    monkeypatch.setattr(pc, "DEFAULT_INSTALLED", write_installed(tmp_path))
+    monkeypatch.setattr(pc, "DEFAULT_HELD", str(tmp_path / "none-held.json"))
+    monkeypatch.setattr(sys, "argv",
+                        ["compare_plugins.py", os.path.join(repo, pc.BACKUP_RELPATH)])
+    compare_plugins.main()
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "skipped"
+    assert out["reason"]
+
+
+def test_compare_refuses_an_unknown_repo_schema(tmp_path):
+    """읽기 전용이지만 "레포에 아무것도 없다"는 오보를 내지 않는다 (14.1)."""
+    repo = write_repo(tmp_path, {})
+    with open(os.path.join(repo, pc.BACKUP_RELPATH), "w", encoding="utf-8") as f:
+        f.write('{"version": 3, "enabledPlugins": {}}')
+    with pytest.raises(pc.UnknownBackupSchema):
+        compare_plugins.compare(os.path.join(repo, pc.BACKUP_RELPATH),
+                                settings_path=write_settings(tmp_path),
+                                installed_path=write_installed(tmp_path),
+                                held_path=str(tmp_path / "none-held.json"))
+
+
+def test_compare_output_never_carries_plaintext_secrets(tmp_path):
+    """보고는 사용자 눈앞과 로그로 나간다 — 평문 옵션 값이 실리면 6.1이 무너진다.
+
+    레포 파일과 달리 이쪽은 디스크에 남지 않아 유출이 눈에 띄지 않는다. 보고 dict에
+    로컬 값을 그대로 실으면(디버깅 목적이 흔한 동기다) 마스킹 계층 전체를 우회한다.
+    """
+    out = compare(tmp_path,
+                  local={"pluginConfigs": {"p@m": {"options": {"apiKey": "sk-real"}}}},
+                  repo={"pluginConfigs": {"p@m": {"options": {"apiKey": pc.SENTINEL}}}})
+    assert "sk-real" not in json.dumps(out, ensure_ascii=False)
