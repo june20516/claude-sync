@@ -3879,6 +3879,107 @@ def test_failed_restore_does_not_advance_the_base(tmp_path):
     assert "failed@m" not in doc["enabledPlugins"]
 ```
 
+def test_apply_base_status_stays_ok_when_a_section_is_skipped(tmp_path):
+    """최상위 status는 "이 스크립트가 돌았는가"이고 섹션 skip을 반영하지 않는다.
+
+    반영하게 만들면 두 섹션이 접힌 실행에서 SKILL.md가 "반영할 것이 없다"로 읽고
+    **정상 처리된 마켓플레이스 섹션까지 조용히 버린다.** 섹션 사실은
+    sections[<섹션>]["status"]에만 있고 소비자는 그것을 따로 읽어야 한다.
+    collect_plugins·compare_plugins가 같은 계약을 쓴다.
+    """
+    result, _ = apply_base(tmp_path,
+                           local={"enabledPlugins": {"p@m": True}},
+                           repo={"enabledPlugins": {"p@m": True}},
+                           installed=str(tmp_path / "none-installed.json"))
+    assert result["status"] == "ok"
+    assert result["sections"]["enabledPlugins"]["status"] == "skipped"
+    assert result["sections"]["extraKnownMarketplaces"]["status"] == "ok"
+
+
+def test_apply_base_report_matches_the_document_it_staged(tmp_path):
+    """보고 세 필드가 비면 SKILL.md가 선택이 반영됐는지 확인할 길이 없다.
+
+    base_keys를 **실제로 쓴 문서와 대조한다** — 따로 만들면 갈리고, 갈려도 증상이 없다.
+    셋을 서로 다른 비지 않은 값으로 채워 하나만 하드코딩돼도 드러나게 한다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_stale": ["gone@m"], "keep_local": ["stay@m"]}},
+        local={"enabledPlugins": {"gone@m": True, "stay@m": False, "plain@m": True}},
+        repo={"enabledPlugins": {"stay@m": True, "plain@m": True}},
+        base={"enabledPlugins": {"gone@m": True, "stay@m": True, "plain@m": True}})
+    section = result["sections"]["enabledPlugins"]
+    assert section["kept_stale"] == ["gone@m"]
+    assert section["kept_local"] == ["stay@m"]
+    assert section["base_keys"] == sorted(doc["enabledPlugins"])
+    assert "gone@m" not in section["base_keys"]
+    assert doc["enabledPlugins"]["stay@m"] is True
+
+
+def test_apply_base_applies_choices_in_the_marketplace_section_too(tmp_path):
+    """세 섹션을 도는 루프인데 두 섹션만 재면 셋째가 조용히 빠져도 통과한다.
+
+    마켓플레이스는 auto·보류 파일 어느 실패로도 skip되지 않는 유일한 섹션이라,
+    루프가 좁아지면 **그 섹션만 아무 선택도 반영되지 않는다.**
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"extraKnownMarketplaces": {"keep_stale": ["gone"]}},
+        local={"extraKnownMarketplaces": {"gone": GH, "stay": GH}},
+        repo={"extraKnownMarketplaces": {"stay": GH}},
+        base={"extraKnownMarketplaces": {"gone": GH, "stay": GH}})
+    assert result["sections"]["extraKnownMarketplaces"]["kept_stale"] == ["gone"]
+    assert "gone" not in doc["extraKnownMarketplaces"]
+    # 섹션 전체가 죽으면 위 단정이 공허해진다 — 살아남은 키가 있어야 한다.
+    assert "stay" in doc["extraKnownMarketplaces"]
+
+
+def test_apply_base_sorts_the_reported_base_keys(tmp_path):
+    """정렬을 잃으면 보고가 삽입 순서를 따라가 diff가 실행마다 흔들린다.
+
+    keep_local이 nb **뒤에** 덧붙이므로 삽입 순서를 정렬 역순으로 만들 수 있다 —
+    zzz@m은 next_base가 먼저 얹고 aaa@m은 keep_local이 나중에 얹는다. 이 fixture는
+    해시에 의존하지 않으므로 회귀를 **결정적으로** 잡는다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"keep_local": ["aaa@m"]}},
+        local={"enabledPlugins": {"zzz@m": True}},
+        repo={"enabledPlugins": {"zzz@m": True, "aaa@m": True}},
+        base={"enabledPlugins": {"zzz@m": True}})
+    assert list(doc["enabledPlugins"]) == ["zzz@m", "aaa@m"]
+    assert result["sections"]["enabledPlugins"]["base_keys"] == ["aaa@m", "zzz@m"]
+
+
+@pytest.mark.parametrize("args", [[], ["apply-base"], ["apply-base", "a", "b"],
+                                  ["apply-base", "a", "b", "c", "d"],
+                                  ["bogus", "a", "b", "c"]])
+def test_apply_base_cli_rejects_wrong_invocations(tmp_path, args):
+    """서브커맨드 이름 검사와 개수 검사가 **둘 다** 필요하다.
+
+    처리되지 않은 IndexError도 종료 코드 1이므로, usage 문구를 함께 확인하지 않으면
+    개수 검사 제거를 잡지 못한다. plan 서브커맨드가 같은 모양의 테스트를 갖는다.
+    """
+    proc = run_script(plan_script, *args)
+    assert proc.returncode == 1
+    assert "사용:" in proc.stderr
+
+
+def test_apply_base_cli_skips_when_the_choices_json_is_not_an_object(tmp_path):
+    """read_choices의 ValueError가 흡수되지 않으면 restore 흐름이 traceback으로 선다.
+
+    "형제 셋과 같은 except 튜플"이라는 주석이 지키는 것이 이 항목이다 —
+    10.3의 "종료 코드는 0이다, 그래야 안내가 보인다"가 여기서 깨진다.
+    """
+    choices_path = tmp_path / "choices.json"
+    choices_path.write_text("[]", encoding="utf-8")
+    repo_dir = write_repo(tmp_path, {})
+    proc = run_script(plan_script, "apply-base",
+                      os.path.join(repo_dir, pc.BACKUP_RELPATH),
+                      str(tmp_path / "staging"), str(choices_path))
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout)["status"] == "skipped"
+
 - [ ] **Step 2: test를 실행하여 실패를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_plugin_scripts.py -q`
@@ -4073,6 +4174,14 @@ def read_choices(path):
 - 두 파일의 쓰기 순서를 맞바꾸기 → **어떤 테스트도 잡지 못한다.** 알고 받아들이는 구멍이고, 근거는 docstring에 남긴다
 - `pc.dump_backup(doc, ...)`의 경로에 `.tmp`를 붙이기 → 직접 쓰기 테스트가 잡아야 한다
 - `choice_list`의 `isinstance(v, str)` 필터를 지우기 → 형태 어긋남 테스트가 잡아야 한다
+- **최상위 `status`를 `"skipped" if skipped else "ok"`로 바꾸기** → 최상위 status 테스트가 잡아야 한다. 이 계약이 뒤집히면 두 섹션이 접힌 실행에서 정상 처리된 마켓플레이스 섹션까지 버려진다
+- **`report[section]`의 `kept_stale`·`kept_local`·`base_keys`를 각각 `[]`로 비우기(셋을 따로)** → 보고 대조 테스트가 **각각** 잡아야 한다. 하나씩 비워야 뭉뚱그린 단정과 구별된다
+- **`base_keys`의 `sorted(nb)`를 `list(nb)`로** → 정렬 테스트가 잡아야 한다(이 fixture는 해시에 의존하지 않아 결정적이다)
+- **`next_held_state`의 `sorted(released)`를 `list(released)`로** → release 목록 테스트가 잡는다. **다만 `released`는 set이라 정렬 전 순서가 해시 순서이므로 이 catch는 확률적이다** — 원소가 n개면 `1 - 1/n!`. 단정을 넣되 이 사실을 테스트 docstring에 적을 것(Task 9에서 같은 자리를 근거 없이 "이름으로 순서를 갈랐다"고 적었다가 정정했다)
+- **`for section in pc.SECTIONS`를 `("enabledPlugins", "pluginConfigs")`로 좁히기** → 마켓플레이스 섹션 테스트가 잡아야 한다
+- **`main`의 `args[0] == "apply-base"` 검사만 제거** / **`len(args) == 4`를 `len(args) >= 4`로** → CLI parametrize가 각각 잡아야 한다
+- **`except` 튜플에서 `ValueError` 제거** → 선택 결과 JSON 테스트가 잡아야 한다
+- **`kept_local.append(key)`를 `if key in masked` 블록 **밖**으로 옮기기** → 보고가 "실제로 적용한 것"이 아니라 "요청받은 것"이 된다. **현재 규정은 `kept_stale`이 요청을, `kept_local`이 적용을 보고하는 비대칭이다** — 어느 쪽이 계약인지 구현자가 정하고 docstring에 근거를 남길 것. 어느 쪽이든 대응 테스트가 있어야 한다
 
 - [ ] **Step 5: Commit**
 
