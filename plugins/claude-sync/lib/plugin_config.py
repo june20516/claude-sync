@@ -318,11 +318,19 @@ def read_hold_inputs(installed_path=None, held_path=None):
 
 
 def skipped_section(reason):
-    """섹션 skip 갈래의 **보고 모양**. 세 스크립트가 같은 키를 쓰게 한다.
+    """섹션 skip 갈래의 **보고 모양**. 섹션 skip을 보고하는 모든 스크립트가 이것을 쓴다.
 
-    SKILL.md는 세 스크립트의 출력을 같은 코드로 읽는다. 스크립트 안의 리터럴로 두면
-    한쪽이 "message"로 써도 막는 것이 없고, 그러면 그 스크립트의 skip이 조용히 읽히지
+    SKILL.md는 그 스크립트들의 sections를 같은 코드로 읽는다. 각자 리터럴로 두면 한쪽이
+    "message"로 써도 갈린 것을 알 자리가 없고, 그러면 그 스크립트의 skip이 조용히 읽히지
     않는다 — 섹션이 빠졌다는 사실 자체가 사용자에게 도달하지 않는다.
+
+    **이 함수가 리터럴을 막지는 못한다** — 같은 모양을 손으로 쓰는 것을 금지하는 장치는
+    없다. 실제로 스크립트들의 main()은 **최상위** skip을 리터럴로 쓴다. 그것을 여기로
+    끌어오지 않는 것은 층위가 다르기 때문이다: 최상위 skip은 sections 자체가 없는 **문서
+    전체**의 갈래다. 같은 두 키 리터럴이 mcp 계열 셋(compare_mcp·collect_mcp·plan_mcp)에도
+    그대로 있는데 **셋 다 plugin_config를 import하지 않는다**(detect_downgrade는 같은
+    status·reason 짝을 더 넓은 dict 안에 쓴다). 이 어댑터의 헬퍼 뒤에 숨기면 그 스크립트들이
+    공유하는 모양이 오히려 두 곳에서 정의된다. 여기가 정하는 것은 **섹션 층위 하나**다.
     """
     return {"status": "skipped", "reason": reason}
 
@@ -778,7 +786,7 @@ def orphaned(merged_plugins, merged_marketplaces):
                   if marketplace_of(plugin_id) not in known)
 
 
-def build_hooks(local, repo, *, auto_ids, held_state):
+def build_hooks(local, repo, *, auto_ids, held_state, _context=None):
     """섹션별 훅 묶음 {섹션: {"normalize", "hold", "restorable", "secret_keys"}}.
 
     **레포를 읽은 뒤에 불러야 한다**(spec 9.1.1의 4단계 > 2단계). 여기서 레포에 의존하는
@@ -826,7 +834,12 @@ def build_hooks(local, repo, *, auto_ids, held_state):
     재현하는 일이고, 등록할 소스가 실려 있는 곳은 레포다. 로컬을 보면 아직 이 기기에
     없는 마켓플레이스의 플러그인이 전부 unrestorable로 접혀 **첫 복원이 통째로 빈다.**
     """
-    context = held_context(local, repo, auto_ids=auto_ids, held_state=held_state)
+    # _context는 hooks_and_context 전용 내부 통로다 — 외부 호출부가 임의의 컨텍스트를
+    # 끼워 넣으라는 자리가 아니라, 훅이 닫는 컨텍스트와 보고에 넘길 컨텍스트를 **같은
+    # 객체**로 만들기 위한 것이다. 그래서 밑줄로 사적 표시를 하고 기본값을 둔다
+    # (기존 호출부는 안 넘기므로 서명 변경이 호환된다).
+    context = _context if _context is not None else held_context(
+        local, repo, auto_ids=auto_ids, held_state=held_state)
     released = frozenset(held_state.get("release", {}).get("enabledPlugins", []))
     repo_marketplaces = frozenset(repo.get("extraKnownMarketplaces", {}))
 
@@ -857,12 +870,16 @@ def hooks_and_context(local, repo, *, auto_ids, held_state):
     타 기기 항목이 pass-through로만 남는다. 세 스크립트가 같은 두 줄을 각자 쓰는
     대신 이것을 부르면 (local, repo)를 한 번만 받으므로 갈릴 자리가 없다.
 
-    build_hooks가 내부에서 held_context를 다시 부르므로 계산은 두 번이지만 입력이
-    같아 결과가 같다. build_hooks의 서명을 바꾸지 않는 것은 그쪽에 이미 테스트가
-    걸려 있고, 이 함수의 목적이 계산 절약이 아니라 **입력을 하나로 묶는 것**이어서다.
+    컨텍스트는 **한 번만** 만들어 build_hooks에 _context로 건네고 그대로 돌려준다 —
+    훅이 닫은 것과 여기서 돌려주는 것이 **같은 객체**다. 동일성이 객체 identity로
+    성립하므로, held_context가 언젠가 순수하지 않게 되어도(경로를 읽거나 시각을 보거나
+    캐시를 타도) 두 값이 갈릴 자리가 없다. 두 번 불러 "입력이 같으니 결과도 같다"에
+    기대면 그 등식을 지탱하는 것이 구조가 아니라 함수의 성질뿐이다.
     """
-    return (build_hooks(local, repo, auto_ids=auto_ids, held_state=held_state),
-            held_context(local, repo, auto_ids=auto_ids, held_state=held_state))
+    context = held_context(local, repo, auto_ids=auto_ids, held_state=held_state)
+    return (build_hooks(local, repo, auto_ids=auto_ids, held_state=held_state,
+                        _context=context),
+            context)
 
 
 def value_held_for(section, hooks, local, repo):

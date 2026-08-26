@@ -5,6 +5,7 @@
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -723,9 +724,28 @@ def test_compare_distinguishes_installed_extended_values(tmp_path):
     installed = compare(tmp_path, local={"enabledPlugins": {"p@m": True}},
                         repo={"enabledPlugins": {"p@m": ["1.0.0"]}})
     assert installed["sections"]["enabledPlugins"]["held"]["extended_value"] == ["p@m"]
-    assert installed["sections"]["enabledPlugins"]["not_installed"] == []
+    assert installed["sections"]["enabledPlugins"]["absent_locally"] == []
     missing = compare(tmp_path, local={}, repo={"enabledPlugins": {"p@m": ["1.0.0"]}})
-    assert missing["sections"]["enabledPlugins"]["not_installed"] == ["p@m"]
+    assert missing["sections"]["enabledPlugins"]["absent_locally"] == ["p@m"]
+
+
+def test_absent_locally_is_not_a_claim_that_the_plugin_is_not_installed(tmp_path):
+    """이름이 뜻하는 것은 "로컬 섹션 문서에 값이 없다"이지 "미설치"가 아니다.
+
+    installed_plugins.json에 있다는 것 자체가 이 기기에 설치되어 있다는 뜻인데(3.4),
+    그 파일에서 auto 플래그만 읽는 이 스크립트는 설치 여부를 알 수 없다. 아래가 그
+    반례다 — dep@m은 **설치되어 있으면서** settings.json에는 없다. 이 조합에
+    "미설치"라는 이름을 붙이면 보고가 실측으로 거짓이 된다.
+    """
+    out = compare(tmp_path, local={}, repo={"enabledPlugins": {"dep@m": True}},
+                  installed=write_installed(tmp_path,
+                                            {"dep@m": [{"scope": "user", "auto": True}]}))
+    section = out["sections"]["enabledPlugins"]
+    assert section["status"] == "ok"
+    # 설치되어 있다 — auto로 분류된 근거가 installed_plugins.json에 있다는 사실이다.
+    assert section["held"]["auto"] == ["dep@m"]
+    # 그런데도 여기 들어온다 — "레포 값을 보존합니다"가 거짓이 되는 조건이 이것이다.
+    assert section["absent_locally"] == ["dep@m"]
 
 
 def test_compare_splits_the_three_buckets_without_swapping_them(tmp_path):
@@ -747,7 +767,7 @@ def test_compare_splits_the_three_buckets_without_swapping_them(tmp_path):
     assert section["only_repo"] == ["theirs@m"]
     assert section["changed"] == ["both@m"]
     assert section["unrestorable"] == ["theirs@m"]      # 레포에 'm'의 소스가 없다
-    assert section["not_installed"] == []
+    assert section["absent_locally"] == []
     assert section["held"] == {"auto": [], "local_marketplace": [],
                                "extended_value": []}
 
@@ -767,8 +787,8 @@ def test_compare_reports_directory_marketplace_holds_by_kind(tmp_path):
     assert markets["held"]["local_marketplace"] == ["d"]
     assert plugins["only_repo"] == [] and markets["only_repo"] == []
     # 보류 키 중 로컬에 없는 것 — "레포 값을 보존합니다"만 말하면 거짓이 되는 항목이다.
-    assert plugins["not_installed"] == ["p@d"]
-    assert markets["not_installed"] == ["d"]
+    assert plugins["absent_locally"] == ["p@d"]
+    assert markets["absent_locally"] == ["d"]
 
 
 def test_compare_never_reads_or_writes_base(tmp_path, monkeypatch):
@@ -785,9 +805,14 @@ def test_compare_does_not_reach_the_base_history_at_all():
 
     sync_state를 import하면 read_base의 바이트를 직접 파싱하는 우회가 한 줄로 가능해지고,
     그러면 읽기 전용이라는 이 스크립트의 계약이 monkeypatch로 확인되지 않는다.
+
+    **import 문만 본다.** 단순 부분 문자열 검사는 주석·docstring이 그 모듈명을 언급하기만
+    해도 실패해서, "왜 base를 읽지 않는가"를 적는 것 자체가 무관한 실패를 낳는다.
+    ^import로만 좁히지 않는 것은 함수 본문 안의 **들여쓴** import를 놓치기 때문이다.
     """
     with open(compare_plugins.__file__, encoding="utf-8") as f:
-        assert "sync_state" not in f.read()
+        src = f.read()
+    assert re.search(r"^\s*(import|from)\s+sync_state\b", src, re.M) is None
 
 
 def test_compare_skips_sections_the_same_way_backup_does(tmp_path):
@@ -890,8 +915,74 @@ def test_compare_output_never_carries_plaintext_secrets(tmp_path):
 
     레포 파일과 달리 이쪽은 디스크에 남지 않아 유출이 눈에 띄지 않는다. 보고 dict에
     로컬 값을 그대로 실으면(디버깅 목적이 흔한 동기다) 마스킹 계층 전체를 우회한다.
+
+    섹션이 접힌 실행에서도 "평문이 없다"는 저절로 참이 되므로, 그 단정 **앞에** 섹션이
+    ok임을 확인한다 — 확인이 없으면 이 테스트는 하드코딩과 구별되지 않는다.
     """
     out = compare(tmp_path,
                   local={"pluginConfigs": {"p@m": {"options": {"apiKey": "sk-real"}}}},
                   repo={"pluginConfigs": {"p@m": {"options": {"apiKey": pc.SENTINEL}}}})
+    assert out["sections"]["pluginConfigs"]["status"] == "ok"
+    assert "sk-real" not in json.dumps(out, ensure_ascii=False)
+
+
+def test_compare_says_which_way_an_on_off_change_went(tmp_path):
+    """9.2 — changed가 키 목록뿐이면 켬→끔인지 그 반대인지가 출력 어디에도 없다.
+
+    소비자가 그 문구를 만들려면 settings.json과 plugins.json을 **직접 다시 읽어야** 하고,
+    그 순간 status 경로에 두 번째 파서가 생긴다 — 그것이 정확히 결함 B의 형태다.
+    """
+    out = compare(tmp_path, local={"enabledPlugins": {"p@m": True}},
+                  repo={"enabledPlugins": {"p@m": False}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["changed"] == ["p@m"]
+    assert section["changed_detail"] == {"p@m": {"local": True, "repo": False}}
+
+
+def test_released_extended_value_still_shows_it_is_a_version_constraint(tmp_path):
+    """6.4의 탈출구를 쓴 키는 보류가 풀려 changed로 떨어진다 — 종류가 held에서 사라진다.
+
+    보류된 동안에는 held["extended_value"]가 "버전 제약"이라는 사실을 말해 주지만,
+    release 뒤에는 그 자리가 비므로 changed_detail만이 남는 근거다. 값이 없으면
+    소비자가 켬/끔 변경과 버전 제약을 구별할 수 없다(9.2).
+    """
+    held = tmp_path / "plugins-held.json"
+    held.write_text(json.dumps({"version": 1, "pluginConfigs": {},
+                                "release": {"enabledPlugins": ["p@m"]}}),
+                    encoding="utf-8")
+    out = compare(tmp_path, local={"enabledPlugins": {"p@m": True}},
+                  repo={"enabledPlugins": {"p@m": ["1.0.0"]}}, held=str(held))
+    section = out["sections"]["enabledPlugins"]
+    assert section["held"]["extended_value"] == []      # 보류가 풀렸다
+    assert section["changed"] == ["p@m"]
+    assert section["changed_detail"]["p@m"] == {"local": True, "repo": ["1.0.0"]}
+
+
+def test_changed_detail_is_derived_from_changed_and_cannot_drift(tmp_path):
+    """같은 값을 두 곳에서 만들면 갈리고, 갈려도 증상이 없다 — 한 곳에서 파생시킨다.
+
+    비지 않은 changed와 **두 개 이상의 키**가 있어야 이 단정이 공허해지지 않는다.
+    """
+    out = compare(tmp_path,
+                  local={"enabledPlugins": {"a@m": True, "b@m": False, "same@m": True}},
+                  repo={"enabledPlugins": {"a@m": False, "b@m": True, "same@m": True}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["changed"] == ["a@m", "b@m"]
+    assert sorted(section["changed_detail"]) == section["changed"]
+
+
+def test_changed_detail_carries_normalized_values_not_plaintext(tmp_path):
+    """changed_detail에 원본을 실으면 마스킹 계층 전체를 우회한다 (6.1).
+
+    단정이 공허해지지 않도록 섹션이 접히지 않았다는 것과 changed가 비지 않았다는 것을
+    **먼저** 확인한다 — 둘 중 하나라도 무너지면 "평문이 없다"는 저절로 참이 된다.
+    """
+    out = compare(tmp_path,
+                  local={"pluginConfigs": {"p@m": {"options": {"apiKey": "sk-real"}}}},
+                  repo={"pluginConfigs": {"p@m": {"options": {"apiKey": pc.SENTINEL,
+                                                             "region": pc.SENTINEL}}}})
+    section = out["sections"]["pluginConfigs"]
+    assert section["status"] == "ok"
+    assert section["changed"] == ["p@m"]
+    assert section["changed_detail"]["p@m"]["local"] == {"options": {"apiKey": pc.SENTINEL}}
     assert "sk-real" not in json.dumps(out, ensure_ascii=False)

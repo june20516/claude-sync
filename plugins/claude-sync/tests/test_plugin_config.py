@@ -1014,3 +1014,54 @@ def test_orphaned_is_not_silenced_by_a_marketplace_named_empty_string():
     그 문서는 정상 인식되고, 7.6의 검사는 차단이 아니라 보고이므로 다른 데서도 안 걸린다.
     """
     assert pc.orphaned({"noat": True, "p@gone": True}, {"": GH}) == ["noat", "p@gone"]
+
+
+# --- 공유 계약: hooks_and_context (7.3) ---
+
+def test_hooks_and_context_builds_the_context_exactly_once(monkeypatch):
+    """훅이 닫은 컨텍스트와 돌려준 컨텍스트가 **같은 객체**임을 잠근다.
+
+    build_hooks가 자기 held_context를 따로 만들면 두 값이 같다는 것을 지탱하는 것이
+    구조가 아니라 held_context가 순수하다는 성질뿐이다. 그 성질이 깨지는 순간 hold가
+    보류한 키를 held_kinds가 분류하지 못해 ValueError가 나고 섹션이 통째로 skipped가
+    된다 — 아무것도 잘못되지 않았는데 상태가 사라진다.
+    build_hooks가 컨텍스트를 노출하지 않으므로 **만들어진 횟수**로 identity를 잰다.
+    """
+    real = pc.held_context
+    made = []
+
+    def counting(*args, **kwargs):
+        context = real(*args, **kwargs)
+        made.append(context)
+        return context
+
+    monkeypatch.setattr(pc, "held_context", counting)
+    empty = {name: {} for name in pc.SECTIONS}
+    hooks, context = pc.hooks_and_context(empty, empty, auto_ids=frozenset(),
+                                          held_state=pc.EMPTY_HELD)
+    assert len(made) == 1 and context is made[0]
+    assert set(hooks) == set(pc.SECTIONS)
+
+
+def test_hooks_and_context_returns_a_context_that_classifies_every_held_key():
+    """돌려준 context를 held_kinds에 그대로 넘기면 훅이 보류한 키가 전부 분류된다.
+
+    분류 불가는 ValueError이고 스크립트는 그것을 섹션 skip으로 접으므로, 이 대응이
+    깨지면 아무것도 잘못되지 않았는데 섹션 하나가 통째로 사라진다.
+    보류 집합이 **비어 있지 않아야** 단정이 공허해지지 않는다 — H1(auto)과 H3(확장
+    포맷) 둘을 함께 세워 종류 두 갈래가 실제로 채워지는 것까지 본다.
+    """
+    local = {"enabledPlugins": {"dep@m": True}, "extraKnownMarketplaces": {},
+             "pluginConfigs": {}}
+    repo = {"enabledPlugins": {"ext@m": ["1.0.0"]}, "extraKnownMarketplaces": {},
+            "pluginConfigs": {}}
+    hooks, context = pc.hooks_and_context(local, repo, auto_ids=frozenset({"dep@m"}),
+                                          held_state=pc.EMPTY_HELD)
+    norm = pc.SECTION_NORMALIZE["enabledPlugins"]
+    repo_norm = norm(repo["enabledPlugins"])
+    held = hooks["enabledPlugins"]["hold"](norm(local["enabledPlugins"]), repo_norm)
+
+    assert held["value"] == {"dep@m", "ext@m"}
+    kinds = pc.held_kinds("enabledPlugins", held["value"], repo_norm=repo_norm,
+                          **context)
+    assert kinds["auto"] == ["dep@m"] and kinds["extended_value"] == ["ext@m"]

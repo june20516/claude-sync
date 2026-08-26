@@ -145,6 +145,9 @@ def main():
     # 던지므로 손상 파일이 레포에 들어가지 않는다). 셋 다 backup 흐름 전체를 세우지 않는다.
     # AutoFlagsUnavailable·HeldStateUnavailable은 여기 없다 — 섹션 단위로 이미 흡수됐다.
     except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema, OSError, ValueError) as e:
+        # 모양이 pc.skipped_section과 같지만 그것을 쓰지 않는다 — 층위가 다르다. 이쪽은
+        # sections 자체가 없는 **문서 전체**의 갈래이고, 같은 리터럴이 plugin_config를
+        # import하지 않는 mcp 계열 셋에도 있다. 소비자가 읽는 자리도 다르다.
         out = {"status": "skipped", "reason": str(e)}
         print("플러그인 단계 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))

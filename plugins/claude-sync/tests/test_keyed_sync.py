@@ -961,3 +961,28 @@ def test_dump_json_routes_through_dump_bytes(tmp_path, monkeypatch):
     path = str(tmp_path / "x.json")
     ks.dump_json({"a": 1}, path)
     assert calls == [(b'{\n  "a": 1\n}\n', path)]
+
+
+def test_diff_and_merge_report_held_on_the_same_axis():
+    """diff와 merge의 held가 **같은 축(value)** 을 담는다는 숨은 결합을 잠근다.
+
+    compare_plugins는 ks.diff의 held를, collect_plugins는 ks.merge의 held를 각각 같은
+    pc.held_kinds에 넘긴다. 한쪽이 action을 섞어 돌려주면 그쪽에서만 분류 불가로
+    ValueError가 나 섹션이 통째로 접힌다 — 두 스크립트가 같은 상태에서 서로 다른 보고를
+    낸다. keyed_sync를 고치는 사람에게 이 대응을 알리는 것은 이 테스트뿐이다.
+
+    **행동 보류와 값 보류가 둘 다 일어나는** fixture여야 한다. 한 축만 있으면 두 축이
+    우연히 같아져 "value 축만 담는다"가 실측으로 잠기지 않는다.
+    """
+    def hold(local, repo):
+        return {"value": {"v@m", "both@m"}, "action": {"a@m", "both@m"}}
+
+    ident = {"v@m": 1, "a@m": 1, "both@m": 1, "plain@m": 1}
+    repo = {"v@m": 2, "a@m": 2, "both@m": 2, "plain@m": 2}
+
+    diffed = ks.diff(ident, repo, normalize=lambda m: m, hold=hold)
+    merged = ks.merge(ident, repo, dict(ident), normalize=lambda m: m, hold=hold)
+
+    assert diffed["held"] == merged["held"] == ["both@m", "v@m"]
+    # 축이 실제로 갈라져 있다 — action에만 있는 키는 어느 쪽 held에도 없다.
+    assert "a@m" not in diffed["held"] and "a@m" not in merged["held"]

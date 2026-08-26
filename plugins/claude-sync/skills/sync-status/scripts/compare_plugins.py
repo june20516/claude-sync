@@ -32,6 +32,12 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
     섹션 skip의 범위는 read_hold_inputs가 정한다. 여기서 다시 정하지 않는 것이
     collect_plugins와 같은 범위를 보장하는 유일한 근거다 — 갈리면 사용자가 backup과
     status에서 서로 다른 상태를 본다.
+
+    **최상위 status는 섹션 skip을 반영하지 않는다(의도).** 그 값은 "비교를 수행했는가"다
+    — 읽기 전용이므로 collect의 근거("이 스크립트가 레포를 갱신했는가")는 여기 적용되지
+    않고, 같은 결론에 다른 근거가 선다. 세 섹션이 전부 접힌 실행에서도 ok가 나오므로
+    소비자는 최상위만 보고 "동일"이라고 말하면 안 된다 — 섹션 단위 사실은
+    sections[<섹션>]["status"]에만 있고, 그것을 **반드시 따로 읽어야 한다.**
     """
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)
@@ -52,6 +58,7 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
         # 정규화된 레포 값이다. held_kinds의 H4 지문과 restorable의 판정이 둘 다
         # 코어가 본 값과 같아야 한다 — 원본을 넘기면 지문이 어긋나 분류가 실패한다.
         repo_norm = normalize(repo[section])
+        local_norm = normalize(local[section])
         out = ks.diff(local[section], repo[section],
                       normalize=normalize, hold=hooks[section]["hold"])
         sections[section] = {
@@ -59,14 +66,26 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
             "only_local": out["only_local"],
             "only_repo": out["only_repo"],
             "changed": out["changed"],
+            # 키 목록만으로는 켬→끔인지 그 반대인지, 레포 값이 확장 포맷인지를 말할 수
+            # 없다. 소비자가 그 문구를 만들려고 settings.json·plugins.json을 다시 읽으면
+            # status 경로에 두 번째 파서가 생긴다 — 그것이 결함 B의 형태다(spec 9.2).
+            # **out["changed"] 하나에서 파생시킨다** — 두 곳에서 만들면 갈리고 무증상이다.
+            # 값은 반드시 **정규화된** 쪽이다. 원본을 실으면 로컬 평문 option 값이 그대로
+            # 보고에 올라 마스킹 계층 전체를 우회한다(6.1).
+            "changed_detail": {k: {"local": local_norm[k], "repo": repo_norm[k]}
+                               for k in out["changed"]},
             # "restore 시 설치"가 거짓인 항목을 갈라 낸다 — 이 기기에서는 복원할 수 없다.
             "unrestorable": [k for k in out["only_repo"]
                              if not restorable(k, repo_norm[k])],
             "held": pc.held_kinds(section, out["held"], repo_norm=repo_norm, **context),
-            # H3는 행동 보류가 아니라 설치 대상이다. "설치됨"과 "미설치"를 문구가
-            # 구별해야 한다 — 아직 설치되지 않은 항목에 "레포 값을 보존합니다"만
-            # 말하면 거짓이 된다(spec 8.4).
-            "not_installed": [k for k in out["held"] if k not in local[section]],
+            # **값 보류 키 중 로컬 섹션 문서에 값이 없는 것.** H3만이 아니라 out["held"]
+            # 전부를 훑는다 — "레포 값을 보존합니다"가 거짓이 되는 조건이 종류와
+            # 무관하게 정확히 이것이기 때문이다(spec 8.4).
+            # **not_installed이라 부르지 않는다.** 이 스크립트는 설치 여부를 알 수 없다 —
+            # installed_plugins.json에서 읽는 것은 auto 집합뿐이고(read_auto_ids), auto
+            # 키는 그 파일에 있다는 것 자체가 이 기기에 설치되어 있다는 뜻이라(spec 3.4)
+            # "미설치"로 부르면 실측으로 거짓이 된다.
+            "absent_locally": [k for k in out["held"] if k not in local[section]],
         }
     return {"status": "ok", "sections": sections}
 
@@ -82,6 +101,9 @@ def main():
     # held_kinds의 분류 불가. 어느 쪽도 status 흐름 전체를 세울 이유가 없다.
     # AutoFlagsUnavailable·HeldStateUnavailable은 여기 없다 — 섹션 단위로 이미 흡수됐다.
     except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema, OSError, ValueError) as e:
+        # 모양이 pc.skipped_section과 같지만 그것을 쓰지 않는다 — 층위가 다르다. 이쪽은
+        # sections 자체가 없는 **문서 전체**의 갈래이고, 같은 리터럴이 plugin_config를
+        # import하지 않는 mcp 계열 셋에도 있다. 소비자가 읽는 자리도 다르다.
         out = {"status": "skipped", "reason": str(e)}
         print("플러그인 비교 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))
