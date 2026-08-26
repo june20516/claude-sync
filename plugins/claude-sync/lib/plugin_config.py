@@ -279,6 +279,44 @@ def read_held_state(held_path=None):
             "release": {"enabledPlugins": list(released)}}
 
 
+def read_hold_inputs(installed_path=None, held_path=None):
+    """auto 집합과 보류 상태를 읽고, 실패에 대응하는 **섹션 skip 사유**를 함께 돌려준다.
+
+    반환: (auto_ids, held_state, {섹션: 사유})
+
+    두 실패는 범위가 다르다(spec 9.1.2·9.3.6):
+      installed_plugins.json 판정 불가 → enabledPlugins·pluginConfigs 두 섹션
+      plugins-held.json 깨짐          → pluginConfigs 한 섹션
+    어느 쪽도 전체 skip이 아니다 — extraKnownMarketplaces는 auto와도 보류 파일과도
+    무관하므로 계속 진행한다.
+
+    **이 함수를 스크립트마다 다시 짜지 않는다.** 범위가 갈리면 backup은 두 섹션을 접는데
+    restore는 안 접는 상태가 생기고, 그 비대칭은 예외 종류가 같아 보여 흔적을 남기지 않는다.
+
+    실패한 쪽의 값은 "보류 없음"으로 채우지만 **그 섹션은 어차피 skip되므로 쓰이지
+    않는다.** 채우는 이유는 나머지 섹션의 훅을 만들 수 있게 하기 위해서다.
+
+    PermissionError 등 그 외 OSError는 두 읽기 함수와 마찬가지로 전파한다 — 여기서
+    삼키면 "읽을 수 없음"이 "auto 없음·보류 없음"으로 접혀 N6의 입구가 열린다.
+    """
+    skipped = {}
+    try:
+        auto_ids = read_auto_ids(installed_path)
+    except AutoFlagsUnavailable as e:
+        auto_ids = frozenset()
+        skipped["enabledPlugins"] = str(e)
+        skipped["pluginConfigs"] = str(e)
+    try:
+        held_state = read_held_state(held_path)
+    except HeldStateUnavailable as e:
+        held_state = copy.deepcopy(EMPTY_HELD)
+        # setdefault다 — auto 실패 사유가 이미 있으면 그것이 더 넓은 원인이다.
+        # 덮으면 사용자가 보는 reason이 "보류 파일이 깨졌다"뿐이라, 정작 enabledPlugins도
+        # 함께 접힌 이유(auto 판정 불가)를 어디에서도 읽을 수 없게 된다.
+        skipped.setdefault("pluginConfigs", str(e))
+    return auto_ids, held_state, skipped
+
+
 # ---------------------------------------------------------------- 인식 계층 (4.4)
 
 def _all_sections(mapping):
