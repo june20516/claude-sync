@@ -3214,6 +3214,19 @@ def test_plan_gives_reasons_for_unrestorable_entries(tmp_path):
     assert "소스가 없" in out["unrestorable_reasons"]["p@nowhere"]
 
 
+def test_unrestorable_reason_and_the_verdict_read_the_same_repo(tmp_path):
+    """10.2 — 판정(restorable)은 레포를 보는데 사유가 다른 문서를 보면 사유가 None이 되고,
+    그 항목은 "복원 불가"로만 남아 사용자가 무엇을 해야 하는지 알 수 없다.
+
+    **로컬에만 있는 마켓플레이스**가 있어야 두 입력이 갈린다 — 레포와 같으면 어느 쪽을
+    넘겨도 같은 문장이 나와 이 단정이 판별력을 잃는다.
+    """
+    out = build_plan(tmp_path, local={"extraKnownMarketplaces": {"m": GH}},
+                     repo={"enabledPlugins": {"p@m": True}})
+    assert out["sections"]["enabledPlugins"]["unrestorable"] == ["p@m"]
+    assert "소스가 없" in out["unrestorable_reasons"]["p@m"]
+
+
 def test_plan_carries_no_secret_values(tmp_path):
     """계획은 SKILL.md의 대화로 흘러가고 임시 파일에 남는다 — 평문이 있으면 안 된다."""
     out = build_plan(tmp_path,
@@ -3389,7 +3402,10 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
             name for name in markets.get("add", []) if name in pc.ALWAYS_KNOWN),
         "install": install,
         "disable_after_install": disable_after_install,
-        "config_keys": {k: pc.SECTION_SECRET_KEYS["pluginConfigs"](
+        # 훅 묶음에서 꺼낸다. 코어가 needs_secret으로 라우팅할 때 부른 것과 **같은
+        # 객체**여야 한다 — 자유 함수(SECTION_SECRET_KEYS)를 따로 부르면 라우팅과
+        # 보고가 서로 다른 판정을 쓸 수 있고, 갈려도 예외가 없어 무증상이다.
+        "config_keys": {k: hooks["pluginConfigs"]["secret_keys"](
             masked["pluginConfigs"][k])
             for k in configs.get("needs_secret", [])},
         "repo_values": {k: masked["enabledPlugins"][k] for k in decided
