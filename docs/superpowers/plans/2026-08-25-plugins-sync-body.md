@@ -2622,6 +2622,10 @@ git commit -m "feat(backup): collect_plugins.py — 섹션별 3-way 병합과 �
 
 **값 보류 키는 `only_local`/`changed`에 넣지 않는다.** 의존성으로 설치된 플러그인이 매번 *"backup 시 추가"* 로 보고되면 **거짓이고 해소 불가능하다** — 3.1에 따라 백업하지 않으므로 다음 백업에도 추가되지 않는다.
 
+**보류 키 중 로컬에 없는 것의 이름은 `absent_locally`이지 `not_installed`가 아니다.** 그 식이 계산하는 것은 "로컬 섹션 문서에 그 키가 없다"이고, 그것이 *"레포 값을 보존합니다"* 가 거짓이 되는 정확한 조건이다(8.4). **이 스크립트는 설치 여부를 알 수 없다** — `installed_plugins.json`에서 읽는 것은 `read_auto_ids`가 돌려주는 auto 집합뿐이고, auto 키는 그 파일에 있다는 것 자체가 이 기기에 설치되어 있다는 뜻이라(3.4) `not_installed`로 부르면 실측으로 거짓이 된다(auto 플러그인이 `settings.json`에 없는 조합에서 재현된다).
+
+**`changed`에는 값도 함께 싣는다(`changed_detail`).** 키 목록만으로는 켬→끔인지 그 반대인지, 레포 값이 확장 포맷(`["1.0.0"]`)인지가 출력 어디에도 없어 **소비자가 9.2가 요구하는 문구를 만들 수 없다.** 만들려면 `settings.json`과 `plugins.json`을 직접 다시 읽어야 하고 그 순간 status 경로에 두 번째 파서가 생긴다 — 그것이 정확히 결함 B의 형태이고 이 스크립트가 존재하는 이유가 무효가 된다. H3는 보통 `held["extended_value"]`로 종류가 드러나지만 **6.4의 release 탈출구를 쓴 키는 보류가 풀려 `changed`로 떨어지므로** 그때는 `changed_detail`만이 남는 근거다. 값은 반드시 **정규화된** 쪽을 싣는다 — 원본을 실으면 로컬 평문 option 값이 보고로 새어 6.1이 깨진다. 그리고 `out["changed"]` 하나에서 파생시킨다(두 곳에서 만들면 갈리고, 갈려도 증상이 없다).
+
 **Files:**
 - Create: `plugins/claude-sync/skills/sync-status/scripts/compare_plugins.py`
 - Modify: `plugins/claude-sync/tests/test_plugin_scripts.py` (추가)
@@ -2704,9 +2708,71 @@ def test_compare_distinguishes_installed_extended_values(tmp_path):
     installed = compare(tmp_path, local={"enabledPlugins": {"p@m": True}},
                         repo={"enabledPlugins": {"p@m": ["1.0.0"]}})
     assert installed["sections"]["enabledPlugins"]["held"]["extended_value"] == ["p@m"]
-    assert installed["sections"]["enabledPlugins"]["not_installed"] == []
+    assert installed["sections"]["enabledPlugins"]["absent_locally"] == []
     missing = compare(tmp_path, local={}, repo={"enabledPlugins": {"p@m": ["1.0.0"]}})
-    assert missing["sections"]["enabledPlugins"]["not_installed"] == ["p@m"]
+    assert missing["sections"]["enabledPlugins"]["absent_locally"] == ["p@m"]
+
+
+def test_absent_locally_is_not_a_claim_that_the_plugin_is_not_installed(tmp_path):
+    """이름이 뜻하는 것은 "로컬 섹션 문서에 값이 없다"이지 "미설치"가 아니다.
+
+    installed_plugins.json에 있다는 것 자체가 이 기기에 설치되어 있다는 뜻인데(3.4),
+    그 파일에서 auto 플래그만 읽는 이 스크립트는 설치 여부를 알 수 없다.
+    """
+    out = compare(tmp_path, local={}, repo={"enabledPlugins": {"dep@m": True}},
+                  installed=write_installed(tmp_path,
+                                            {"dep@m": [{"scope": "user", "auto": True}]}))
+    section = out["sections"]["enabledPlugins"]
+    assert section["status"] == "ok"
+    assert section["held"]["auto"] == ["dep@m"]      # 설치되어 있다
+    assert section["absent_locally"] == ["dep@m"]    # 그런데도 여기 들어온다
+
+
+def test_compare_says_which_way_an_on_off_change_went(tmp_path):
+    """9.2 — changed가 키 목록뿐이면 켬→끔인지 그 반대인지가 출력 어디에도 없다."""
+    out = compare(tmp_path, local={"enabledPlugins": {"p@m": True}},
+                  repo={"enabledPlugins": {"p@m": False}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["changed"] == ["p@m"]
+    assert section["changed_detail"] == {"p@m": {"local": True, "repo": False}}
+
+
+def test_released_extended_value_still_shows_it_is_a_version_constraint(tmp_path):
+    """6.4의 탈출구를 쓴 키는 보류가 풀려 changed로 떨어진다 — 종류가 held에서 사라진다."""
+    held = tmp_path / "plugins-held.json"
+    held.write_text(json.dumps({"version": 1, "pluginConfigs": {},
+                                "release": {"enabledPlugins": ["p@m"]}}),
+                    encoding="utf-8")
+    out = compare(tmp_path, local={"enabledPlugins": {"p@m": True}},
+                  repo={"enabledPlugins": {"p@m": ["1.0.0"]}}, held=str(held))
+    section = out["sections"]["enabledPlugins"]
+    assert section["held"]["extended_value"] == []      # 보류가 풀렸다
+    assert section["changed_detail"]["p@m"] == {"local": True, "repo": ["1.0.0"]}
+
+
+def test_changed_detail_is_derived_from_changed_and_cannot_drift(tmp_path):
+    """같은 값을 두 곳에서 만들면 갈리고, 갈려도 증상이 없다 — 한 곳에서 파생시킨다."""
+    out = compare(tmp_path,
+                  local={"enabledPlugins": {"a@m": True, "b@m": False, "same@m": True}},
+                  repo={"enabledPlugins": {"a@m": False, "b@m": True, "same@m": True}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["changed"] == ["a@m", "b@m"]
+    assert sorted(section["changed_detail"]) == section["changed"]
+
+
+def test_changed_detail_carries_normalized_values_not_plaintext(tmp_path):
+    """changed_detail에 원본을 실으면 마스킹 계층 전체를 우회한다 (6.1).
+
+    섹션이 접히거나 changed가 비면 "평문이 없다"가 저절로 참이 된다 — 앞에서 막는다.
+    """
+    out = compare(tmp_path,
+                  local={"pluginConfigs": {"p@m": {"options": {"apiKey": "sk-real"}}}},
+                  repo={"pluginConfigs": {"p@m": {"options": {"apiKey": pc.SENTINEL,
+                                                             "region": pc.SENTINEL}}}})
+    section = out["sections"]["pluginConfigs"]
+    assert section["status"] == "ok"
+    assert section["changed"] == ["p@m"]
+    assert "sk-real" not in json.dumps(out, ensure_ascii=False)
 
 
 def test_compare_never_reads_or_writes_base(tmp_path, monkeypatch):
@@ -2782,6 +2848,7 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
         normalize = hooks[section]["normalize"]
         restorable = hooks[section]["restorable"]
         repo_norm = normalize(repo[section])
+        local_norm = normalize(local[section])
         out = ks.diff(local[section], repo[section],
                       normalize=normalize, hold=hooks[section]["hold"])
         sections[section] = {
@@ -2789,14 +2856,23 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
             "only_local": out["only_local"],
             "only_repo": out["only_repo"],
             "changed": out["changed"],
+            # 키 목록만으로는 켬→끔인지, 레포 값이 확장 포맷인지를 말할 수 없다. 소비자가
+            # 그 문구를 만들려고 두 파일을 다시 읽으면 결함 B가 부활한다(9.2).
+            # **out["changed"] 하나에서 파생**시키고, 값은 반드시 **정규화된** 쪽을
+            # 싣는다 — 원본이면 로컬 평문 option 값이 보고로 샌다(6.1).
+            "changed_detail": {k: {"local": local_norm[k], "repo": repo_norm[k]}
+                               for k in out["changed"]},
             # "restore 시 설치"가 거짓인 항목을 갈라 낸다 — 이 기기에서는 복원할 수 없다.
             "unrestorable": [k for k in out["only_repo"]
                              if not restorable(k, repo_norm[k])],
             "held": pc.held_kinds(section, out["held"], repo_norm=repo_norm, **context),
-            # H3는 행동 보류가 아니라 설치 대상이다. "설치됨"과 "미설치"를 문구가
-            # 구별해야 한다 — 아직 설치되지 않은 항목에 "레포 값을 보존합니다"만
-            # 말하면 거짓이 된다(spec 8.4).
-            "not_installed": [k for k in out["held"] if k not in local[section]],
+            # **값 보류 키 중 로컬 섹션 문서에 값이 없는 것.** H3만이 아니라
+            # out["held"] 전부를 훑는다 — "레포 값을 보존합니다"가 거짓이 되는 조건이
+            # 종류와 무관하게 정확히 이것이다(spec 8.4).
+            # **not_installed이라 부르지 않는다** — 이 스크립트는 설치 여부를 알 수 없다.
+            # installed_plugins.json에서 읽는 것은 auto 집합뿐이고, auto 키는 그 파일에
+            # 있다는 것 자체가 설치되어 있다는 뜻이다(3.4).
+            "absent_locally": [k for k in out["held"] if k not in local[section]],
         }
     return {"status": "ok", "sections": sections}
 
@@ -2828,7 +2904,10 @@ if __name__ == "__main__":
 - `ks.diff` 대신 키 집합 비교(`set(local) - set(repo)`)로 되돌리기 → 값 변경 테스트가 잡아야 한다
 - `normalize=normalize`를 지우고 원본끼리 비교하기 → 마스킹 수렴 테스트가 잡아야 한다
 - `hold=hooks[section]["hold"]`를 `ks.no_hold`로 바꾸기 → 보류 테스트 셋이 잡아야 한다
-- `not_installed`를 `out["held"]` 전체로 바꾸기 → 설치됨/미설치 테스트가 잡아야 한다
+- `absent_locally`를 빈 목록(`[]`)으로 만들기 → `absent_locally` 테스트 셋이 잡아야 한다
+- `absent_locally`를 `out["held"]`가 아니라 `out["only_repo"]`에서 만들기 → 보류 키가 통째로 빠지므로 같은 셋이 잡아야 한다
+- `changed_detail`을 `{}`로 비우기 → 켬/끔 방향·release 탈출구·파생 잠금 테스트가 잡아야 한다
+- `changed_detail`에 정규화 대신 원본(`local[section]`·`repo[section]`)을 싣기 → 평문 유출 테스트가 잡아야 한다
 - `unrestorable` 계산에 `repo_norm[k]` 대신 `local`을 넘기기 → `KeyError`가 나는지, 아니면 조용히 빈 목록이 되는지 확인한다. 조용하면 테스트를 보강한다
 - `pc.parse_base`를 부르는 줄을 **추가**해 보기 → 읽기 전용 테스트가 잡아야 한다
 
@@ -2838,6 +2917,8 @@ if __name__ == "__main__":
 git add plugins/claude-sync/skills/sync-status/scripts/compare_plugins.py plugins/claude-sync/tests/test_plugin_scripts.py
 git commit -m "feat(status): compare_plugins.py — 값 변경과 보류를 보고한다"
 ```
+
+**인계:** spec 9.2의 *"H3 항목은 '설치됨'과 '미설치'를 구별해 말한다"* 는 문구는 **설치 집합 전체**가 있어야 만들 수 있다. compare가 `installed_plugins.json`에서 읽는 것은 auto 집합뿐이므로 **현재 계약으로는 "로컬 섹션 문서에 값이 없다"까지만 말할 수 있다**(그래서 필드 이름이 `absent_locally`다). 배선 task(Task 14)에서 문구를 그 범위로 확정할지, 설치 집합 읽기를 추가할지 그때 정한다.
 
 ---
 
