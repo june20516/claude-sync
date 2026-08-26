@@ -47,7 +47,16 @@ def _plan_sections(local, repo, base, hooks, skipped):
 
 def build_plan(backup_path, settings_path=None, installed_path=None, held_path=None,
                base_dir=ss.BASE_DIR):
-    """복원 계획. 값은 전부 정규화(마스킹)를 거치므로 비밀이 실리지 않는다."""
+    """복원 계획.
+
+    **평문 비밀이 실리지 않는 근거는 "값이 전부 정규화된다"가 아니다.** sections는 코어가
+    키 목록만 담아 돌려주므로(restore_plan) 값이 실리는 자리는 셋뿐이다 —
+    marketplace_add[].arg(마스킹된 레포 값에서 뽑은 source 문자열), config_keys(값이
+    아니라 물어야 할 option 키 **이름**), repo_values/local_values(enabledPlugins 전용 —
+    도메인상 비밀이 없는 섹션이다). 그 셋을 전부 마스킹 훅에 통과시키는 것은 근거를
+    구조로 바꾸기 위해서다: enabledPlugins의 정규화가 오늘 항등(_identity)이라는 사실에
+    기대면, 그 섹션에 마스킹이 도입되는 순간 훅을 우회하는 자리 하나만 조용히 남는다.
+    """
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)
     base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
@@ -57,6 +66,10 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
 
     masked = {section: hooks[section]["normalize"](repo[section])
               for section in pc.SECTIONS}
+    # 로컬 값도 **같은 훅**을 통과시킨다. compare_plugins.changed_detail이 양쪽을 둘 다
+    # 정규화하는 것과 같은 규약이다 — 원본을 실으면 그 섹션에 마스킹이 도입될 때
+    # 로컬 값만 마스킹 계층 전체를 우회하고, 예외도 빈 결과도 나지 않는다(6.1).
+    local_masked = hooks["enabledPlugins"]["normalize"](local["enabledPlugins"])
     plugins = sections["enabledPlugins"]
     markets = sections["extraKnownMarketplaces"]
     configs = sections["pluginConfigs"]
@@ -70,16 +83,23 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
          "reserved": name in pc.RESERVED_MARKETPLACE_NAMES}
         for name in to_register]
 
-    # 2단계 — 설치. 3단계 — 값 맞추기. 설치 직후 값은 true이므로 레포가 false인
-    # 항목만 disable 대상이다. 부재는 여기 오지 않는다(레포에 있는 키만 본다).
+    # 2단계 — 설치. 3단계 — 값 맞추기. 부재는 여기 오지 않는다(레포에 있는 키만 본다).
     install = [k for bucket in INSTALL_BUCKETS for k in plugins.get(bucket, [])]
     install += [k for bucket in INSTALL_BUCKETS for k in configs.get(bucket, [])
                 if k not in install]
     install = sorted(install)
+    # **install의 절반은 "설치 직후"가 아니다.** enabledPlugins 경로의 키는 정의상 로컬에
+    # 없으므로 설치 직후의 값 true가 맞지만, pluginConfigs 경로의 키는 이미 로컬에 설치돼
+    # 있을 수 있다 — 그 섹션의 route_new는 "그 섹션에" 레포 전용인 키를 훑을 뿐 플러그인
+    # 자체의 설치 여부와 무관하기 때문이다. 그래서 로컬에 값이 있으면 **그 값**을 쓰고,
+    # 없을 때만 설치 직후의 true로 떨어진다. 상수 true를 넣으면 value_command가 지키라고
+    # 받는 규칙("현재 상태와 다를 때만 낸다")을 유일한 호출부가 우회하고, 이미 꺼진
+    # 플러그인에 disable이 나가 exit 1의 거짓 실패가 된다(enable/disable은 멱등이 아니다).
     disable_after_install = [
         k for k in install
         if k in masked["enabledPlugins"]
-        and pc.value_command(True, masked["enabledPlugins"][k]) == "disable"]
+        and pc.value_command(local["enabledPlugins"].get(k, True),
+                             masked["enabledPlugins"][k]) == "disable"]
 
     # 값을 맞춰야 하는 세 갈래에 양쪽 값을 실어 준다 — 케이스 8·9(repo_ahead·
     # both_changed)의 선택 뒤, 8.4의 값 보류 문구("레포 값을 보존합니다"), 그리고 설치
@@ -104,8 +124,7 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
             for k in configs.get("needs_secret", [])},
         "repo_values": {k: masked["enabledPlugins"][k] for k in decided
                         if k in masked["enabledPlugins"]},
-        "local_values": {k: local["enabledPlugins"][k] for k in decided
-                         if k in local["enabledPlugins"]},
+        "local_values": {k: local_masked[k] for k in decided if k in local_masked},
         # 9.3.2 — 등록이 실패한 마켓플레이스의 플러그인은 설치를 시도하지 않는다.
         # 시도하면 CLI가 모호한 문구로 실패해 거짓 실패를 양산한다.
         "depends_on": {k: pc.marketplace_of(k) for k in install

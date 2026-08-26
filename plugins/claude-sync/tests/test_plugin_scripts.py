@@ -1122,6 +1122,31 @@ def test_plan_disables_nothing_outside_the_install_list(tmp_path):
     assert out["disable_after_install"] == ["off@m"]
 
 
+def test_plan_does_not_disable_a_plugin_that_is_already_off_locally(tmp_path):
+    """install의 절반은 "설치 직후"가 아니다 — pluginConfigs 기여로 들어온 키는 이미
+    로컬에 설치돼 있을 수 있다. 그 섹션의 route_new는 "그 섹션에" 레포 전용인 키를
+    훑을 뿐 플러그인 자체의 설치 여부와 무관하기 때문이다.
+
+    already@m은 로컬 enabledPlugins에 이미 false로 있고 레포도 false다(= in_sync).
+    disable 판정이 로컬 값 자리에 상수 true를 넣으면 "true → false이니 disable"로 읽혀
+    이미 꺼진 플러그인에 명령이 나가고, enable/disable은 멱등이 아니라 exit 1이다.
+
+    같은 fixture에 진짜 신규 설치인 off@m을 함께 둔다 — 없으면 "아무것도 disable하지
+    않는다"로 저절로 참이 되어 판별력을 잃는다.
+    """
+    out = build_plan(
+        tmp_path,
+        local={"enabledPlugins": {"already@m": False}},
+        repo={"enabledPlugins": {"already@m": False, "off@m": False},
+              "extraKnownMarketplaces": {"m": GH},
+              "pluginConfigs": {"already@m": {"note": "x"}}})
+    section = out["sections"]["enabledPlugins"]
+    # 로컬 값이 이미 레포와 같다 — 이 단정이 없으면 아래가 "레포에 없어서"로도 참이 된다.
+    assert section["in_sync"] == ["already@m"]
+    assert out["install"] == ["already@m", "off@m"]
+    assert out["disable_after_install"] == ["off@m"]
+
+
 def test_plan_sorts_install_across_both_contributing_sections(tmp_path):
     """install은 두 섹션의 기여를 이어 붙인다 — 정렬하지 않으면 순서가 섹션 순서에
     끌려가 비결정적으로 보인다.
