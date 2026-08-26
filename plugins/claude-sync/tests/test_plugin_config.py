@@ -625,6 +625,9 @@ def test_build_hooks_gives_the_core_the_four_hook_contract():
     자기 섹션 밖의 입력(auto_ids·다른 섹션의 출처와 등록 가능 여부·보류 파일)은
     어댑터가 클로저로 닫는다 — 이 테스트가 고정하는 것이 그 사실이다.
 
+    어댑터는 여기에 보고용 reason을 하나 더 얹는데 **코어는 그것을 보지 않는다** —
+    계약이 넷이라는 말은 그대로 참이다.
+
     **`==`가 아니라 `>=`인 것은 의도된 개방이다.** 이후 task가 훅을 더 얹어도 여기서
     깨지지 않아야 한다. 조이지 말 것 — 훅 하나하나의 배선은 이 줄이 아니라 아래
     normalize 단정과 restorable·secret_keys 전용 테스트가 잡는다(변조로 실측했다).
@@ -909,3 +912,93 @@ def test_build_hooks_wires_the_section_specific_secret_keys():
     assert hooks["pluginConfigs"]["secret_keys"](cfg) == ["apiKey"]
     for section in ("enabledPlugins", "extraKnownMarketplaces"):
         assert hooks[section]["secret_keys"](cfg) == []
+
+
+def test_marketplace_arg_git_source_falls_back_to_repo_when_url_is_absent():
+    """후보가 둘인 것이 8.6의 장치다 — 하나로 줄여도 아무 테스트가 실패하지 않았다(변조 실측).
+
+    어느 쪽이 옳은 필드인지는 여전히 주장하지 않는다. 둘 다 있을 때의 우선순위도
+    고정하지 않는다 — 필드 이름이 미측정이라 짐작을 계약으로 굳히지 않기 위해서다.
+    여기서 고정하는 것은 **폴백이 살아 있다**는 사실 하나뿐이다.
+    """
+    assert pc.marketplace_arg({"source": {"source": "git", "repo": "u/r"}}) == "u/r"
+
+
+def test_marketplace_reason_distinguishes_three_ways_to_fail_to_build_an_argument():
+    """"인자를 만들 수 없다"의 세 갈래는 사용자가 할 일이 서로 다르다 (10.2).
+
+    (a) 종류는 멀쩡한데 필드가 비었다 → **필드 이름**을 대야 고칠 수 있다. 종류만
+        지목하면 멀쩡한 종류가 범인이 된다.
+    (b) 우리가 모르는 종류다 → 필드를 물어봐야 소용없다.
+    (c) 값에서 종류조차 읽을 수 없다 → 종류를 그대로 끼워 넣으면 파이썬 값 None이
+        사용자 눈앞에 나간다. 이 경로는 도달 가능하다 — _recognized_sections는 섹션이
+        객체인 것만 요구하므로 {"extraKnownMarketplaces": {"m": "oops"}}는 정상 인식된다.
+    """
+    def reason(value):
+        return pc.unrestorable_reason("extraKnownMarketplaces", "m", value, {})
+
+    empty_field = reason({"source": {"source": "github", "repo": ""}})
+    assert "repo" in empty_field and "github" in empty_field
+
+    unknown_kind = reason({"source": {"source": "novel"}})
+    assert "novel" in unknown_kind and "인자" in unknown_kind
+
+    for opaque in ("oops", None, {"source": "oops"}, {"source": {"source": 42}}):
+        message = reason(opaque)
+        assert "None" not in message and "인자" in message
+
+
+def test_build_hooks_closes_the_same_repo_over_restorable_and_reason():
+    """판정과 사유가 **같은 repo**를 보게 훅 묶음이 한 번 닫는다.
+
+    unrestorable_reason은 문서 전체를 받는데 restorable(key, value)는 섹션 층위라,
+    한 스크립트 안에서 층위가 섞여 섹션 매핑을 문서 자리에 넘기기 쉽다. 그러면
+    복원 가능한 항목에 "레포에 소스가 없다"가 붙는다 — 판정은 참인데 사유가 거짓이고,
+    둘 다 무증상이다. held_context가 hold·held_kinds에 쓴 처방과 같은 처방이다.
+    """
+    repo = {"enabledPlugins": {}, "pluginConfigs": {},
+            "extraKnownMarketplaces": {"known": GH}}
+    hooks = pc.build_hooks({name: {} for name in pc.SECTIONS}, repo,
+                           auto_ids=frozenset(), held_state=pc.EMPTY_HELD)
+    cases = (
+        ("enabledPlugins", "p@known", True),
+        ("enabledPlugins", "p@unknown", True),
+        ("enabledPlugins", "p@inline", True),
+        ("pluginConfigs", "p@known", {"options": {}}),
+        ("extraKnownMarketplaces", "known", GH),
+        ("extraKnownMarketplaces", "d",
+         {"source": {"source": "directory", "path": "/x"}}),
+    )
+    for section, key, value in cases:
+        ok = hooks[section]["restorable"](key, value)
+        why = hooks[section]["reason"](key, value)
+        assert ok is (why is None), (section, key, why)
+    assert hooks["enabledPlugins"]["reason"]("p@known", True) is None
+    assert "소스가 없" in hooks["enabledPlugins"]["reason"]("p@unknown", True)
+
+
+def test_value_held_for_normalizes_and_keeps_the_argument_order():
+    """next_base(value_held=)에 넘길 집합을 만드는 조립을 어댑터에 한 번으로 고정한다.
+
+    안 넘기면 코어 기본값이 빈 집합이라 예외도 경고도 없이 "보류 없음"이 되고, 보류 키가
+    base에 얼어붙어 **보류가 풀리는 나중 시점에 케이스 3(삭제)** 으로 터진다.
+    조립의 함정 둘이 이 단정에 걸린다 —
+      * 정규화를 빼면 H4의 지문이 평문으로 계산돼 보류가 통째로 빈다.
+      * (local, repo)를 뒤집으면 "레포에만 있는 키"가 전부 사라져 역시 빈다.
+    enabledPlugins 쪽은 H3(값 보류이되 행동 보류는 아님)이라 value 축을 action으로
+    바꾸는 변조도 함께 잡는다.
+    """
+    local = {"enabledPlugins": {}, "extraKnownMarketplaces": {}, "pluginConfigs": {}}
+    repo = {"enabledPlugins": {"ext@m": ["1.0.0"]}, "extraKnownMarketplaces": {"m": GH},
+            "pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-real"}}}}
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo["pluginConfigs"])
+    held_state = {"pluginConfigs": {"delta@m": pc.value_fingerprint(masked["delta@m"])},
+                  "release": {"enabledPlugins": []}}
+    hooks = pc.build_hooks(local, repo, auto_ids=frozenset(), held_state=held_state)
+
+    assert pc.value_held_for("pluginConfigs", hooks, local["pluginConfigs"],
+                             repo["pluginConfigs"]) == frozenset({"delta@m"})
+    assert pc.value_held_for("enabledPlugins", hooks, local["enabledPlugins"],
+                             repo["enabledPlugins"]) == frozenset({"ext@m"})
+    # 그 키가 행동 보류는 **아니다** — value 축을 쓰는 것이 이 함수의 계약이다.
+    assert hooks["enabledPlugins"]["hold"]({}, {"ext@m": ["1.0.0"]})["action"] == set()

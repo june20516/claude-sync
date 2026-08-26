@@ -633,6 +633,8 @@ RESERVED_MARKETPLACE_NAMES = frozenset({
 # github은 실측된 형태다. url·git의 필드 이름은 측정되지 않았으므로 후보를 순서대로
 # 훑고, 문자열을 하나도 찾지 못하면 **인자를 만들 수 없음 = unrestorable**로 접는다 —
 # 짐작해서 잘못된 인자를 넘기면 CLI가 모호한 문구로 실패해 사용자가 원인을 못 찾는다.
+# git의 후보가 **둘인 것 자체가 장치다**(어느 쪽이 옳은 필드인지 모르므로 둘 다 시도한다).
+# 하나로 줄이면 나머지 필드만 가진 값이 조용히 unrestorable이 된다.
 _SOURCE_ARG_FIELDS = {"github": ("repo",), "url": ("url",), "git": ("url", "repo")}
 
 
@@ -679,9 +681,19 @@ def unrestorable_reason(section, key, value, repo):
     그 항목이 보고에서 이유 없이 사라진다.
     """
     if section == "extraKnownMarketplaces":
-        if marketplace_arg(value) is None:
-            return "등록 인자를 만들 수 없는 출처다 (%s)" % (_source_kind(value),)
-        return None
+        if marketplace_arg(value) is not None:
+            return None
+        # "인자를 만들 수 없다"의 세 갈래는 **사용자가 할 일이 서로 다르다.** 종류만
+        # 지목하면 (a)에서 멀쩡한 종류를 범인으로 지목하고, 종류를 그대로 끼워 넣으면
+        # (c)에서 파이썬 값(None)이 사용자 눈앞에 나간다.
+        kind = _source_kind(value)
+        if kind is None:                                                    # (c)
+            return "마켓플레이스 값에서 출처 종류(source.source)를 읽을 수 없어 등록 인자를 만들 수 없다"
+        fields = _SOURCE_ARG_FIELDS.get(kind)
+        if not fields:                                                      # (b)
+            return "'%s' 출처로는 등록 인자를 만들 수 없다" % kind
+        return ("'%s' 출처인데 등록 인자로 쓸 필드(%s)가 비어 있다"        # (a)
+                % (kind, "·".join(fields)))
     marketplace = marketplace_of(key)
     if marketplace is None:
         return "플러그인 id 형태(<plugin>@<marketplace>)가 아니다"
@@ -721,6 +733,17 @@ def build_hooks(local, repo, *, auto_ids, held_state):
     보류 판정의 입력은 held_context가 만든다 — 호출부가 그 함수를 한 번 더 불러
     held_kinds에 같은 값을 넘기면 훅과 보고가 갈릴 수 없다.
 
+    **이 hold의 value 축은 ks.next_base(value_held=)에 반드시 넘겨야 한다** — 안 넘기면
+    보류 키가 base에 얼어붙어 보류가 풀리는 순간 케이스 3(삭제)이 난다. 그 조립은
+    value_held_for가 한다; 손으로 다시 짜지 말 것(정규화·인자 순서 함정이 둘 다 조용하다).
+
+    **다섯 번째 키 reason은 코어가 보지 않는다** — 계약은 위의 넷뿐이고, reason은 보고
+    층이 쓴다. 그런데도 여기 얹는 이유는 restorable과 **같은 repo를 닫기 위해서다.**
+    unrestorable_reason은 문서 전체를 받는데 restorable(key, value)는 섹션 층위라, 한
+    스크립트 안에서 층위가 섞여 섹션 매핑을 문서 자리에 넘기기 쉽다 — 그러면 복원
+    가능한 항목에 "레포에 소스가 없다"가 붙는다(실측). held_context가 hold와 held_kinds에
+    쓴 처방과 같다: 한 번 닫아 양쪽이 같은 값을 보게 한다.
+
     restorable도 자기 섹션 밖을 본다 — 8.1의 판정이 **레포의** extraKnownMarketplaces를
     필요로 한다. 로컬 쪽을 보면 안 되는 이유는 방향이다: 복원은 레포 문서를 이 기기에
     재현하는 일이고, 등록할 소스가 실려 있는 곳은 레포다. 로컬을 보면 아직 이 기기에
@@ -741,6 +764,31 @@ def build_hooks(local, repo, *, auto_ids, held_state):
             "hold": _make_hold(section, released=released, **context),
             "restorable": restorable_for(section),
             "secret_keys": SECTION_SECRET_KEYS[section],
+            "reason": (lambda key, value, s=section:
+                       unrestorable_reason(s, key, value, repo)),
         }
         for section in SECTIONS
     }
+
+
+def value_held_for(section, hooks, local, repo):
+    """next_base에 넘길 **값 보류** 집합. 조립의 계약을 여기서 한 번만 지킨다.
+
+    `ks.next_base(..., value_held=frozenset())`는 기본값이 빈 집합이라 안 넘기면 예외도
+    경고도 없이 "보류 없음"으로 계산된다. 그러면 보류 키가 base에 얼어붙고, **보류가
+    풀리는 나중 시점에 케이스 3(삭제)** 으로 증상이 나온다 — 원인에서 멀리 떨어진 곳에서.
+    plugin_config는 보류가 있는 첫 어댑터이므로(mcp_config.next_base의 경고가 지목하는
+    그 어댑터다) restore 경로가 반드시 이 값을 넘겨야 한다.
+
+    조립에 함정이 둘 더 있고 **둘 다 조용하다** —
+      1. hold는 **정규화된** 입력을 받는 것이 계약이다. H4의 지문은 마스킹된 레포 값으로
+         계산되므로, 평문을 그대로 넘기면 지문이 어긋나 보류가 통째로 비어 버린다.
+      2. (local, repo) 순서가 뒤집히면 예외도 빈 결과도 나지 않고 판정이 반대로 선다.
+    앞으로 네 스크립트가 각자 조립하게 되므로 한 곳만 틀려도 무증상이다. 한 번으로 만든다.
+
+    **행동 보류(action)가 아니라 값 보류(value)를 쓴다.** base는 "이 기기가 마지막으로
+    동의한 값"이고, 행동 보류는 "설치를 안 한다"일 뿐 값에 동의하지 않는다는 뜻이 아니다.
+    """
+    normalize = hooks[section]["normalize"]
+    held = hooks[section]["hold"](normalize(local), normalize(repo))
+    return frozenset(held["value"])
