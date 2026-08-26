@@ -199,18 +199,11 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     }
 
 
-def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_path=None,
-               held_path=None, base_dir=ss.BASE_DIR):
-    """복원 후 로컬 기준으로 다음 base를 계산하고 override 셋을 적용해 스테이징에 쓴다.
+def _next_base_sections(local, repo, base, hooks, skipped, choices, next_held):
+    """섹션별 다음 base와 그 보고. _plan_sections와 **같은 층위의 짝**이다.
 
-    ① next_base(복원 후 로컬, 이전 base, 레포 값)  — 정규화는 코어가 한다
-    ② keep_stale(케이스 4·5의 "유지")   → base에서 키 삭제  (그 이력은 잊는다)
-    ③ keep_local(케이스 8·9의 "로컬 유지") → base[k] ← 레포 값 (그 이력은 잊는다)
-    ④ release(H3 탈출구) → ②③과 별개로 보류를 풀고 **동시에 ③을 적용한다**
-
-    ④가 ③을 함께 걸지 않으면 base에 그 키가 없어(5.3) 다음 백업이 케이스 9로 떨어지고
-    레포 값이 그대로 남는다 — 약속과 반대다. ③을 함께 걸면 same(repo, base)이므로
-    케이스 7(로컬만 변경) → 로컬 값 push → 레포 값이 불리언 → H3 자연 해제로 이어진다.
+    앞의 다섯 인자는 _plan_sections와 같고, 뒤의 둘만 base 경로에만 있는 입력이다 —
+    사용자의 선택(choices)과 **이번 실행의** 보류 상태(next_held).
 
     **value_held를 스스로 계산해 next_base에 넘긴다.** merge 경로와 달리 여기서는
     아무도 대신 계산해 주지 않는다. 넘기지 않으면 보류 키가 base에 얼어붙어, 보류가
@@ -221,43 +214,30 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
     실패했거나 사용자가 건너뛴 항목은 로컬에 없으니 자동으로 빠진다(10.4).
     여기에 "복원을 시도한 목록"을 넘기면 그 안전장치가 사라진다.
 
-    **이 함수는 .tmp+rename 규칙에서 제외된다.** 그 규칙은 "레포 쓰기가 성공한 뒤에
-    rename"인데 apply-base에는 **레포 쓰기가 없다** — 그대로 적용하면 rename 트리거가
-    영영 오지 않아 게이트가 언제나 거짓이 되고 restore 경로의 base가 전혀 전진하지
-    않는다. 여기서는 **파일 존재가 곧 "계산 성공"**이다(9.3.7).
+    **④의 keep_local 동시 적용은 enabledPlugins 한 섹션에만 건다.** 두 섹션은 키가 같은
+    문자열이라 이 목록이 섹션을 넘어 새면 사용자가 고르지도 않은 pluginConfigs 항목까지
+    base가 레포 값으로 전진한다 — 실제 설정 차이가 케이스 8·9 대신 케이스 7로 착지해
+    다음 백업에서 로컬 값이 레포를 덮는다. 9.3.7의 섹션 중첩이 막으려는 위험의 다른
+    입구이고, 선택 JSON의 중첩만으로는 막히지 않는다(release는 그 JSON이 아니라 보류
+    파일에서도 온다). **불필요한 특수 케이스로 읽고 지우지 말 것.**
 
-    **최상위 status는 섹션 skip을 반영하지 않는다** — build_plan·collect_plugins·
-    compare_plugins와 같은 계약이다. 접힌 섹션이 있어도 나머지 섹션의 base는 유효하고,
-    최상위를 skipped로 접으면 소비자가 "반영할 것이 없다"로 읽어 정상 처리된 섹션까지
-    함께 버린다. 섹션 사실은 sections[<섹션>]["status"]에만 있다.
+    **②와 ③이 같은 키에 겹치면 ③이 이긴다** — ③이 뒤에 돌기 때문이다. 임의의 순서가
+    아니라 ③이 `key in masked` 가드를 갖는 데서 나온다: ③은 레포에 값이 있을 때만
+    적용되고, 그때 ②(케이스 4·5 = "레포가 그 키를 잃었다")는 이미 모순 입력이다.
+    순서를 뒤집으면 그 모순 입력이 정당한 선택을 조용히 덮는다.
 
     **kept_stale은 요청을, kept_local은 적용한 것을 보고한다.** 비대칭으로 보이지만 둘
     다 "이 실행이 만든 base 상태"를 말한다 — keep_stale은 그 키가 base에 있었든 없었든
     결과가 "없음"이라 요청이 곧 결과이고, keep_local은 레포에 값이 없으면 얹을 값 자체가
     없다. 그때도 요청을 그대로 보고하면 SKILL.md가 반영되지 않은 선택을 반영됐다고
-    안내한다.
+    안내한다. **예외는 바로 위의 모순 입력 하나다** — 같은 키가 ②③에 함께 오면 ③이
+    이겨 그 키가 nb에 남는데도 kept_stale에 실린다. 같은 보고의 base_keys가 그 키를
+    담으므로 소비자가 대조할 수는 있다.
 
-    **파일 두 개를 쓰는 순서가 계약이다.** 스테이징(base) 먼저, 보류 파일 나중.
-    반대로 하면 release가 기록된 뒤 base 쓰기가 실패했을 때 H3가 풀린 채로 base에 키가
-    없어 다음 백업이 케이스 9로 떨어진다. 이 순서에서는 보류 파일 쓰기가 실패해도
-    "다시 묻는다"에 그친다. **이 순서를 지키는 테스트는 없다** — 두 쓰기 사이에 실패를
-    주입해야 갈리는데 그 fixture가 없다. 알고 받아들이는 구멍이다.
+    **base_keys는 형제 plan_mcp의 base_names와 이름이 다르다(의도).** 그쪽은 서버
+    "이름"의 평면 매핑이고 이쪽은 섹션 안의 "키"다 — 같은 restore 흐름이 두 출력을 함께
+    읽으므로 이름이 같으면 층위가 다른 두 목록을 한 종류로 렌더링하게 된다.
     """
-    local = pc.read_local_sections(settings_path)
-    repo = pc.load_backup(backup_path)
-    base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
-    auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
-
-    # **이번 실행의** 보류 상태로 훅을 만든다. 이것이 실제로 결과를 가르는 곳은 H4다 —
-    # 이번에 declined된 pluginConfigs 키가 곧바로 value_held가 되어 base에서 빠진다.
-    # 이전 상태를 넘기면 그 키가 base로 전진했다가 다음 실행에서야 보류로 판정되어
-    # 얼어붙은 base가 남는다(5.3).
-    # release 쪽은 이 선택으로 결과가 갈리지 않는다 — 아래 ③이 그 키에 레포 값을 다시
-    # 얹으므로 H3가 걸렸든 풀렸든 nb의 최종 값이 같다. 그래도 같은 상태를 넘기는 것은
-    # 훅과 아래 루프가 **한 보류 상태**를 보게 하기 위해서다.
-    next_held = pc.next_held_state(held_state, repo, choices)
-    hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=next_held)
-
     previous_base = base or {}
     doc, report = {}, {}
     for section in pc.SECTIONS:
@@ -281,6 +261,7 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
             nb.pop(key, None)
         keep_local = list(pc.choice_list(choices, section, "keep_local"))
         if section == "enabledPlugins":
+            # ④ — H3 탈출구의 동시 적용. **이 섹션에만 건다**(위 docstring).
             keep_local += [key for key in next_held["release"]["enabledPlugins"]
                            if key not in keep_local]
         kept_local = []
@@ -291,11 +272,69 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
         doc[section] = nb
         report[section] = {"status": "ok", "kept_stale": stale, "kept_local": kept_local,
                            "base_keys": sorted(nb)}
+    return doc, report
+
+
+def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_path=None,
+               held_path=None, base_dir=ss.BASE_DIR):
+    """복원 후 로컬 기준으로 다음 base를 계산하고 override 셋을 적용해 스테이징에 쓴다.
+
+    ① next_base(복원 후 로컬, 이전 base, 레포 값)  — 정규화는 코어가 한다
+    ② keep_stale(케이스 4·5의 "유지")   → base에서 키 삭제  (그 이력은 잊는다)
+    ③ keep_local(케이스 8·9의 "로컬 유지") → base[k] ← 레포 값 (그 이력은 잊는다)
+    ④ release(H3 탈출구) → ②③과 별개로 보류를 풀고 **동시에 ③을 적용한다**
+       (**enabledPlugins 한 섹션에만 건다** — 근거는 _next_base_sections)
+
+    ④가 ③을 함께 걸지 않으면 base에 그 키가 없어(5.3) 다음 백업이 케이스 9로 떨어지고
+    레포 값이 그대로 남는다 — 약속과 반대다. ③을 함께 걸면 same(repo, base)이므로
+    케이스 7(로컬만 변경) → 로컬 값 push → 레포 값이 불리언 → H3 자연 해제로 이어진다.
+
+    **섹션 루프와 그 보고는 _next_base_sections가 맡는다** — build_plan이 _plan_sections에
+    위임하는 것과 같은 층위다. 이 몸통에 남는 것은 읽기 → 계산 → 쓰기 세 국면뿐이다.
+
+    **이 함수는 .tmp+rename 규칙에서 제외된다.** 그 규칙은 "레포 쓰기가 성공한 뒤에
+    rename"인데 apply-base에는 **레포 쓰기가 없다** — 그대로 적용하면 rename 트리거가
+    영영 오지 않아 게이트가 언제나 거짓이 되고 restore 경로의 base가 전혀 전진하지
+    않는다. 여기서는 **파일 존재가 곧 "계산 성공"**이다(9.3.7).
+
+    **최상위 status는 섹션 skip을 반영하지 않는다** — build_plan·collect_plugins·
+    compare_plugins와 같은 계약이다. 접힌 섹션이 있어도 나머지 섹션의 base는 유효하고,
+    최상위를 skipped로 접으면 소비자가 "반영할 것이 없다"로 읽어 정상 처리된 섹션까지
+    함께 버린다. 섹션 사실은 sections[<섹션>]["status"]에만 있다.
+
+    **파일 두 개를 쓰는 순서가 계약이다.** 스테이징(base) 먼저, 보류 파일 나중.
+    반대로 하면 release가 기록된 뒤 base 쓰기가 실패했을 때 H3가 풀린 채로 base에 키가
+    없어 다음 백업이 케이스 9로 떨어진다. 이 순서에서는 보류 파일 쓰기가 실패해도
+    "다시 묻는다"에 그친다. **이 순서를 재는 fixture는 스테이징 디렉토리 자리에 일반
+    파일을 두는 것이다** — os.makedirs가 그 자리에서 OSError로 죽으므로, 순서가 뒤집혀
+    있으면 그 시점에 보류 파일이 이미 쓰여 있다.
+    """
+    local = pc.read_local_sections(settings_path)
+    repo = pc.load_backup(backup_path)
+    base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
+    auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
+
+    # **이번 실행의** 보류 상태로 훅을 만든다. 이것이 실제로 결과를 가르는 곳은 H4다 —
+    # 이번에 declined된 pluginConfigs 키가 곧바로 value_held가 되어 base에서 빠진다.
+    # 이전 상태를 넘기면 그 키가 base로 전진했다가 다음 실행에서야 보류로 판정되어
+    # 얼어붙은 base가 남는다(5.3).
+    # release 쪽은 이 선택으로 결과가 갈리지 않는다 — 아래 ③이 그 키에 레포 값을 다시
+    # 얹으므로 H3가 걸렸든 풀렸든 nb의 최종 값이 같다. 그래도 같은 상태를 넘기는 것은
+    # 훅과 아래 루프가 **한 보류 상태**를 보게 하기 위해서다.
+    next_held = pc.next_held_state(held_state, pc.normalized_sections(repo), choices)
+    hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=next_held)
+
+    doc, report = _next_base_sections(local, repo, base, hooks, skipped, choices,
+                                      next_held)
 
     os.makedirs(staging_dir, exist_ok=True)
     pc.dump_backup(doc, os.path.join(staging_dir, pc.BACKUP_RELPATH))
     # 보류 파일을 읽지 못했다면 쓰지 않는다 — 빈 상태로 덮으면 사용자의 선택이 조용히
     # 사라진다. 그 경우 SKILL.md가 파일을 지울 경로를 안내한다(6.4).
+    # **게이트는 한 섹션에 걸리는데 파일은 두 섹션의 상태를 담는다.** pluginConfigs만
+    # 접힌 실행에서는 enabledPlugins가 정상 처리되므로 release 선택이 base에는 반영되고
+    # (④) 파일에는 남지 않아, 다음 백업에서 H3가 다시 걸려 **그 해제가 1회용이 된다.**
+    # 그래도 이 게이트가 옳다 — 빈 상태로 덮으면 declined 전부가 조용히 사라진다.
     if "pluginConfigs" not in skipped:
         pc.write_held_state(next_held, held_path)
     return {"status": "ok", "sections": report}

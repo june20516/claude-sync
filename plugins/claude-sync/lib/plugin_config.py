@@ -506,6 +506,20 @@ SECTION_NORMALIZE = {
 }
 
 
+def normalized_sections(sections):
+    """문서 하나를 섹션별 정규화로 통과시킨다. 값만 좁히고 키 집합은 그대로다.
+
+    **훅(build_hooks)이 아니라 표를 직접 읽는 자리가 있는 것은 순서 때문이다** —
+    next_held_state는 훅보다 **먼저** 계산돼야 하고(훅의 H4가 이번 실행의 decline을
+    봐야 한다), 그래서 훅에서 normalize를 빌려 올 수 없다. build_hooks가 싣는 것과
+    **같은 표**를 쓰는 것이 그 대응이고, 직접 읽는 자리를 이 함수 하나로 모으는 것이
+    그 대응을 지킬 수 있게 하는 조건이다 — build_hooks가 언젠가 이 표를 감싸면
+    **여기도 같이 감싸야 한다.**
+    """
+    return {section: SECTION_NORMALIZE[section](sections.get(section, {}))
+            for section in SECTIONS}
+
+
 def _config_secret_keys(cfg):
     """복원 시 사용자에게 값을 물어야 하는 option 키 이름 목록 (6.1·6.2).
 
@@ -577,6 +591,22 @@ def directory_marketplaces(local_marketplaces, repo_marketplaces):
     return frozenset(names)
 
 
+def _extended_value(repo_norm, key):
+    """레포 값이 불리언이 아닌가 — 버전 제약 등 **확장 값**인가 (H3의 술어).
+
+    **세 곳이 같은 것을 물어야 한다** — _make_hold의 H3, held_kinds의 extended_value,
+    next_held_state의 release 정리. 각자 적으면 한 곳만 원본 레포를 보게 되는 갈림이
+    나고, 그러면 ⑴ release 항목이 조용히 유지되거나 사라지고 ⑵ 같은 실행의
+    pluginConfigs 지문이 H4와 어긋나 **decline이 영영 매치되지 않는다**(매 restore마다
+    다시 묻는다). 오늘 enabledPlugins의 정규화가 항등(_identity)이라 그 갈림은
+    무증상이고, 그래서 어떤 변조도 그것을 잡지 못한다.
+
+    **정규화된 매핑을 받는 것이 계약이다.** 원본을 넘기면 그 섹션에 마스킹이 도입되는
+    날 예외도 빈 결과도 없이 판정만 반대로 선다.
+    """
+    return key in repo_norm and not isinstance(repo_norm[key], bool)
+
+
 def _make_hold(section, *, auto_ids, directory_names, held_configs, released):
     """섹션 하나의 hold 훅을 만든다. 코어가 (local, repo)로 부른다.
 
@@ -596,8 +626,8 @@ def _make_hold(section, *, auto_ids, directory_names, held_configs, released):
             if owner is not None and owner in directory_names:               # H2
                 value.add(key)
                 action.add(key)
-            if (section == "enabledPlugins" and key in repo                  # H3
-                    and not isinstance(repo[key], bool) and key not in released):
+            if (section == "enabledPlugins"                                  # H3
+                    and _extended_value(repo, key) and key not in released):
                 value.add(key)                    # 행동 보류가 아니다 — 설치한다
             if (section == "pluginConfigs" and key in repo                   # H4
                     and held_configs.get(key) == value_fingerprint(repo[key])):
@@ -628,8 +658,7 @@ def held_kinds(section, keys, *, auto_ids, directory_names, held_configs, repo_n
             kinds["auto"].append(key)
         if owner is not None and owner in directory_names:
             kinds["local_marketplace"].append(key)
-        if ("extended_value" in kinds and key in repo_norm
-                and not isinstance(repo_norm[key], bool)):
+        if "extended_value" in kinds and _extended_value(repo_norm, key):
             kinds["extended_value"].append(key)
         if ("declined" in kinds and key in repo_norm
                 and held_configs.get(key) == value_fingerprint(repo_norm[key])):
@@ -955,7 +984,7 @@ def choice_list(choices, section, key):
     return [v for v in values if isinstance(v, str)] if isinstance(values, list) else []
 
 
-def next_held_state(previous, repo, choices):
+def next_held_state(previous, repo_norm, choices):
     """apply-base가 기록할 다음 보류 상태 (6.4·7.3).
 
     declined — 이번에 값을 입력한 항목(configured)은 빼고 이번에 건너뛴 항목을 더한다.
@@ -966,8 +995,12 @@ def next_held_state(previous, repo, choices):
     configured가 필요한 이유: 사용자가 마음을 바꿔 값을 입력했는데 항목이 남아 있으면
     지문이 그대로 매치되어 **영영 보류 상태로 남는다** — 6.4가 "그때 항목을 파일에서
     지운다"고 정한 자리다.
+
+    **정규화된 문서(normalized_sections의 결과)를 받는다.** 원본을 받아 여기서 다시
+    정규화하면 계층을 우회하는 자리가 하나 더 생긴다 — release 판정은 H3와, 지문은
+    H4와 **같은 값**을 봐야 하고, 그 술어는 _extended_value 하나로 공유한다.
     """
-    masked = SECTION_NORMALIZE["pluginConfigs"](repo.get("pluginConfigs", {}))
+    masked = repo_norm["pluginConfigs"]
     configured = set(choice_list(choices, "pluginConfigs", "configured"))
     declined = {key: value for key, value in previous["pluginConfigs"].items()
                 if key in masked and key not in configured}
@@ -975,14 +1008,11 @@ def next_held_state(previous, repo, choices):
         if key in masked:
             declined[key] = value_fingerprint(masked[key])
 
-    plugins = repo.get("enabledPlugins", {})
-
-    def still_extended(key):
-        return key in plugins and not isinstance(plugins[key], bool)
-
-    released = [key for key in previous["release"]["enabledPlugins"] if still_extended(key)]
+    plugins = repo_norm["enabledPlugins"]
+    released = [key for key in previous["release"]["enabledPlugins"]
+                if _extended_value(plugins, key)]
     released += [key for key in choice_list(choices, "enabledPlugins", "release")
-                 if still_extended(key) and key not in released]
+                 if _extended_value(plugins, key) and key not in released]
     return {"pluginConfigs": declined, "release": {"enabledPlugins": sorted(released)}}
 
 
