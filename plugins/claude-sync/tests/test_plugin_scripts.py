@@ -17,9 +17,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "sync
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 
 from marks import requires_permission_bits  # noqa: E402
+import keyed_sync as ks  # noqa: E402
 import plugin_config as pc  # noqa: E402
 import collect_plugins  # noqa: E402
 import compare_plugins  # noqa: E402
+import plan_plugins  # noqa: E402
 
 GH = {"source": {"source": "github", "repo": "june20516/suberpower"}}
 DIR_SOURCE = {"source": {"source": "directory", "path": "/x"}}
@@ -994,3 +996,224 @@ def test_changed_detail_carries_normalized_values_not_plaintext(tmp_path):
     assert section["changed"] == ["p@m"]
     assert section["changed_detail"]["p@m"]["local"] == {"options": {"apiKey": pc.SENTINEL}}
     assert "sk-real" not in json.dumps(out, ensure_ascii=False)
+
+
+def build_plan(tmp_path, local=None, repo=None, base=None, installed=None, held=None):
+    repo_dir = write_repo(tmp_path, repo if repo is not None else {})
+    return plan_plugins.build_plan(
+        os.path.join(repo_dir, pc.BACKUP_RELPATH),
+        settings_path=write_settings(tmp_path, **(local or {})),
+        installed_path=installed if installed is not None else write_installed(tmp_path),
+        held_path=held if held is not None else str(tmp_path / "none-held.json"),
+        base_dir=write_base_blob(tmp_path, base))
+
+
+def test_plan_exposes_exactly_eleven_buckets_per_section(tmp_path):
+    """코어가 버킷을 늘리면 여기서 걸린다 — 화이트리스트는 조용히 빠뜨린다.
+
+    MCP는 아홉이지만 플러그인은 두 축을 **노출한다** — H3의 value_held는 사용자에게
+    별도 문구로 말해야 하고, action_held는 어떤 명령의 대상도 아님을 알려야 한다.
+    """
+    out = build_plan(tmp_path)
+    for section in pc.SECTIONS:
+        assert set(out["sections"][section]) == set(ks.BUCKETS) | {"status"}
+
+
+def test_plan_routes_new_repo_entries_by_secret_need(tmp_path):
+    repo = {"enabledPlugins": {"plain@m": True, "conf@m": True},
+            "extraKnownMarketplaces": {"m": GH},
+            "pluginConfigs": {"conf@m": {"options": {"apiKey": pc.SENTINEL}}}}
+    out = build_plan(tmp_path, local={}, repo=repo)
+    assert out["sections"]["enabledPlugins"]["add"] == ["conf@m", "plain@m"]
+    assert out["sections"]["pluginConfigs"]["needs_secret"] == ["conf@m"]
+    assert out["config_keys"] == {"conf@m": ["apiKey"]}
+    # conf@m은 두 섹션의 설치 버킷에 **동시에** 있다. 목록에 두 번 실리면 설치 명령이
+    # 두 번 나가고, 두 번째는 이미 설치된 상태에서 실패해 거짓 실패로 보고된다.
+    assert out["install"] == ["conf@m", "plain@m"]
+
+
+def test_plan_installs_a_plugin_that_only_plugin_configs_names(tmp_path):
+    """9.3.1의 4단계(설정 채우기)도 `install --config`다 — 설치 목록에서 빠지면
+    그 플러그인의 설정을 채울 명령이 어디에서도 나오지 않는다.
+
+    enabledPlugins의 add가 **비어 있는** 것을 함께 못박는다 — 그 섹션이 install을
+    대신 채우면 이 단정이 pluginConfigs 기여를 재지 못한다.
+    """
+    out = build_plan(tmp_path, local={},
+                     repo={"extraKnownMarketplaces": {"m": GH},
+                           "pluginConfigs": {"conf@m": {"options":
+                                                        {"apiKey": pc.SENTINEL}}}})
+    assert out["sections"]["enabledPlugins"]["add"] == []
+    assert out["install"] == ["conf@m"]
+    assert out["depends_on"] == {"conf@m": "m"}
+
+
+def test_plan_gives_marketplace_add_arguments(tmp_path):
+    """SKILL.md가 레포 파일을 직접 파싱하면 파서 두 벌이 되살아난다 (8.6)."""
+    out = build_plan(tmp_path, local={}, repo={"extraKnownMarketplaces": {"m": GH}})
+    assert out["marketplace_add"] == [
+        {"name": "m", "arg": "june20516/suberpower", "reserved": False}]
+
+
+def test_plan_skips_always_known_marketplaces(tmp_path):
+    """14.1 — 실패할 등록 시도를 애초에 만들지 않는다 (8.2)."""
+    repo = {"extraKnownMarketplaces": {name: GH for name in sorted(pc.ALWAYS_KNOWN)}}
+    out = build_plan(tmp_path, local={}, repo=repo)
+    assert out["marketplace_add"] == []
+    assert out["skipped_always_known"] == sorted(pc.ALWAYS_KNOWN)
+
+
+def test_plan_flags_reserved_names_without_filtering_them(tmp_path):
+    """8.3 — 정당한 소유자일 수 있으므로 시도한다. 다만 갈래를 미리 알려 준다."""
+    out = build_plan(tmp_path, local={},
+                     repo={"extraKnownMarketplaces": {"healthcare": GH}})
+    assert out["marketplace_add"] == [
+        {"name": "healthcare", "arg": "june20516/suberpower", "reserved": True}]
+
+
+def test_plan_reports_dependency_of_each_install_on_its_marketplace(tmp_path):
+    """9.3.2 — 1단계가 실패한 마켓플레이스의 플러그인은 2단계를 시도하지 않는다."""
+    out = build_plan(tmp_path, local={},
+                     repo={"enabledPlugins": {"p@m": True},
+                           "extraKnownMarketplaces": {"m": GH}})
+    assert out["depends_on"] == {"p@m": "m"}
+
+
+def test_plan_omits_dependency_for_always_known_marketplaces(tmp_path):
+    """등록 단계가 없는 마켓플레이스에 blocked를 걸면 설치가 영영 차단된다."""
+    out = build_plan(tmp_path, local={},
+                     repo={"enabledPlugins": {"p@claude-plugins-official": True}})
+    # 설치 대상이 되었는데도 의존이 없다는 것이 요지다. install이 비면 저절로 참이 된다.
+    assert out["install"] == ["p@claude-plugins-official"]
+    assert out["depends_on"] == {}
+
+
+def test_plan_disables_only_what_install_would_leave_wrong(tmp_path):
+    """설치 직후 값은 true다. 레포가 false인 것만 disable 대상이다."""
+    out = build_plan(tmp_path, local={},
+                     repo={"enabledPlugins": {"on@m": True, "off@m": False},
+                           "extraKnownMarketplaces": {"m": GH}})
+    assert out["disable_after_install"] == ["off@m"]
+
+
+def test_plan_never_disables_a_key_absent_from_the_repo(tmp_path):
+    """14.1 — 부재는 꺼짐이 아니다 (1-c C4)."""
+    out = build_plan(tmp_path, local={"enabledPlugins": {"local@m": True}},
+                     repo={"enabledPlugins": {}})
+    # 케이스 1(로컬 신규)로 떨어진 것을 먼저 못박는다 — 이것이 없으면 두 단정이
+    # "레포에 없으므로 어느 목록에도 없다"로 저절로 참이 되어 판별력을 잃는다.
+    assert out["sections"]["enabledPlugins"]["local_only"] == ["local@m"]
+    assert out["disable_after_install"] == []
+    assert "local@m" not in out["repo_values"]
+
+
+def test_plan_puts_installed_extended_values_in_their_own_bucket(tmp_path):
+    """8.4 — both_changed로 부르면 "양쪽이 바뀌었습니다"라는 거짓 문구가 뜬다."""
+    out = build_plan(tmp_path, local={"enabledPlugins": {"p@m": True}},
+                     repo={"enabledPlugins": {"p@m": ["1.0.0"]},
+                           "extraKnownMarketplaces": {"m": GH}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["value_held"] == ["p@m"]
+    assert section["both_changed"] == [] and section["repo_ahead"] == []
+    # 이 버킷의 키는 **이미 로컬에 있다.** 설치 목록에 넣으면 SKILL.md가 설치를 다시
+    # 시도한다 — 새 기기 갈래(add)와 값만 다른 갈래(value_held)를 가른 이유가 이것이다.
+    assert out["install"] == []
+
+
+def test_extended_value_is_installed_on_a_new_machine(tmp_path):
+    """14.1 — 값 보류를 행동 보류로 잘못 구현하는 회귀를 막는다 (5.3).
+
+    설치하지 않으면 어느 기기에도 설치되지 않고, 모두가 값 보류라 아무도 push하지
+    않아 레포 값이 영원히 고정되며, 삭제 판정에서도 빠진다.
+    """
+    out = build_plan(tmp_path, local={},
+                     repo={"enabledPlugins": {"p@m": ["1.0.0"]},
+                           "extraKnownMarketplaces": {"m": GH}})
+    assert out["sections"]["enabledPlugins"]["add"] == ["p@m"]
+    assert out["install"] == ["p@m"]
+
+
+def test_action_held_entries_become_no_command_at_all(tmp_path):
+    """5.3 — 행동 보류 키는 어떤 CLI 명령의 대상도 되지 않는다."""
+    out = build_plan(tmp_path, local={}, repo={"enabledPlugins": {"dep@m": True},
+                                               "extraKnownMarketplaces": {"m": GH}},
+                     installed=write_installed(tmp_path,
+                                               {"dep@m": [{"scope": "user",
+                                                           "auto": True}]}))
+    assert out["sections"]["enabledPlugins"]["action_held"] == ["dep@m"]
+    assert out["install"] == []
+    assert out["disable_after_install"] == []
+
+
+def test_plan_gives_reasons_for_unrestorable_entries(tmp_path):
+    out = build_plan(tmp_path, local={}, repo={"enabledPlugins": {"p@nowhere": True}})
+    assert out["sections"]["enabledPlugins"]["unrestorable"] == ["p@nowhere"]
+    assert "소스가 없" in out["unrestorable_reasons"]["p@nowhere"]
+
+
+def test_unrestorable_reason_and_the_verdict_read_the_same_repo(tmp_path):
+    """10.2 — 판정(restorable)은 레포를 보는데 사유가 다른 문서를 보면 사유가 None이 되고,
+    그 항목은 "복원 불가"로만 남아 사용자가 무엇을 해야 하는지 알 수 없다.
+
+    **로컬에만 있는 마켓플레이스**가 있어야 두 입력이 갈린다 — 레포와 같으면 어느 쪽을
+    넘겨도 같은 문장이 나와 이 단정이 판별력을 잃는다.
+    """
+    out = build_plan(tmp_path, local={"extraKnownMarketplaces": {"m": GH}},
+                     repo={"enabledPlugins": {"p@m": True}})
+    assert out["sections"]["enabledPlugins"]["unrestorable"] == ["p@m"]
+    assert "소스가 없" in out["unrestorable_reasons"]["p@m"]
+
+
+def test_plan_carries_no_secret_values(tmp_path):
+    """계획은 SKILL.md의 대화로 흘러가고 임시 파일에 남는다 — 평문이 있으면 안 된다."""
+    out = build_plan(tmp_path,
+                     local={"pluginConfigs": {"p@m": {"options": {"apiKey": "sk-real"}}}},
+                     repo={"pluginConfigs": {"p@m": {"options": {"apiKey": pc.SENTINEL}}}})
+    # 섹션이 접히면 평문이 실릴 자리 자체가 없어 단정이 공허해진다 — 먼저 확인한다.
+    assert out["sections"]["pluginConfigs"]["status"] == "ok"
+    assert out["sections"]["pluginConfigs"]["in_sync"] == ["p@m"]
+    assert "sk-real" not in json.dumps(out, ensure_ascii=False)
+
+
+def test_plan_skips_plugin_sections_when_auto_flags_are_unavailable(tmp_path):
+    """9.3.6 — backup과 같은 규율을 restore에도 적용한다."""
+    out = build_plan(tmp_path, local={},
+                     repo={"enabledPlugins": {"p@m": True},
+                           "extraKnownMarketplaces": {"m": GH}},
+                     installed=str(tmp_path / "none-installed.json"))
+    assert out["sections"]["enabledPlugins"]["status"] == "skipped"
+    # 레포에 마켓플레이스 m이 **있어야** 이 단정이 skip을 잰다. 없으면 p@m이 skip과
+    # 무관하게 unrestorable로 떨어져 install이 어차피 빈다.
+    assert out["install"] == []
+    # 부분 skip이 전체 skip으로 조용히 바뀌지 않았음을 함께 본다 (9.3.6).
+    assert [m["name"] for m in out["marketplace_add"]] == ["m"]
+
+
+def plan_script():
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                        "skills", "sync-restore", "scripts",
+                                        "plan_plugins.py"))
+
+
+def test_plan_cli_rejects_unknown_mode():
+    """호출부가 잘못한 경우에만 0이 아닌 종료 코드를 쓴다."""
+    proc = subprocess.run([sys.executable, plan_script(), "bogus"],
+                          capture_output=True, text=True)
+    assert proc.returncode == 1
+
+
+def test_plan_cli_exits_zero_and_reports_skip(tmp_path):
+    """10.3 — 종료 코드는 0이다. 그래야 안내가 보인다.
+
+    레포에 항목이 **있는** 상태로 건너뛴다 — 비어 있으면 "할 일이 없어서 조용한 것"과
+    "읽기 실패로 접힌 것"을 출력이 구별하지 못한다.
+    """
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    repo = write_repo(tmp_path, {"enabledPlugins": {"theirs@m": True}})
+    proc = subprocess.run(
+        [sys.executable, plan_script(), "plan", os.path.join(repo, pc.BACKUP_RELPATH)],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)))
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["status"] == "skipped"
+    assert json.loads(proc.stdout)["reason"]

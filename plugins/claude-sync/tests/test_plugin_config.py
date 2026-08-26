@@ -1065,3 +1065,26 @@ def test_hooks_and_context_returns_a_context_that_classifies_every_held_key():
     kinds = pc.held_kinds("enabledPlugins", held["value"], repo_norm=repo_norm,
                           **context)
     assert kinds["auto"] == ["dep@m"] and kinds["extended_value"] == ["ext@m"]
+
+
+def test_value_command_is_silent_when_the_state_already_matches():
+    """14.1 — enable/disable은 멱등이 아니다. 같은 상태면 exit 1로 거짓 실패를 낸다."""
+    assert pc.value_command(True, True) is None
+    assert pc.value_command(False, False) is None
+
+
+def test_value_command_names_the_direction():
+    assert pc.value_command(False, True) == "enable"
+    assert pc.value_command(True, False) == "disable"
+
+
+def test_value_command_refuses_extended_repo_values():
+    """배열·객체를 쓸 CLI가 없다 — H3의 값은 밀지 않는다."""
+    assert pc.value_command(True, ["1.0.0"]) is None
+    assert pc.value_command(True, {"version": "1"}) is None
+
+
+def test_value_command_treats_absent_local_as_needing_the_command():
+    """부재는 false가 아니다 — 매니페스트 기본값에 위임하는 상태다 (9.3.3)."""
+    assert pc.value_command(None, False) == "disable"
+    assert pc.value_command(None, True) == "enable"

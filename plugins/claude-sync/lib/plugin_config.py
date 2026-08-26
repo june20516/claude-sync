@@ -786,6 +786,23 @@ def orphaned(merged_plugins, merged_marketplaces):
                   if marketplace_of(plugin_id) not in known)
 
 
+def value_command(local_value, repo_value):
+    """레포 값에 맞추려면 실행해야 할 CLI 명령. 필요 없으면 None (9.3.1의 3단계).
+
+    enable/disable은 **멱등이 아니다** — 이미 그 상태면 exit 1이다(실측). 현재 상태와
+    같은데 부르면 거짓 실패를 양산한다.
+
+    레포 값이 불리언이 아니면 None이다 — 배열·객체를 쓸 CLI가 없다(H3의 값은 밀지
+    않는다). **로컬의 부재는 false가 아니다** — 매니페스트 기본값(defaultEnabled)에
+    위임하는 상태이므로 의미가 반대다. 따라서 부재는 "명령이 필요하다"로 다룬다.
+    """
+    if not isinstance(repo_value, bool):
+        return None
+    if isinstance(local_value, bool) and local_value == repo_value:
+        return None
+    return "enable" if repo_value else "disable"
+
+
 def build_hooks(local, repo, *, auto_ids, held_state, _context=None):
     """섹션별 훅 묶음 {섹션: {"normalize", "hold", "restorable", "secret_keys"}}.
 
