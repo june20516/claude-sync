@@ -4811,6 +4811,150 @@ git commit -m "feat(restore): apply-base — 선택 override 넷과 plugins-held
 
 ---
 
+### Task 10.5: 설치 집합 읽기 — "설치됨"을 실제로 아는 것
+
+**근거:** spec 3.4, 9.2, 9.3.1, 9.3.2, 8.4
+
+**`enabledPlugins`의 키 부재는 미설치가 아니다.** 매니페스트 기본값(`defaultEnabled`)에 위임하는 상태다 — Task 9의 앞머리가 같은 사실을 `disable` 쪽에서 이미 명시한다. 그래서 로컬 문서만으로는 "설치됨"과 "미설치"를 가를 수 없고, `installed_plugins.json`을 읽어야 한다.
+
+두 곳이 그 사실을 요구한다.
+
+| 어디 | 무엇이 막혔나 |
+|---|---|
+| Task 8의 `absent_locally` | spec 9.2가 *"H3 항목은 '설치됨'과 '미설치'를 구별해 말한다"*를 요구하는데, 지금은 "로컬 섹션 문서에 값이 없다"까지만 말할 수 있어 이름을 그렇게 바꿨다 |
+| Task 9의 `install` | spec 9.3.1이 **2단계**(`plugin install <id>`)와 **4단계**(`plugin install <id> --config k=v`)를 다른 단계로 정의하고 9.3.2가 단계 간 의존까지 규정하는데, 계획이 둘을 `install` 하나로 합쳤다. **이미 설치된 플러그인에 bare install이 나가 거짓 실패가 난다**(Task 9 quality review에서 실측 재현됨) |
+
+**같은 파일을 두 번 파싱하지 않는다.** `read_auto_ids`가 이미 `installed_plugins.json`을 파싱하며 **auto 집합만** 뽑아 쓴다. 옆에 두 번째 파서를 두면 이 저장소가 반복해 막아 온 "파서 두 벌"이 어댑터 안에서 재생산되고, 두 판의 예외 갈래가 갈리면 부분 skip이 조용히 전체 skip이 된다.
+
+**설치 판정의 스코프는 `user`다.** 이 동기화 전체가 `--scope user`로 동작하고(spec 9.3.1이 그것을 못 박는다), `read_auto_ids`도 `scope == "user"`로 좁힌다. 따라서 설치 집합은 **user 스코프 항목이 하나라도 있는 id**다 — `auto` 값과는 무관하다.
+
+**예외 갈래는 `AutoFlagsUnavailable` 하나를 공유한다.** 같은 파일의 같은 파싱에서 나오므로 갈래를 나눌 근거가 없고, 나누면 `read_hold_inputs`의 skip 범위 표가 둘로 갈린다.
+
+**Files:**
+- Modify: `plugins/claude-sync/lib/plugin_config.py` (`read_installed` 신규, `read_auto_ids`는 위임, `read_hold_inputs`가 4-튜플)
+- Modify: `plugins/claude-sync/skills/sync-status/scripts/compare_plugins.py`
+- Modify: `plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py`
+- Modify: `plugins/claude-sync/skills/sync-backup/scripts/collect_plugins.py` (4-튜플 언팩만)
+- Modify: `plugins/claude-sync/tests/test_plugin_config.py`, `tests/test_plugin_scripts.py`
+
+- [ ] **Step 1: 실패하는 test 작성**
+
+**이 Step은 요구 단정을 규정하고, fixture 코드는 구현자가 쓴다.** 기존 헬퍼(`write_installed`·`write_settings`·`write_repo`·`build_plan`·`compare`)의 실제 시그니처를 **파일에서 확인하고** 쓸 것 — 규정이 없는 헬퍼를 지어내면 `NameError`가 난다(Task 10에서 실제로 그랬다).
+
+아래 단정이 **전부** 있어야 한다. 각 항목은 **비지 않은 값을 만드는 fixture**에서 나와야 하고, 빈 목록을 단정할 때는 같은 fixture가 "비지 않을 수도 있었다"를 보여야 한다.
+
+**A. `read_installed` (`tests/test_plugin_config.py`)**
+
+1. `(auto_ids, installed_ids)`를 돌려주고, **user 스코프 항목이 있는 id는 auto 여부와 무관하게 `installed_ids`에 든다.** fixture에 auto인 것 하나·auto 아닌 것 하나를 두어 `auto_ids ⊊ installed_ids`가 실측으로 성립할 것
+2. **user 스코프가 아닌 항목만 가진 id는 `installed_ids`에 들지 않는다.** 같은 fixture에 user 스코프 id를 함께 두어 단정이 공허해지지 않게 할 것
+3. `read_auto_ids`가 `read_installed`에 위임해도 **기존 15개 테스트가 그대로 통과한다**(약화·삭제 0)
+4. **파싱은 한 번뿐이다** — `read_hold_inputs`가 `installed_plugins.json`을 여는 횟수를 세어 1임을 단정할 것(`open` monkeypatch 또는 동등한 수단)
+5. 실패 갈래는 여전히 `AutoFlagsUnavailable` 하나다 — 기존 실패 테스트가 `read_installed`에도 적용됨
+
+**B. `read_hold_inputs`의 4-튜플 (`tests/test_plugin_config.py`)**
+
+6. `(auto_ids, installed_ids, held_state, skipped)`를 돌려준다
+7. `AutoFlagsUnavailable`일 때 `installed_ids`가 **빈 frozenset으로 접히고** 두 섹션이 skip된다 — 이 자리가 조용한 fail-open의 입구다(빈 집합이 "아무것도 설치 안 됨"으로 읽히면 restore가 전부 재설치를 시도한다)
+
+**C. `compare_plugins`의 설치 구별 (`tests/test_plugin_scripts.py`)**
+
+8. `absent_locally`의 항목 중 **실제로 설치된 것**과 **설치되지 않은 것**을 갈라 보고한다. 필드 이름·모양은 구현자가 정하고 근거를 남길 것 — 다만 **`absent_locally`를 없애지 말 것**(그 필드는 "보존합니다가 거짓이 되는 조건"이라는 별개의 사실이고 spec 8.4가 요구한다)
+9. auto 설치된 의존성(`installed_plugins.json`에 있고 `settings.json`에 없음)이 **"미설치"로 보고되지 않는다** — Task 8이 이름을 바꾼 계기가 된 바로 그 조합
+10. `enabledPlugins`가 skip된 실행에서 이 필드가 **없거나 skip 모양**이다(`skipped_section`) — 설치 집합을 못 읽었는데 "전부 미설치"로 접히면 안 된다
+
+**D. `plan_plugins build_plan`의 2단계/4단계 분리 (`tests/test_plugin_scripts.py`)**
+
+11. **로컬에 설치되지 않은 키**는 2단계 목록(`install`)에, **이미 설치된 키**는 4단계 목록에 든다. 두 목록이 **서로 다른 비지 않은 값**을 갖는 fixture일 것
+12. Task 9 quality review가 실측한 재현이 닫힌다 — 로컬에 `p@m`이 **설치돼 있고** 레포에만 `pluginConfigs["p@m"]`이 있으면, `p@m`은 2단계가 아니라 4단계다
+13. **`enabledPlugins`에 값이 없지만 설치는 된** 키가 2단계로 가지 않는다(매니페스트 기본값 위임 — 이 task의 존재 이유)
+14. `disable_after_install`·`depends_on`·`config_keys`가 **두 목록 중 어느 쪽을 기준으로 하는지** 규정되고 측정된다. 구현자가 정하고 근거를 남길 것
+15. 기존 `install` 소비자(`depends_on`의 `install ⊆ restorable` 전제 등)가 깨지지 않는다
+
+**E. 형제 일관성**
+
+16. `collect_plugins`는 4-튜플 언팩만 바뀐다 — 동작 변경 0. 기존 테스트가 그대로 통과함으로 확인
+
+- [ ] **Step 2: test를 실행하여 실패를 확인**
+
+실행: `uv run --with pytest pytest plugins/claude-sync/tests -q`
+기대: 신규 테스트 FAIL
+
+- [ ] **Step 3: 구현**
+
+`lib/plugin_config.py` — `read_auto_ids`의 본문을 `read_installed`로 옮기고, 두 집합을 **한 번의 순회**에서 모은다.
+
+```python
+def read_installed(installed_path=None):
+    """(auto_ids, installed_ids) — 한 번의 파싱으로 둘을 만든다 (3.4).
+
+    installed_ids는 **user 스코프 항목이 하나라도 있는 id**다. auto 여부와 무관하다 —
+    "이 기기에 설치되어 있는가"와 "의존성으로 딸려 왔는가"는 다른 질문이고, 전자만이
+    9.3.1의 2단계/4단계를 가른다.
+
+    **스코프를 user로 좁히는 것이 auto 판정과 같은 근거다.** 이 동기화 전체가
+    --scope user로 동작한다(9.3.1). project 스코프에만 있는 플러그인은 restore가
+    만들 수 있는 상태가 아니므로 "설치됨"으로 세면 2단계를 건너뛰어 영영 안 깔린다.
+
+    **파일을 두 번 파싱하지 않는다.** read_auto_ids가 이 함수에 위임한다 — 옆에 두 번째
+    파서를 두면 두 판의 예외 갈래가 갈리고, 갈리면 부분 skip이 조용히 전체 skip이 된다.
+
+    실패 갈래는 read_auto_ids와 **같은 AutoFlagsUnavailable 하나**다. 전수 목록은
+    그쪽 docstring의 열 가지와 동일하다 — 같은 파싱에서 나오므로 나눌 근거가 없다.
+    """
+    # 기존 read_auto_ids 본문. 순회에서 auto 집합과 함께 user 스코프 id를 모은다.
+
+
+def read_auto_ids(installed_path=None):
+    """의존성으로 자동 설치된 플러그인 id 집합 (3.4). read_installed에 위임한다.
+
+    서명을 유지하는 것은 이 함수에 테스트 열다섯이 걸려 있고, 그 열다섯이 실패 갈래
+    열 가지의 전수 목록을 지키기 때문이다. 위임으로 바꿔도 그 보증이 그대로 남는다.
+    """
+    return read_installed(installed_path)[0]
+```
+
+`read_hold_inputs`는 `read_installed`를 한 번 부르고 **4-튜플**을 돌려준다. 실패 시 `installed_ids`도 `frozenset()`으로 접되, **그 접힘이 조용한 fail-open이 아닌 이유**(같은 갈래에서 두 섹션이 skip되므로 그 값이 쓰이지 않는다)를 docstring에 적는다.
+
+세 스크립트의 언팩을 4-튜플로 바꾸고, `compare_plugins`와 `plan_plugins build_plan`이 `installed_ids`를 쓴다. **`collect_plugins`와 `apply_base`는 언팩만 바꾼다** — 설치 여부가 필요 없다.
+
+**`compare_plugins`의 죽은 주석을 지운다.** 지금 `absent_locally` 옆에 *"이 스크립트는 설치 여부를 알 수 없다 — installed_plugins.json에서 읽는 것은 auto 집합뿐"*이라고 적혀 있고, 이 task가 그 전제를 없앤다. 남겨 두면 shipped 주석이 거짓이 된다.
+
+**spec 9.2·9.3.1의 문구를 이 task가 확정한다.** 9.2의 *"H3 항목은 '설치됨'과 '미설치'를 구별해 말한다"*가 이제 실제로 가능해졌고, 9.3.1의 2·4단계가 계획 출력에서 갈린다. 두 절을 구현에 맞춰 갱신하되 **spec 수정은 orchestrator가 한다** — 구현자는 필요한 문구를 보고만 한다.
+
+- [ ] **Step 4: test를 실행하여 통과를 확인**
+
+실행: `uv run --with pytest pytest plugins/claude-sync/tests -q`
+기대: `0 failed`
+
+- [ ] **Step 4b: 변조 확인 (필수)**
+
+하네스: `python3 ~/.claude/suberpowers/tools/mutate.py --repo <저장소> --spec <json> --jobs 8`
+
+- `read_installed`의 스코프 필터(`scope == "user"`)를 지워 전 스코프를 세기 → A-2가 잡아야 한다
+- `installed_ids`에 `auto is True` 조건을 **추가**해 auto 집합과 같게 만들기 → A-1이 잡아야 한다
+- `read_auto_ids`를 위임 대신 옛 본문 복사로 되돌리기 → **파싱 횟수 단정(A-4)이 유일한 검출자다.** 그것이 없으면 이 변조는 SURVIVED이고 파서가 조용히 두 벌이 된다
+- `read_hold_inputs`의 실패 갈래에서 `installed_ids`를 **접지 않고** 전파하기 → B-7이 잡아야 한다
+- 2단계/4단계 분리를 되돌려 `install` 하나로 합치기 → D-11·D-12가 잡아야 한다
+- 4단계 판정을 `local["enabledPlugins"]` 유무로 바꾸기(설치 집합 대신) → **D-13이 유일한 검출자다** — 이 task의 존재 이유가 그 구별이다
+- `compare_plugins`의 설치 구별을 `absent_locally` 전체로 되돌리기 → C-8·C-9가 잡아야 한다
+- 섹션 skip 시 설치 구별 필드를 "전부 미설치"로 채우기 → C-10이 잡아야 한다
+
+**SURVIVE가 나오면 인계 전에 닫는다.** 등가 변이라면 왜 관측 불가능한지 근거를 적는다.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/claude-sync/lib/plugin_config.py \
+        plugins/claude-sync/skills/sync-status/scripts/compare_plugins.py \
+        plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py \
+        plugins/claude-sync/skills/sync-backup/scripts/collect_plugins.py \
+        plugins/claude-sync/tests/test_plugin_config.py \
+        plugins/claude-sync/tests/test_plugin_scripts.py
+git commit -m "feat(plugins): 설치 집합을 읽어 2단계와 4단계를 가른다"
+```
+
+---
+
 ### Task 11: 상태 기계 — 보류의 다회차 커버리지
 
 **근거:** spec 7.3, 5.3, 14.2 #4 / plan ① Task 9 quality review I2
