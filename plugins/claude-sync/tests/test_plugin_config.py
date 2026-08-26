@@ -1002,3 +1002,15 @@ def test_value_held_for_normalizes_and_keeps_the_argument_order():
                              repo["enabledPlugins"]) == frozenset({"ext@m"})
     # 그 키가 행동 보류는 **아니다** — value 축을 쓰는 것이 이 함수의 계약이다.
     assert hooks["enabledPlugins"]["hold"]({}, {"ext@m": ["1.0.0"]})["action"] == set()
+
+
+def test_orphaned_is_not_silenced_by_a_marketplace_named_empty_string():
+    """이름이 빈 문자열인 마켓플레이스 하나가 형태 위반 id를 전부 삼키면 안 된다.
+
+    marketplace_of는 형태 위반에 None을 돌려줄 뿐 ""를 돌려주지 않으므로 None을 ""로
+    접는 것은 죽은 정규화인데, 그 접기가 좁은 fail-open을 연다 — {"": ...} 항목이
+    known에 들어가면 **모든 형태 위반 id가 "알려진 마켓플레이스 소속"이 되어 보고에서
+    사라진다.** 레포 문서의 섹션 키 형태는 _recognized_sections가 검사하지 않으므로
+    그 문서는 정상 인식되고, 7.6의 검사는 차단이 아니라 보고이므로 다른 데서도 안 걸린다.
+    """
+    assert pc.orphaned({"noat": True, "p@gone": True}, {"": GH}) == ["noat", "p@gone"]

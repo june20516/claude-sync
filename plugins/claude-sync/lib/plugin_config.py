@@ -608,18 +608,25 @@ def held_context(local, repo, *, auto_ids, held_state):
 
 # ------------------------------------------------- 복원 가능성 (8장)·정합성 (7.6)
 
-# 마켓플레이스 등록 대상에서 빼는 다섯. claude-plugins-official은 이미 자동 설치되어
-# 등록이 무의미하고, 나머지 넷은 마켓플레이스가 아닌 **의사 출처**라 등록이 실패한다.
+# extraKnownMarketplaces에 없어도 "아는 이름"으로 치는 다섯. **이 파일이 정하는 것은
+# 목록과 그 두 쓰임뿐이다** — _plugin_restorable(레포에 소스가 없어도 복원 가능)과
+# orphaned(고아가 아니다). 이 다섯을 **등록 명령에서 빼는 처리는 여기 없다**; 그것은
+# restore 스크립트의 몫이고 아직 존재하지 않는다.
+# claude-plugins-official은 이미 자동 설치되어 등록이 무의미하고, 나머지 넷은
+# 마켓플레이스가 아닌 **의사 출처**라 등록이 실패한다.
 ALWAYS_KNOWN = frozenset({
     "inline", "skills-dir", "synced", "builtin", "claude-plugins-official"})
 
 # 그 넷. 소속 플러그인은 복원할 수 없다 — claude-plugins-official만 설치가 가능하다.
 PSEUDO_SOURCES = ALWAYS_KNOWN - {"claude-plugins-official"}
 
-# 제3자가 쓸 수 없는 예약 이름. **미리 거르지 않는다** — 정당한 소유자일 수 있으므로
-# 시도하고, 실패하면 "예약된 이름이라 거부되었다"로 갈래를 구별해 보고한다(8.3·10.2).
-# always-known 판정이 우선한다 — claude-plugins-official은 등록 대상에서 먼저 빠지므로
-# 이 갈래에 도달하지 않는다.
+# 제3자가 쓸 수 없는 예약 이름. **이 파일은 목록만 정하고 어디서도 쓰지 않는다** —
+# restorable도 orphaned도 이 집합을 보지 않는다. 미리 거르지 않는 것이 8.3이고(정당한
+# 소유자일 수 있다), 등록을 시도해 실패했을 때 "예약된 이름이라 거부되었다"로 갈래를
+# 구별해 보고하는 것은 **restore 스크립트가 할 일이다**(10.2). 그 소비자가 생기기
+# 전까지 이 상수의 사용처는 열거형 대조 테스트뿐이다.
+# always-known 판정이 우선한다 — claude-plugins-official은 ALWAYS_KNOWN에서 먼저
+# 걸러지므로 이 갈래에 도달하지 않는다.
 RESERVED_MARKETPLACE_NAMES = frozenset({
     "claude-code-marketplace", "claude-code-plugins", "claude-plugins-official",
     "anthropic-marketplace", "anthropic-plugins", "agent-skills",
@@ -692,13 +699,13 @@ def unrestorable_reason(section, key, value, repo):
         fields = _SOURCE_ARG_FIELDS.get(kind)
         if not fields:                                                      # (b)
             return "'%s' 출처로는 등록 인자를 만들 수 없다" % kind
-        return ("'%s' 출처인데 등록 인자로 쓸 필드(%s)가 비어 있다"        # (a)
+        return ("'%s' 출처인데 등록 인자로 쓸 필드가 비어 있다: %s"        # (a)
                 % (kind, "·".join(fields)))
     marketplace = marketplace_of(key)
     if marketplace is None:
         return "플러그인 id 형태(<plugin>@<marketplace>)가 아니다"
     if marketplace in PSEUDO_SOURCES:
-        return "'%s'는 마켓플레이스가 아닌 의사 출처다" % marketplace
+        return "'%s' 출처는 마켓플레이스가 아닌 의사 출처다" % marketplace
     if marketplace not in ALWAYS_KNOWN and marketplace not in repo.get(
             "extraKnownMarketplaces", {}):
         return "레포에 '%s' 마켓플레이스의 소스가 없다" % marketplace
@@ -711,10 +718,16 @@ def orphaned(merged_plugins, merged_marketplaces):
     런타임은 조용히 건너뛰고("Skipping orphaned enabledPlugins entry"), 새 기기의
     restore는 "플러그인이 없다"와 **똑같은 문구**로 실패해 원인을 알 수 없다.
     섹션 간에 게이트를 두지 않는 대신 이 검사로 보고만 한다.
+
+    **None을 ""로 접지 않는다.** marketplace_of는 형태 위반에 None을 돌려줄 뿐 ""를
+    돌려주는 일이 없으므로(`if name and marketplace`) 그 접기는 죽은 정규화이면서,
+    이름이 빈 문자열인 마켓플레이스 항목 하나가 known에 들어가는 순간 **모든 형태 위반
+    id가 "알려진 마켓플레이스 소속"으로 판정돼 보고에서 통째로 사라진다.**
+    _recognized_sections는 섹션 키의 형태를 검사하지 않으므로 그런 문서는 정상 인식된다.
     """
     known = set(merged_marketplaces) | ALWAYS_KNOWN
     return sorted(plugin_id for plugin_id in merged_plugins
-                  if (marketplace_of(plugin_id) or "") not in known)
+                  if marketplace_of(plugin_id) not in known)
 
 
 def build_hooks(local, repo, *, auto_ids, held_state):
@@ -725,10 +738,15 @@ def build_hooks(local, repo, *, auto_ids, held_state):
     없고, 순서를 뒤집으면 둘 다 항상 빈 집합이 되어 버전 제약이 true로 덮이고 6.4의
     탈출구가 무증상으로 죽는다.
 
-    훅 넷은 섹션마다 다른 함수다 — 자기 섹션 밖의 입력(auto 집합, **다른 섹션**인
-    extraKnownMarketplaces의 출처와 그 등록 가능 여부, 보류 파일)을 필요로 하기
-    때문이다. 코어가 보는 계약은 normalize(mapping)·hold(local, repo)·
-    restorable(key, value)·secret_keys(value) 넷뿐이고 나머지는 여기서 닫는다.
+    코어가 보는 계약은 normalize(mapping)·hold(local, repo)·restorable(key, value)·
+    secret_keys(value) 넷뿐이고, 그 서명 밖의 입력(auto 집합, **다른 섹션**인
+    extraKnownMarketplaces의 출처와 그 등록 가능 여부, 보류 파일)은 전부 여기서 닫는다.
+
+    **넷이 다 섹션마다 다른 함수인 것은 아니다.** normalize·hold만 섹션별 함수다.
+    restorable은 갈래가 둘뿐이고(마켓플레이스 / 플러그인) enabledPlugins와
+    pluginConfigs가 **같은 규칙**을 쓴다 — 설정을 채우는 명령이 install --config라서다.
+    secret_keys는 _no_secrets 하나를 두 섹션이 **같은 객체로 공유**한다. reason은
+    섹션을 인자로 받는 함수 하나다.
 
     보류 판정의 입력은 held_context가 만든다 — 호출부가 그 함수를 한 번 더 불러
     held_kinds에 같은 값을 넘기면 훅과 보고가 갈릴 수 없다.
