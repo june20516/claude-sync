@@ -2026,7 +2026,8 @@ def build_hooks(local, repo, *, auto_ids, held_state):
 - `PSEUDO_SOURCES` 검사를 `ALWAYS_KNOWN` 검사로 바꾸기 → **공식 마켓플레이스 플러그인이 복원 불가가 된다.** 두 테스트가 함께 잡아야 한다
 - `marketplace in repo_marketplaces` 갈래를 `True`로 바꾸기 → H2 소비 측 테스트가 잡아야 한다
 - `build_hooks`의 `repo_marketplaces`를 `local`에서 뽑도록 바꾸기 → 같은 테스트가 잡아야 한다(레포 기준이 계약이다)
-- `marketplace_of`의 `count("@") != 1`을 `"@" not in`으로 완화 → id 형태 테스트가 잡아야 한다
+- `marketplace_of`의 `count("@") != 1`을 `"@" not in`으로 완화 → **원문 그대로의 테스트로는 잡히지 않는다**(Task 6 실행에서 실측). `partition`이 첫 `@`로 자르므로 `a@b@c`의 마켓플레이스가 `b@c`가 되고, 그것도 레포에 없어 `restorable`이 그대로 `False`다 — 판정은 같고 **사유만 "소스가 없다"로 바뀐다.** 실제 피해는 사용자가 **존재한 적 없는 마켓플레이스를 백업하라는 안내**를 받는 것이므로, id 형태 테스트에 **사유가 "id 형태" 갈래인지** 보는 단정을 함께 걸어야 잡힌다
+- `build_hooks`가 `secret_keys`를 섹션 무관하게 배선(`SECTION_SECRET_KEYS["enabledPlugins"]` 고정) → **조용한 fail-open이다.** `pluginConfigs`에 `_no_secrets`가 달리면 마스킹된 값이 `needs_secret`으로 가지 않고 `add` 버킷에 실려 **restore가 `<REDACTED>`를 진짜 옵션 값으로 설치한다.** 표를 직접 검사하는 테스트만으로는 배선이 끊겨도 잡히지 않으므로 `build_hooks`의 배선을 거는 단정이 따로 필요하다
 - `marketplace_arg`가 빈 문자열을 통과시키도록 `and candidate`를 지우기 → 인자 생성 테스트가 잡아야 한다
 - `orphaned`의 `| ALWAYS_KNOWN`을 지우기 → 내장 마켓플레이스 테스트가 잡아야 한다
 - `ALWAYS_KNOWN`·`RESERVED_MARKETPLACE_NAMES`에서 이름을 하나씩 지우기 → 열거형 대조 테스트가 잡아야 한다(14.4가 요구하는 성질이다)
