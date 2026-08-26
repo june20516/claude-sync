@@ -1453,7 +1453,10 @@ def apply_base(tmp_path, choices=None, local=None, repo=None, base=None,
     repo_dir = write_repo(tmp_path, repo if repo is not None else {})
     merged = json.loads(json.dumps(EMPTY_CHOICES))
     for section, values in (choices or {}).items():
-        merged.setdefault(section, {}).update(values)
+        if isinstance(values, dict):
+            merged.setdefault(section, {}).update(values)
+        else:
+            merged[section] = values    # 형태가 어긋난 섹션 값을 그대로 넘기는 갈래
     result = plan_plugins.apply_base(
         os.path.join(repo_dir, pc.BACKUP_RELPATH),
         str(tmp_path / staging), merged,
@@ -1837,3 +1840,104 @@ def test_local_only_entries_do_not_enter_the_base(tmp_path):
                         repo={"enabledPlugins": {"shared@m": True}})
     assert "mine@m" not in doc["enabledPlugins"]
     assert doc["enabledPlugins"]["shared@m"] is True     # 합의된 키는 전진한다
+
+
+def test_held_file_carries_the_schema_version(tmp_path):
+    """read_held_state의 버전 게이트(claims_newer_schema)가 읽는 필드다.
+
+    빠져도 지금은 read_held_state가 통과하므로 **무증상이다** — 나중에 스키마를 올릴 때
+    이 파일만 게이트를 타지 못하고 낡은 형태로 조용히 통과한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    apply_base(tmp_path, choices={"pluginConfigs": {"declined": ["delta@m"]}},
+               local={}, repo={"pluginConfigs": {"delta@m": {"options": {}}}},
+               held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        payload = json.load(f)
+    assert payload["pluginConfigs"] != {}        # 파일이 실제로 내용을 담았다
+    assert payload["version"] == pc.HELD_SCHEMA_VERSION
+
+
+@pytest.mark.parametrize("broken", [["p@m"], "p@m", 7, None])
+def test_apply_base_ignores_a_section_whose_choices_are_not_an_object(tmp_path, broken):
+    """choice_list가 약속한 "형태가 어긋나도 세우지 않는다"의 나머지 절반.
+
+    원소 타입은 test_apply_base_ignores_unknown_and_non_string_choice_entries가 재지만
+    **섹션 값** 자체가 dict가 아닌 갈래는 그 테스트가 닿지 않는다 — SKILL.md가
+    {"enabledPlugins": ["p@m"]}처럼 평면 목록을 내보내면 section_choices.get이
+    AttributeError로 restore를 세운다.
+
+    정상 섹션의 선택을 함께 넣어 "선택을 통째로 무시한다"와 구별한다.
+    **None 갈래만으로는 구별이 서지 않는다** — 검사를 `choices.get(section) or {}`로
+    완화해도 None은 그대로 빈 선택이 된다. 리스트·문자열·정수 갈래가 그 회귀를 잡는다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": broken,
+                 "extraKnownMarketplaces": {"keep_stale": ["gone"]}},
+        local={"enabledPlugins": {"p@m": True},
+               "extraKnownMarketplaces": {"gone": GH, "stay": GH}},
+        repo={"enabledPlugins": {}, "extraKnownMarketplaces": {"stay": GH}},
+        base={"enabledPlugins": {"p@m": True},
+              "extraKnownMarketplaces": {"gone": GH, "stay": GH}})
+    assert result["sections"]["enabledPlugins"]["kept_stale"] == []
+    assert doc["enabledPlugins"] == {"p@m": True}        # 어긋난 섹션의 base는 그대로다
+    assert result["sections"]["extraKnownMarketplaces"]["kept_stale"] == ["gone"]
+    assert "gone" not in doc["extraKnownMarketplaces"]
+    assert "stay" in doc["extraKnownMarketplaces"]
+
+
+def test_declined_ids_absent_from_the_repo_are_ignored(tmp_path):
+    """SKILL.md가 레포에 없는 id를 declined로 보내면 KeyError로 restore가 통째로 선다.
+
+    레포에 있는 항목을 함께 넣어 "declined를 통째로 무시한다"와 구별한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    repo = {"pluginConfigs": {"delta@m": {"options": {"apiKey": "sk-real"}}}}
+    apply_base(tmp_path,
+               choices={"pluginConfigs": {"declined": ["ghost@m", "delta@m"]}},
+               local={}, repo=repo, held=held_path)
+    masked = pc.SECTION_NORMALIZE["pluginConfigs"](repo["pluginConfigs"])
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] == {
+            "delta@m": pc.value_fingerprint(masked["delta@m"])}
+
+
+def test_previous_declined_entries_are_dropped_when_the_repo_loses_the_key(tmp_path):
+    """6.4 — 레포에 없는 항목은 정리한다.
+
+    남겨 두면 같은 값이 레포에 되돌아왔을 때 사용자가 다시 고르지 않았는데도 지문이
+    매치되어 **조용히 보류로 복귀한다.** 레포에 남아 있는 항목을 함께 두어 "전부
+    지운다"와 구별한다 — 그쪽은 지문까지 그대로 옮겨져야 한다.
+    """
+    held_path = str(tmp_path / "plugins-held.json")
+    with open(held_path, "w", encoding="utf-8") as f:
+        json.dump({"pluginConfigs": {"gone@m": "0" * 64, "stay@m": "1" * 64},
+                   "release": {"enabledPlugins": []}}, f)
+    apply_base(tmp_path, local={},
+               repo={"pluginConfigs": {"stay@m": {"options": {}}}}, held=held_path)
+    with open(held_path, encoding="utf-8") as f:
+        assert json.load(f)["pluginConfigs"] == {"stay@m": "1" * 64}
+
+
+def test_release_does_not_advance_the_base_of_the_other_section(tmp_path):
+    """release의 keep_local 동시 적용은 **enabledPlugins 한 섹션의 것이다.**
+
+    두 섹션은 키가 같은 문자열이라, 이 목록이 섹션을 넘어 새면 사용자가 고르지도 않은
+    pluginConfigs 항목까지 base가 레포 값으로 전진한다 — 실제 설정 차이가 케이스 8·9
+    대신 케이스 7로 착지해 로컬 값이 다음 백업에서 레포를 덮는다. 9.3.7의 섹션 중첩이
+    막으려는 위험의 다른 입구다.
+
+    로컬의 option 키 집합을 레포와 어긋나게 두어 next_base가 스스로 전진하지 못하게
+    한다 — 그래야 pluginConfigs에 값이 생기는 유일한 경로가 이 누수뿐이다.
+    """
+    result, doc = apply_base(
+        tmp_path,
+        choices={"enabledPlugins": {"release": ["p@m"]}},
+        local={"enabledPlugins": {"p@m": True},
+               "pluginConfigs": {"p@m": {"options": {"other": "x"}}}},
+        repo={"enabledPlugins": {"p@m": ["1.0.0"]},
+              "pluginConfigs": {"p@m": {"options": {"apiKey": "sk-real"}}}})
+    assert doc["enabledPlugins"]["p@m"] == ["1.0.0"]     # 해제 섹션은 전진한다
+    assert "p@m" not in doc["pluginConfigs"]             # 다른 섹션은 전진하지 않는다
+    assert result["sections"]["pluginConfigs"]["kept_local"] == []
