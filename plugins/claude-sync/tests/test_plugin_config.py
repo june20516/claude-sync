@@ -716,3 +716,190 @@ def test_hold_and_held_kinds_never_diverge_when_fed_one_context():
         # 분류가 보류 집합을 **정확히** 덮는다 — held_kinds의 ValueError가 한쪽을,
         # 이 단정이 "보류하지도 않은 키를 보고에 넣는" 반대쪽을 막는다.
         assert {key for names in kinds.values() for key in names} == both, section
+
+
+# --- 8.2·8.3 열거형 대조 (14.4) ---
+
+def test_always_known_marketplaces_are_exactly_these_five():
+    """상수 import만으로 대조하면 이름 하나가 빠져도 테스트와 코드가 함께 바뀌어 통과한다.
+
+    개수 + 이름 전수를 리터럴로 적어 "목록이 줄어들면 실패"하게 만든다 (spec 14.4).
+    """
+    assert pc.ALWAYS_KNOWN == frozenset({
+        "inline", "skills-dir", "synced", "builtin", "claude-plugins-official"})
+    assert len(pc.ALWAYS_KNOWN) == 5
+
+
+def test_pseudo_sources_are_the_four_that_cannot_be_registered():
+    """claude-plugins-official만 always-known이면서 복원 가능하다 (8.1)."""
+    assert pc.PSEUDO_SOURCES == frozenset({"inline", "skills-dir", "synced", "builtin"})
+    assert "claude-plugins-official" not in pc.PSEUDO_SOURCES
+
+
+def test_reserved_marketplace_names_are_exactly_these_sixteen():
+    assert pc.RESERVED_MARKETPLACE_NAMES == frozenset({
+        "claude-code-marketplace", "claude-code-plugins", "claude-plugins-official",
+        "anthropic-marketplace", "anthropic-plugins", "agent-skills",
+        "anthropic-agent-skills", "life-sciences", "knowledge-work-plugins",
+        "claude-for-legal", "claude-for-financial-services",
+        "financial-services-plugins", "first-party-plugins",
+        "claude-community", "claude-plugins-community", "healthcare"})
+    assert len(pc.RESERVED_MARKETPLACE_NAMES) == 16
+
+
+# --- 8.6 마켓플레이스 인자 ---
+
+def test_marketplace_arg_from_github_repo():
+    assert pc.marketplace_arg(GH) == "june20516/suberpower"
+
+
+def test_marketplace_arg_from_url_sources():
+    for kind in ("url", "git"):
+        assert pc.marketplace_arg(
+            {"source": {"source": kind, "url": "https://x/y.git"}}) == "https://x/y.git"
+
+
+def test_marketplace_arg_is_none_when_no_command_can_be_built():
+    """"시도한다"가 실행 가능한 명령으로 번역되지 않으면 unrestorable이다 (8.6).
+
+    마지막 항목(repo가 배열)은 타입 검사를 지키는 줄이다 — 문자열이 아닌 값을 인자로
+    돌려주면 그것이 그대로 `marketplace add`의 argv에 실려 CLI 호출에서 터진다.
+    """
+    for value in ({"source": {"source": "directory", "path": "/x"}},
+                  {"source": {"source": "github"}},
+                  {"source": {"source": "github", "repo": ""}},
+                  {"source": {"source": "novel"}}, {"source": "x"}, "x", None,
+                  {"source": {"source": "github", "repo": ["june20516/suberpower"]}}):
+        assert pc.marketplace_arg(value) is None
+
+
+# --- 8.1 복원 가능성 ---
+
+def restorable_for(section, repo):
+    return pc.build_hooks({name: {} for name in pc.SECTIONS}, repo,
+                          auto_ids=frozenset(), held_state=pc.EMPTY_HELD)[section]["restorable"]
+
+
+def test_plugin_is_unrestorable_when_id_is_not_plugin_at_marketplace():
+    """id 형태가 아니면 어떤 설치 명령도 만들 수 없다.
+
+    각 bad id가 **id 형태 갈래로** 거부되는지까지 본다. 형태 검사가 느슨해지면
+    (marketplace_of가 "@"를 포함하기만 하면 통과하도록) "a@b@c"의 마켓플레이스가
+    'b@c'로 읽혀 판정은 그대로 False인데 사유만 "소스가 없다"로 바뀐다 — 사용자는
+    존재한 적 없는 마켓플레이스를 백업하라는 안내를 받는다. 판정만 보는 단정으로는
+    그 변조가 잡히지 않는다(실측).
+    """
+    repo = {"extraKnownMarketplaces": {"m": GH}}
+    ok = restorable_for("enabledPlugins", repo)
+    assert ok("p@m", True) is True
+    for bad in ("noat", "@m", "p@", "a@b@c", ""):
+        assert ok(bad, True) is False
+        assert "id 형태" in pc.unrestorable_reason("enabledPlugins", bad, True, repo)
+
+
+def test_plugin_is_unrestorable_under_pseudo_sources():
+    ok = restorable_for("enabledPlugins", {"extraKnownMarketplaces": {}})
+    for name in sorted(pc.PSEUDO_SOURCES):
+        assert ok("p@%s" % name, True) is False
+
+
+def test_official_marketplace_plugin_is_restorable_without_registration():
+    """내장이라 등록이 무의미할 뿐 설치는 된다 (8.1)."""
+    ok = restorable_for("enabledPlugins", {"extraKnownMarketplaces": {}})
+    assert ok("p@claude-plugins-official", True) is True
+
+
+def test_plugin_is_unrestorable_when_the_repo_has_no_source_for_its_marketplace():
+    """H2의 소비 측 안전망 — 등록할 소스가 레포 어디에도 없으면 시도해도 반드시 실패한다."""
+    ok = restorable_for("enabledPlugins", {"extraKnownMarketplaces": {"known": GH}})
+    assert ok("p@known", True) is True
+    assert ok("p@unknown", True) is False
+
+
+def test_plugin_configs_uses_the_same_rule_as_its_plugin():
+    """설정을 채우는 명령이 `install --config`이므로 판정 기준이 같다."""
+    ok = restorable_for("pluginConfigs", {"extraKnownMarketplaces": {"m": GH}})
+    assert ok("p@m", {"options": {}}) is True
+    assert ok("p@nowhere", {"options": {}}) is False
+
+
+def test_marketplace_restorability_is_decided_by_the_argument():
+    ok = restorable_for("extraKnownMarketplaces", {"extraKnownMarketplaces": {}})
+    assert ok("m", GH) is True
+    assert ok("m", {"source": {"source": "directory", "path": "/x"}}) is False
+
+
+# --- 10.2 갈래별 사유 ---
+
+def test_unrestorable_reason_distinguishes_the_four_branches():
+    """"복원 불가"만 말하면 사용자가 무엇을 해야 하는지 알 수 없다 (10.2)."""
+    repo = {"extraKnownMarketplaces": {"known": GH}}
+
+    def reason(section, key, value):
+        return pc.unrestorable_reason(section, key, value, repo)
+
+    assert "id 형태" in reason("enabledPlugins", "noat", True)
+    assert "의사 출처" in reason("enabledPlugins", "p@inline", True)
+    assert "소스가 없" in reason("enabledPlugins", "p@unknown", True)
+    assert "인자" in reason("extraKnownMarketplaces", "m",
+                            {"source": {"source": "directory", "path": "/x"}})
+
+
+def test_unrestorable_reason_is_present_exactly_when_restorable_is_false():
+    """사유와 판정이 갈리면 양쪽 다 무증상이다.
+
+    복원 가능한데 사유가 붙으면 사용자는 되지도 않을 조치를 하고, 복원 불가인데
+    사유가 None이면 그 항목은 보고에서 "이유 없이 빠진" 것이 된다(불변식 6).
+    두 함수가 각자 갈래를 세므로 이 대응을 기계로 고정한다.
+    """
+    repo = {"extraKnownMarketplaces": {"known": GH}}
+    cases = (
+        ("enabledPlugins", "p@known", True),
+        ("enabledPlugins", "p@claude-plugins-official", True),
+        ("enabledPlugins", "p@inline", True),
+        ("enabledPlugins", "p@unknown", True),
+        ("enabledPlugins", "noat", True),
+        ("pluginConfigs", "p@known", {"options": {}}),
+        ("pluginConfigs", "p@unknown", {"options": {}}),
+        ("extraKnownMarketplaces", "known", GH),
+        ("extraKnownMarketplaces", "d",
+         {"source": {"source": "directory", "path": "/x"}}),
+    )
+    for section, key, value in cases:
+        ok = restorable_for(section, repo)(key, value)
+        why = pc.unrestorable_reason(section, key, value, repo)
+        assert ok is (why is None), (section, key, why)
+
+
+# --- 7.6 정합성 ---
+
+def test_orphaned_reports_plugins_whose_marketplace_is_gone():
+    """런타임은 조용히 건너뛰고 새 기기 restore는 "플러그인이 없다"로 실패한다 (7.6)."""
+    assert pc.orphaned({"alpha@bar": True, "beta@known": True},
+                       {"known": GH}) == ["alpha@bar"]
+
+
+def test_orphaned_accepts_always_known_marketplaces():
+    """내장 마켓플레이스는 extraKnownMarketplaces에 없는 것이 정상이다 (4.1·8.2)."""
+    assert pc.orphaned({"p@claude-plugins-official": True}, {}) == []
+
+
+def test_orphaned_reports_malformed_ids_too():
+    """마켓플레이스 부분이 없는 id는 어떤 마켓플레이스에도 속하지 않는다."""
+    assert pc.orphaned({"noat": True}, {}) == ["noat"]
+
+
+def test_build_hooks_wires_the_section_specific_secret_keys():
+    """build_hooks가 섹션마다 **다른** secret_keys를 다는지 본다.
+
+    SECTION_SECRET_KEYS만 직접 검사하면 build_hooks가 그 표를 섹션 무관하게 고정해도
+    어떤 테스트도 실패하지 않는다(실측). 그때 pluginConfigs에 _no_secrets가 달리면
+    마스킹된 값이 needs_secret으로 가지 않고 그대로 add 버킷에 실려, restore가
+    **"<REDACTED>"를 진짜 옵션 값으로 설치한다** — 조용하고 되돌리기 어려운 fail-open이다.
+    """
+    empty = {name: {} for name in pc.SECTIONS}
+    hooks = pc.build_hooks(empty, empty, auto_ids=frozenset(), held_state=pc.EMPTY_HELD)
+    cfg = {"options": {"apiKey": pc.SENTINEL}}
+    assert hooks["pluginConfigs"]["secret_keys"](cfg) == ["apiKey"]
+    for section in ("enabledPlugins", "extraKnownMarketplaces"):
+        assert hooks[section]["secret_keys"](cfg) == []

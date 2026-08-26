@@ -9,7 +9,8 @@ installed_plugins.json을 값의 원천으로 삼지 않는 이유는 그것이 
 구별하지 못하기 때문이다.
 
 키 단위 3-way 판정·인식은 값 무관 코어(keyed_sync)에 있다. 이 모듈은 플러그인의 도메인
-지식만 얹는다 — 인식(4.4)·정규화(7.2)·보류(7.3)·복원 가능성(8장)·비밀 키(6.1).
+지식만 얹는다 — 인식(4.4)·정규화(7.2)·보류(7.3)·복원 가능성(8장)·비밀 키(6.1)·
+정합성(7.6).
 
 **한 문서 안에 세 섹션이 있다.** load_backup·parse_base·parse_backup이 돌려주는 것은
 매핑 하나가 아니라 {섹션 이름: 매핑}이고, 코어 함수는 **섹션 하나씩** 부른다.
@@ -605,8 +606,107 @@ def held_context(local, repo, *, auto_ids, held_state):
     }
 
 
+# ------------------------------------------------- 복원 가능성 (8장)·정합성 (7.6)
+
+# 마켓플레이스 등록 대상에서 빼는 다섯. claude-plugins-official은 이미 자동 설치되어
+# 등록이 무의미하고, 나머지 넷은 마켓플레이스가 아닌 **의사 출처**라 등록이 실패한다.
+ALWAYS_KNOWN = frozenset({
+    "inline", "skills-dir", "synced", "builtin", "claude-plugins-official"})
+
+# 그 넷. 소속 플러그인은 복원할 수 없다 — claude-plugins-official만 설치가 가능하다.
+PSEUDO_SOURCES = ALWAYS_KNOWN - {"claude-plugins-official"}
+
+# 제3자가 쓸 수 없는 예약 이름. **미리 거르지 않는다** — 정당한 소유자일 수 있으므로
+# 시도하고, 실패하면 "예약된 이름이라 거부되었다"로 갈래를 구별해 보고한다(8.3·10.2).
+# always-known 판정이 우선한다 — claude-plugins-official은 등록 대상에서 먼저 빠지므로
+# 이 갈래에 도달하지 않는다.
+RESERVED_MARKETPLACE_NAMES = frozenset({
+    "claude-code-marketplace", "claude-code-plugins", "claude-plugins-official",
+    "anthropic-marketplace", "anthropic-plugins", "agent-skills",
+    "anthropic-agent-skills", "life-sciences", "knowledge-work-plugins",
+    "claude-for-legal", "claude-for-financial-services",
+    "financial-services-plugins", "first-party-plugins",
+    "claude-community", "claude-plugins-community", "healthcare",
+})
+
+# 출처 종류별로 `marketplace add`에 넘길 문자열을 어느 필드에서 뽑는가 (8.6).
+# github은 실측된 형태다. url·git의 필드 이름은 측정되지 않았으므로 후보를 순서대로
+# 훑고, 문자열을 하나도 찾지 못하면 **인자를 만들 수 없음 = unrestorable**로 접는다 —
+# 짐작해서 잘못된 인자를 넘기면 CLI가 모호한 문구로 실패해 사용자가 원인을 못 찾는다.
+_SOURCE_ARG_FIELDS = {"github": ("repo",), "url": ("url",), "git": ("url", "repo")}
+
+
+def marketplace_arg(value):
+    """`claude plugin marketplace add`에 넘길 문자열. 만들 수 없으면 None (8.6).
+
+    directory 출처는 여기 오지 않는다 — H2로 보류되기 때문이다. 와도 None이 된다.
+
+    **비어 있지 않은 문자열만 인자로 인정한다.** ""나 문자열이 아닌 값을 돌려주면 그것이
+    그대로 argv에 실려, 사용자는 자기 설정의 어느 필드가 비었는지 대신 CLI의 모호한
+    문구를 보게 된다. 여기서 None으로 접으면 10.2의 갈래별 사유가 그 자리를 대신한다.
+    """
+    kind = _source_kind(value)
+    # kind가 None이 아니면 _source_kind가 value·value["source"] 둘 다 dict임을 이미 보장한다.
+    # kind가 None이면 아래 루프가 한 번도 돌지 않으므로 source가 None인 채로 쓰이지 않는다.
+    source = value.get("source") if isinstance(value, dict) else None
+    for field in _SOURCE_ARG_FIELDS.get(kind, ()):
+        candidate = source.get(field)
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
+
+
+def _plugin_restorable(key, repo_marketplaces):
+    """플러그인 id를 이 도구가 재현할 수 있는가 (8.1).
+
+    **시도하면 반드시 실패하는 것만 거른다**(10장). 과하게 좁히면 정당한 항목이
+    unrestorable로 빠지는데, 사용자에게는 그것을 되돌릴 수단이 없다.
+    """
+    marketplace = marketplace_of(key)
+    if marketplace is None or marketplace in PSEUDO_SOURCES:
+        return False
+    return marketplace in ALWAYS_KNOWN or marketplace in repo_marketplaces
+
+
+def unrestorable_reason(section, key, value, repo):
+    """복원 불가의 **갈래**를 문장으로 (10.2). 복원 가능하면 None.
+
+    "복원 불가"만 말하면 사용자가 무엇을 해야 하는지 알 수 없다 — 종류별 사유가
+    "의사 출처라 원래 불가능하다"와 "레포에 소스가 없으니 백업한 기기에서 올려라"를 가른다.
+
+    갈래의 순서와 조건은 _plugin_restorable·marketplace_arg와 **같아야 한다.** 갈리면
+    양쪽 다 무증상이다 — 복원 가능한데 사유가 붙거나, 복원 불가인데 사유가 None이 되어
+    그 항목이 보고에서 이유 없이 사라진다.
+    """
+    if section == "extraKnownMarketplaces":
+        if marketplace_arg(value) is None:
+            return "등록 인자를 만들 수 없는 출처다 (%s)" % (_source_kind(value),)
+        return None
+    marketplace = marketplace_of(key)
+    if marketplace is None:
+        return "플러그인 id 형태(<plugin>@<marketplace>)가 아니다"
+    if marketplace in PSEUDO_SOURCES:
+        return "'%s'는 마켓플레이스가 아닌 의사 출처다" % marketplace
+    if marketplace not in ALWAYS_KNOWN and marketplace not in repo.get(
+            "extraKnownMarketplaces", {}):
+        return "레포에 '%s' 마켓플레이스의 소스가 없다" % marketplace
+    return None
+
+
+def orphaned(merged_plugins, merged_marketplaces):
+    """마켓플레이스가 결과 문서에 없는 플러그인 id (7.6). **차단하지 않는다.**
+
+    런타임은 조용히 건너뛰고("Skipping orphaned enabledPlugins entry"), 새 기기의
+    restore는 "플러그인이 없다"와 **똑같은 문구**로 실패해 원인을 알 수 없다.
+    섹션 간에 게이트를 두지 않는 대신 이 검사로 보고만 한다.
+    """
+    known = set(merged_marketplaces) | ALWAYS_KNOWN
+    return sorted(plugin_id for plugin_id in merged_plugins
+                  if (marketplace_of(plugin_id) or "") not in known)
+
+
 def build_hooks(local, repo, *, auto_ids, held_state):
-    """섹션별 훅 묶음 {섹션: {"normalize":..., "hold":...}}.
+    """섹션별 훅 묶음 {섹션: {"normalize", "hold", "restorable", "secret_keys"}}.
 
     **레포를 읽은 뒤에 불러야 한다**(spec 9.1.1의 4단계 > 2단계). H3는 "레포 값이
     불리언이 아님", H4는 "지문이 현재 레포 값과 일치"이므로 레포 없이는 둘 다 계산할 수
@@ -614,18 +714,33 @@ def build_hooks(local, repo, *, auto_ids, held_state):
     탈출구가 무증상으로 죽는다.
 
     훅 넷은 섹션마다 다른 함수다 — 자기 섹션 밖의 입력(auto 집합, **다른 섹션**인
-    extraKnownMarketplaces의 출처, 보류 파일)을 필요로 하기 때문이다. 코어가 보는
-    계약은 hold(local, repo)와 normalize(mapping) 둘뿐이고 나머지는 여기서 닫는다.
+    extraKnownMarketplaces의 출처와 그 등록 가능 여부, 보류 파일)을 필요로 하기
+    때문이다. 코어가 보는 계약은 normalize(mapping)·hold(local, repo)·
+    restorable(key, value)·secret_keys(value) 넷뿐이고 나머지는 여기서 닫는다.
 
     보류 판정의 입력은 held_context가 만든다 — 호출부가 그 함수를 한 번 더 불러
     held_kinds에 같은 값을 넘기면 훅과 보고가 갈릴 수 없다.
+
+    restorable도 자기 섹션 밖을 본다 — 8.1의 판정이 **레포의** extraKnownMarketplaces를
+    필요로 한다. 로컬 쪽을 보면 안 되는 이유는 방향이다: 복원은 레포 문서를 이 기기에
+    재현하는 일이고, 등록할 소스가 실려 있는 곳은 레포다. 로컬을 보면 아직 이 기기에
+    없는 마켓플레이스의 플러그인이 전부 unrestorable로 접혀 **첫 복원이 통째로 빈다.**
     """
     context = held_context(local, repo, auto_ids=auto_ids, held_state=held_state)
     released = frozenset(held_state.get("release", {}).get("enabledPlugins", []))
+    repo_marketplaces = frozenset(repo.get("extraKnownMarketplaces", {}))
+
+    def restorable_for(section):
+        if section == "extraKnownMarketplaces":
+            return lambda key, value: marketplace_arg(value) is not None
+        return lambda key, value: _plugin_restorable(key, repo_marketplaces)
+
     return {
         section: {
             "normalize": SECTION_NORMALIZE[section],
             "hold": _make_hold(section, released=released, **context),
+            "restorable": restorable_for(section),
+            "secret_keys": SECTION_SECRET_KEYS[section],
         }
         for section in SECTIONS
     }
