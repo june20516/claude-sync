@@ -1174,28 +1174,34 @@ def test_plan_carries_both_values_for_every_decided_key(tmp_path):
     회귀가 각각 따로 드러나야 하기 때문이다. 판정 대상이 아닌 두 키(local_ahead의
     mine@m, local_only의 solo@m)를 함께 두어 목록이 decided로 좁혀지는 것도 잰다.
 
-    이름은 **버킷 순회 순서와 정렬 순서가 다르게** 골랐다 — 세 버킷이 내는 순서는
-    zeta@m·both@m·alpha@m인데 정렬 결과는 alpha@m·both@m·new@m·zeta@m이다. 두 순서가
-    같으면 아래 정렬 단정이 정렬 없이도 참이 되어 공허해진다.
+    **decided는 set이므로 정렬 전 순서를 이름으로 통제할 수 없다**(plan_plugins의 set
+    comprehension). 그 순서는 버킷 순회 순서가 아니라 **문자열 해시 순서**이고 실행마다
+    PYTHONHASHSEED에 끌려간다. 그래서 아래 정렬 단정은 정상 코드에서 **항상** 참이고,
+    sorted를 없앤 회귀는 원소 수가 n일 때 약 1 - 1/n! 확률로 잡힌다 — 결정적이지 않다.
+    **원소를 줄이면 그 확률이 떨어진다**(2원소면 절반을 놓친다). 그래서 decided를 여섯으로
+    채운다 — repo_ahead 둘 + both_changed 하나 + value_held 하나 + install 둘 → 1/720.
     """
-    base = {"enabledPlugins": {"zeta@m": True, "both@m": True, "mine@m": True}}
-    local = {"enabledPlugins": {"zeta@m": True, "both@m": ["2.0.0"], "mine@m": False,
-                                "alpha@m": True, "solo@m": True}}
-    repo = {"enabledPlugins": {"zeta@m": False, "both@m": False, "mine@m": True,
-                               "alpha@m": ["1.0.0"], "new@m": True},
+    base = {"enabledPlugins": {"zeta@m": True, "bravo@m": True, "both@m": True,
+                               "mine@m": True}}
+    local = {"enabledPlugins": {"zeta@m": True, "bravo@m": True, "both@m": ["2.0.0"],
+                                "mine@m": False, "alpha@m": True, "solo@m": True}}
+    repo = {"enabledPlugins": {"zeta@m": False, "bravo@m": False, "both@m": False,
+                               "mine@m": True, "alpha@m": ["1.0.0"], "new@m": True,
+                               "delta@m": True},
             "extraKnownMarketplaces": {"m": GH}}
     out = build_plan(tmp_path, local=local, repo=repo, base=base)
     section = out["sections"]["enabledPlugins"]
-    assert section["repo_ahead"] == ["zeta@m"]         # 케이스 8
-    assert section["both_changed"] == ["both@m"]       # 케이스 9
-    assert section["value_held"] == ["alpha@m"]        # H3
-    assert section["local_ahead"] == ["mine@m"]        # 케이스 7 — 판정 대상이 아니다
-    assert section["local_only"] == ["solo@m"]         # 케이스 1 — 판정 대상이 아니다
-    assert out["install"] == ["new@m"]
-    assert out["repo_values"] == {"zeta@m": False, "both@m": False,
-                                  "alpha@m": ["1.0.0"], "new@m": True}
-    # new@m은 로컬에 없다 — 없는 키를 넣으면 SKILL.md가 "값이 바뀐다"고 잘못 말한다.
-    assert out["local_values"] == {"zeta@m": True, "both@m": ["2.0.0"], "alpha@m": True}
+    assert section["repo_ahead"] == ["bravo@m", "zeta@m"]  # 케이스 8
+    assert section["both_changed"] == ["both@m"]           # 케이스 9
+    assert section["value_held"] == ["alpha@m"]            # H3
+    assert section["local_ahead"] == ["mine@m"]            # 케이스 7 — 판정 대상이 아니다
+    assert section["local_only"] == ["solo@m"]             # 케이스 1 — 판정 대상이 아니다
+    assert out["install"] == ["delta@m", "new@m"]
+    assert out["repo_values"] == {"zeta@m": False, "bravo@m": False, "both@m": False,
+                                  "alpha@m": ["1.0.0"], "new@m": True, "delta@m": True}
+    # new@m·delta@m은 로컬에 없다 — 없는 키를 넣으면 SKILL.md가 "값이 바뀐다"고 잘못 말한다.
+    assert out["local_values"] == {"zeta@m": True, "bravo@m": True,
+                                   "both@m": ["2.0.0"], "alpha@m": True}
     # decided를 정렬하지 않으면 집합 순회가 문자열 해시에 끌려가 **JSON 출력의 키 순서가
     # 실행마다 바뀐다.** dict를 ==로 비교하는 위의 두 단정은 순서를 보지 못하므로, install만
     # 정렬이 고정되고 같은 파일의 다른 출력은 아닌 비대칭이 남는다. 그것을 여기서 닫는다.
@@ -1358,7 +1364,8 @@ def plan_script():
                                         "plan_plugins.py"))
 
 
-@pytest.mark.parametrize("args", [[], ["bogus"], ["plan"], ["plan", "a", "b"]])
+@pytest.mark.parametrize("args",
+                         [[], ["bogus"], ["bogus", "x"], ["plan"], ["plan", "a", "b"]])
 def test_plan_cli_rejects_wrong_invocations(tmp_path, args):
     """호출부가 잘못한 경우에만 0이 아닌 종료 코드를 쓴다.
 
@@ -1366,6 +1373,10 @@ def test_plan_cli_rejects_wrong_invocations(tmp_path, args):
     `plan_plugins.py plan`이 usage 대신 IndexError traceback이 되는데, **종료 코드만
     보면 그 회귀가 보이지 않는다** — 처리되지 않은 예외도 1로 끝나기 때문이다.
     사용자가 자기 호출의 잘못을 알 수 있는 유일한 신호가 stderr의 usage다.
+
+    ["bogus", "x"]가 **이름 검사를 재는 유일한 케이스다.** 나머지 넷은 개수만으로도
+    걸리므로, 이 항목이 없으면 관문에서 `args[0] == "plan"`을 지워도 아무 테스트도
+    실패하지 않고 `plan_plugins.py bogus <경로>`가 usage 없이 계획을 낸다.
 
     HOME을 격리한다 — 지금은 인자 검증에서 먼저 나가 실제 ~/.claude를 읽지 않지만,
     갈래를 넓힌 뒤 검사가 느슨해지는 순간 진짜 홈을 읽는다(파일 상단 규율).

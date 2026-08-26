@@ -80,12 +80,23 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     """복원 계획.
 
     **평문 비밀이 실리지 않는 근거는 "값이 전부 정규화된다"가 아니다.** sections는 코어가
-    키 목록만 담아 돌려주므로(restore_plan) 값이 실리는 자리는 셋뿐이다 —
+    키 목록만 담아 돌려주므로(restore_plan) 값이 실리는 자리는 **넷**이다 —
     marketplace_add[].arg(마스킹된 레포 값에서 뽑은 source 문자열), config_keys(값이
     아니라 물어야 할 option 키 **이름**), repo_values/local_values(enabledPlugins 전용 —
-    도메인상 비밀이 없는 섹션이다). 그 셋을 전부 마스킹 훅에 통과시키는 것은 근거를
-    구조로 바꾸기 위해서다: enabledPlugins의 정규화가 오늘 항등(_identity)이라는 사실에
-    기대면, 그 섹션에 마스킹이 도입되는 순간 훅을 우회하는 자리 하나만 조용히 남는다.
+    도메인상 비밀이 없는 섹션이다), 그리고 unrestorable_reasons(아래). 그 넷을 전부
+    마스킹 훅에 통과시키는 것은 근거를 구조로 바꾸기 위해서다: enabledPlugins의 정규화가
+    오늘 항등(_identity)이라는 사실에 기대면, 그 섹션에 마스킹이 도입되는 순간 훅을
+    우회하는 자리 하나만 조용히 남는다.
+
+    **넷째는 값이 문자열 안에 들어가 있어 세는 눈에 걸리지 않는다.** unrestorable_reasons의
+    마켓플레이스 갈래는 레포 값의 source.source를 사유 문장에 **보간한다**
+    (plugin_config.unrestorable_reason의 (a)·(b) 갈래). 레포에
+    {"m": {"source": {"source": "X"}}}가 있으면 사유가 "'X' 출처로는 …"이 된다. 오늘
+    안전한 근거는 둘이다 — 그 값도 masked[section]을 거치고(위와 같은 훅), 그리고
+    extraKnownMarketplaces에는 도메인상 비밀이 없다. 나머지 두 섹션의 갈래는 값이 아니라
+    **키**에서 뽑은 마켓플레이스 이름만 넣으므로 값이 실리지 않는다.
+    **10.2의 사유 갈래를 늘릴 때 이 자리를 다시 셀 것** — pluginConfigs는 마스킹 대상
+    섹션이라(_redact_configs) 그 갈래가 값을 보간하기 시작하면 성질이 달라진다.
 
     **최상위 status는 섹션 skip을 반영하지 않는다(의도).** 그 값은 "계획 수립을
     수행했는가"다 — 접힌 섹션이 있어도 나머지 섹션의 계획은 유효하고, 최상위를 skipped로
@@ -109,6 +120,11 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 로컬 값도 **같은 훅**을 통과시킨다. compare_plugins.changed_detail이 양쪽을 둘 다
     # 정규화하는 것과 같은 규약이다 — 원본을 실으면 그 섹션에 마스킹이 도입될 때
     # 로컬 값만 마스킹 계층 전체를 우회하고, 예외도 빈 결과도 나지 않는다(6.1).
+    # **싣는 자리와 비교하는 자리가 같은 값을 봐야 한다.** local_values의 페이로드만
+    # 훅에 통과시키고 disable 판정은 원본으로 비교하면, 한쪽만 마스킹된 두 값이
+    # value_command에 들어가 없어야 할 enable/disable이 **CLI 명령으로** 나간다.
+    # 그래서 이 파일에는 **정규화를 거치지 않은 로컬 값을 꺼내 쓰는 자리가 없다** —
+    # local을 그대로 넘기는 곳은 코어와 훅뿐이고, 그쪽은 스스로 정규화한다.
     local_masked = hooks["enabledPlugins"]["normalize"](local["enabledPlugins"])
     plugins = sections["enabledPlugins"]
     markets = sections["extraKnownMarketplaces"]
@@ -139,7 +155,7 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     disable_after_install = [
         k for k in install
         if k in masked["enabledPlugins"]
-        and pc.value_command(local["enabledPlugins"].get(k, True),
+        and pc.value_command(local_masked.get(k, True),
                              masked["enabledPlugins"][k]) == "disable"]
 
     # 값을 맞춰야 하는 세 갈래에 양쪽 값을 실어 준다 — 케이스 8·9(repo_ahead·
