@@ -1042,6 +1042,9 @@ def test_plan_installs_a_plugin_that_only_plugin_configs_names(tmp_path):
     같은 fixture로 "부재는 false가 아니다"를 계획 층위에서 못박는다 (1-c C4) —
     conf@m은 **설치 대상이면서** 레포 enabledPlugins에 없다(= 매니페스트 기본값에
     위임). disable 가드가 부재를 false로 접으면 이 플러그인이 설치 직후 꺼진다.
+    **여기가 그 가드를 재는 유일한 자리다** — 아래
+    test_plan_never_disables_a_key_absent_from_the_repo의 키는 레포에 없어
+    install에 애초에 들어오지 않으므로 그쪽 단정은 가드와 무관하게 참이다.
     """
     out = build_plan(tmp_path, local={},
                      repo={"extraKnownMarketplaces": {"m": GH},
@@ -1189,7 +1192,13 @@ def test_plan_reads_base_of_each_section_from_that_section(tmp_path):
 
 
 def test_plan_never_disables_a_key_absent_from_the_repo(tmp_path):
-    """14.1 — 부재는 꺼짐이 아니다 (1-c C4)."""
+    """14.1 — 부재는 꺼짐이 아니다 (1-c C4).
+
+    **이 fixture는 disable 가드를 타지 않는다** — local@m은 레포에 없어 install에
+    애초에 들어오지 않으므로 disable_after_install 단정은 가드와 무관하게 참이다.
+    가드 자체는 test_plan_installs_a_plugin_that_only_plugin_configs_names가 잰다.
+    여기서 재는 것은 repo_values의 범위다.
+    """
     out = build_plan(tmp_path, local={"enabledPlugins": {"local@m": True}},
                      repo={"enabledPlugins": {}})
     # 케이스 1(로컬 신규)로 떨어진 것을 먼저 못박는다 — 이것이 없으면 두 단정이

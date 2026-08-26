@@ -2997,6 +2997,9 @@ def test_plan_routes_new_repo_entries_by_secret_need(tmp_path):
     assert out["sections"]["enabledPlugins"]["add"] == ["conf@m", "plain@m"]
     assert out["sections"]["pluginConfigs"]["needs_secret"] == ["conf@m"]
     assert out["config_keys"] == {"conf@m": ["apiKey"]}
+    # conf@m은 두 섹션의 설치 버킷에 **동시에** 있다. 목록에 두 번 실리면 설치 명령이
+    # 두 번 나가고, 두 번째는 이미 설치된 상태에서 실패해 거짓 실패로 보고된다.
+    assert out["install"] == ["conf@m", "plain@m"]
 
 
 def test_plan_installs_a_plugin_that_only_plugin_configs_names(tmp_path):
@@ -3058,6 +3061,8 @@ def test_plan_omits_dependency_for_always_known_marketplaces(tmp_path):
     """등록 단계가 없는 마켓플레이스에 blocked를 걸면 설치가 영영 차단된다."""
     out = build_plan(tmp_path, local={},
                      repo={"enabledPlugins": {"p@claude-plugins-official": True}})
+    # 설치 대상이 되었는데도 의존이 없다는 것이 요지다. install이 비면 저절로 참이 된다.
+    assert out["install"] == ["p@claude-plugins-official"]
     assert out["depends_on"] == {}
 
 
@@ -3181,6 +3186,9 @@ def test_plan_puts_installed_extended_values_in_their_own_bucket(tmp_path):
     section = out["sections"]["enabledPlugins"]
     assert section["value_held"] == ["p@m"]
     assert section["both_changed"] == [] and section["repo_ahead"] == []
+    # 이 버킷의 키는 **이미 로컬에 있다.** 설치 목록에 넣으면 SKILL.md가 설치를 다시
+    # 시도한다 — 새 기기 갈래(add)와 값만 다른 갈래(value_held)를 가른 이유가 이것이다.
+    assert out["install"] == []
 
 
 def test_extended_value_is_installed_on_a_new_machine(tmp_path):
@@ -3232,20 +3240,24 @@ def test_plan_carries_no_secret_values(tmp_path):
     out = build_plan(tmp_path,
                      local={"pluginConfigs": {"p@m": {"options": {"apiKey": "sk-real"}}}},
                      repo={"pluginConfigs": {"p@m": {"options": {"apiKey": pc.SENTINEL}}}})
+    # 섹션이 접히면 평문이 실릴 자리 자체가 없어 단정이 공허해진다 — 먼저 확인한다.
+    assert out["sections"]["pluginConfigs"]["status"] == "ok"
+    assert out["sections"]["pluginConfigs"]["in_sync"] == ["p@m"]
     assert "sk-real" not in json.dumps(out, ensure_ascii=False)
 
 
 def test_plan_skips_plugin_sections_when_auto_flags_are_unavailable(tmp_path):
     """9.3.6 — backup과 같은 규율을 restore에도 적용한다."""
-    out = build_plan(tmp_path, local={}, repo={"enabledPlugins": {"p@m": True}},
+    out = build_plan(tmp_path, local={},
+                     repo={"enabledPlugins": {"p@m": True},
+                           "extraKnownMarketplaces": {"m": GH}},
                      installed=str(tmp_path / "none-installed.json"))
     assert out["sections"]["enabledPlugins"]["status"] == "skipped"
+    # 레포에 마켓플레이스 m이 **있어야** 이 단정이 skip을 잰다. 없으면 p@m이 skip과
+    # 무관하게 unrestorable로 떨어져 install이 어차피 빈다.
     assert out["install"] == []
-
-
-# CLI 짝. 형제 셋(collect_plugins·compare_plugins·plan_mcp)이 모두 갖는 짝이다 —
-# 빼면 main()의 커버리지가 0이 되어 인자 처리·except 튜플·종료 코드 변조가 전부
-# SURVIVED한다. 파일 상단의 subprocess·sys import를 그대로 쓴다.
+    # 부분 skip이 전체 skip으로 조용히 바뀌지 않았음을 함께 본다 (9.3.6).
+    assert [m["name"] for m in out["marketplace_add"]] == ["m"]
 def plan_script():
     return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                                         "skills", "sync-restore", "scripts",
@@ -3389,8 +3401,10 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
         if k in masked["enabledPlugins"]
         and pc.value_command(True, masked["enabledPlugins"][k]) == "disable"]
 
-    # 선택 뒤에 값을 맞춰야 하는 버킷(케이스 8·9)을 위해 양쪽 값을 실어 준다.
-    # SKILL.md가 value_command와 같은 규칙을 손으로 재구현하지 않게 하기 위해서다.
+    # 값을 맞춰야 하는 세 갈래에 양쪽 값을 실어 준다 — 케이스 8·9(repo_ahead·
+    # both_changed)의 선택 뒤, 8.4의 값 보류 문구("레포 값을 보존합니다"), 그리고 설치
+    # 직후의 3단계. SKILL.md가 value_command와 같은 규칙을 손으로 재구현하지 않게 하려는
+    # 것이다 — 재구현하면 멱등이 아닌 명령을 같은 상태에 내어 거짓 실패를 양산한다.
     decided = sorted({k for bucket in ("repo_ahead", "both_changed", "value_held")
                       for k in plugins.get(bucket, [])} | set(install))
 
@@ -3402,9 +3416,9 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
             name for name in markets.get("add", []) if name in pc.ALWAYS_KNOWN),
         "install": install,
         "disable_after_install": disable_after_install,
-        # 훅 묶음에서 꺼낸다. 코어가 needs_secret으로 라우팅할 때 부른 것과 **같은
-        # 객체**여야 한다 — 자유 함수(SECTION_SECRET_KEYS)를 따로 부르면 라우팅과
-        # 보고가 서로 다른 판정을 쓸 수 있고, 갈려도 예외가 없어 무증상이다.
+        # 코어가 needs_secret으로 라우팅할 때 부른 것과 **같은 훅**으로 키 목록을 만든다.
+        # 자유 함수(SECTION_SECRET_KEYS)를 따로 부르면 라우팅과 보고가 갈릴 수 있고,
+        # 갈려도 증상이 없다 — 사용자는 되물어야 할 키를 하나 덜 받을 뿐이다.
         "config_keys": {k: hooks["pluginConfigs"]["secret_keys"](
             masked["pluginConfigs"][k])
             for k in configs.get("needs_secret", [])},
