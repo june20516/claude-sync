@@ -3164,8 +3164,11 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
         "depends_on": {k: pc.marketplace_of(k) for k in install
                        if pc.marketplace_of(k) not in pc.ALWAYS_KNOWN
                        and pc.marketplace_of(k) is not None},
+        # 훅 묶음의 reason을 쓴다 — 자유 함수 unrestorable_reason에 repo를 따로 넘기면
+        # 판정(restorable)과 사유가 **다른 repo**를 볼 수 있고 양쪽 다 무증상이다
+        # (Task 6 quality review I2). build_hooks가 둘에 같은 repo를 닫아 준다.
         "unrestorable_reasons": {
-            k: pc.unrestorable_reason(section, k, masked[section].get(k), repo)
+            k: hooks[section]["reason"](k, masked[section].get(k))
             for section in pc.SECTIONS
             for k in sections[section].get("unrestorable", [])},
     }
@@ -3521,7 +3524,9 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
             continue
         normalize = hooks[section]["normalize"]
         masked = normalize(repo[section])
-        value_held = set(hooks[section]["hold"](normalize(local[section]), masked)["value"])
+        # 손으로 조립하지 않는다 — hold는 정규화된 입력을 받고 (local, repo) 순서가
+        # 뒤집히면 예외도 빈 결과도 없이 판정이 반대로 선다(Task 6 quality review I1).
+        value_held = pc.value_held_for(section, hooks, local[section], repo[section])
         nb = ks.next_base(local[section],
                           None if base is None else base.get(section, {}),
                           repo[section],
