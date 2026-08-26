@@ -140,6 +140,61 @@ ALWAYS_KNOWN(5) / PSEUDO_SOURCES(4) / RESERVED_MARKETPLACE_NAMES(16) / SECTIONS(
 
 ---
 
+## 사용자가 내린 결정 둘 (2026-08-26, Task 9 quality review 후)
+
+**결정 1 — 어댑터가 설치 집합 전체를 읽는다.** Task 8이 유예한 사실을 Task 9의 P2가 다시
+요구했다. 두 곳이 같은 사실을 필요로 한다:
+
+- Task 8의 `absent_locally` — spec 9.2의 *"H3 항목은 '설치됨'과 '미설치'를 구별해 말한다"*
+  를 글자대로 쓰려면 설치 집합이 필요하다. 지금은 "로컬 섹션 문서에 값이 없다"까지만
+  말할 수 있어 이름을 그렇게 바꿨다.
+- Task 9의 P2 — spec 9.3.1의 **2단계**(`plugin install <id>`)와 **4단계**
+  (`plugin install <id> --config k=v`)를 계획이 `install` 하나로 합쳤다. 이미 설치된
+  플러그인에 bare install이 나가 거짓 실패가 난다(실측 재현됨).
+
+**`enabledPlugins`의 키 부재는 미설치가 아니다** — 매니페스트 기본값(`defaultEnabled`)에
+위임하는 상태다. Task 9의 앞머리가 같은 사실을 `disable` 쪽에서 이미 명시한다. 그래서
+로컬 문서만으로는 두 경우를 가를 수 없고, `installed_plugins.json`을 읽어야 한다.
+
+`read_auto_ids`가 이미 그 파일을 파싱한다 — **auto 집합만** 뽑아 쓴다. 설치 집합 읽기를
+더할 때 그 파일을 **두 번 파싱하지 말 것**(이 저장소가 반복해 막아 온 "파서 두 벌"이다).
+예외 갈래도 `AutoFlagsUnavailable`과 같은 범위여야 한다 — 갈리면 부분 skip이 조용히
+전체 skip이 된다.
+
+파급: `lib/plugin_config.py`(신규 읽기) → `compare_plugins.py`(`absent_locally` 재검토)
+→ `plan_plugins.py`(`install`을 2단계/4단계로 분리) → spec 9.2·9.3.1 문구 → Task 14 배선.
+
+**결정 2 — 깨진 레포 JSON 문제(P1)는 기록만 하고 plan ③으로 넘긴다.**
+
+`ks.load_backup`은 **구문이 깨진** 파일을 예외가 아니라 **빈 문서(`{}`)로 degrade**한다
+(`decode`가 `BROKEN`이면 `return {}`). 그 degrade의 근거는 **backup 방향으로만** 쓰여 있다
+— *"레포 파일 하나가 깨졌다고 백업 전체를 막지 않으며, 다음 백업이 그 파일을 정상
+내용으로 되돌린다."* restore 방향에는 그 근거가 없다.
+
+실측(레포 `plugins.json`이 `{ this is not json`, base는 정상):
+
+```
+top status: ok
+enabledPlugins local_stale: ['a@m', 'b@m']
+marketplaces  local_stale: ['m']
+install: []
+```
+
+`local_stale`은 spec 9.3.3에 따라 **`uninstall --scope user` 제안**으로 이어진다. 파일
+하나가 깨졌을 뿐인데 계획이 "이 기기의 플러그인을 전부 지웁시다"를 최상위 `ok`와 함께
+낸다. 9.3.4의 3선택지와 사용자 확인이 완충하지만, 사용자가 보는 것은 **"다른 기기가
+지웠다"는 거짓 근거**다.
+
+**`plan_mcp.py`도 같은 구조다 — Task 9가 만든 문제가 아니라 선재하는 계열 문제다.**
+그래서 plan ②의 범위를 늘리지 않고 plan ③(다운그레이드·호환 확장)에서 두 계열을 함께
+고친다. 계약을 정할 자리는 spec이고, 갈래는 둘이다:
+
+1. spec 9.3.6 표에 "레포 문서 **구문** 깨짐" 행을 넣고, restore에서는 backup과 달리
+   접지 말고 **전체 skip**(또는 `local_stale` 억제)으로 규정한다
+2. `load_backup`에 방향 인자를 두어 restore 호출부가 `BROKEN`을 예외로 받게 한다
+
+---
+
 ## 배포 전 확인 (변하지 않았다)
 
 - **이 개발 기기의 캐시는 아직 `claude-sync/2.0.0`이다. `/sync-backup`을 실행하지 마라 —
