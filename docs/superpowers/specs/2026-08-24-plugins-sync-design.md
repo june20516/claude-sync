@@ -1116,8 +1116,19 @@ next_base를 스테이징에 쓰고, SKILL.md가 `update_base.py`로 옮긴다.
 ```json
 { "enabledPlugins":  { "keep_stale": [], "keep_local": [], "release": [] },
   "extraKnownMarketplaces": { "keep_stale": [], "keep_local": [] },
-  "pluginConfigs":   { "keep_stale": [], "keep_local": [], "declined": [] } }
+  "pluginConfigs":   { "keep_stale": [], "keep_local": [],
+                       "declined": [], "configured": [] } }
 ```
+
+**`declined`·`configured`는 base override가 아니라 `plugins-held.json` 조작이다.** 위의 세
+종류가 base를 움직이는 것과 달리 이 둘은 보류 파일의 항목을 넣고 뺀다 — `declined`는
+사용자가 그 설정을 받지 않기로 한 것을 지문과 함께 기록하고, `configured`는 **마음을
+바꿔 값을 채운 항목을 파일에서 지운다**(6.4).
+
+**`configured`를 스키마에서 빠뜨리면 6.4의 탈출구가 무증상으로 죽는다.** SKILL.md가 이
+스키마만 보고 만들면 그 키를 영영 내보내지 않고, 한 번 declined된 항목은 사용자가 값을
+채워도 파일에 남아 지문이 계속 매치되어 **다시 묻지 않는 상태가 영구화된다.** 되돌릴
+입구가 파일을 손으로 지우는 것뿐이다.
 
 **이 JSON에 비밀 값을 담지 않는다.** 사용자가 입력한 `pluginConfigs` 값은 여기 실리지 않고
 `install --config`로 곧바로 전달된다 — 담으면 임시 파일에 평문 비밀이 남는다.
