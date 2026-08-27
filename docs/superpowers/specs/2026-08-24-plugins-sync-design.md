@@ -976,6 +976,13 @@ CLI가 이미 실행할 명령 전문과 승인 방법을 알려준다.
   "이 기기에서는 복원할 수 없습니다"** 로 말한다
 - **H3 항목은 "설치됨"과 "미설치"를 구별해 말한다.** H3는 행동 보류가 아니므로 설치는 되지만,
   아직 설치되지 않은 상태에서 "레포 값을 보존합니다"만 말하면 거짓이 된다
+- 그 구별은 `not_installed`가 싣는다 — **`absent_locally`의 부분집합**이다. 두 필드가 답하는
+  질문이 다르다: `absent_locally`는 *"보존할 로컬 값이 있는가"*(8.4), `not_installed`는
+  *"이 기기에 깔려 있는가"*(3.4)다. **키가 플러그인 id인 `enabledPlugins`·`pluginConfigs`
+  두 섹션에만 싣는다** — 마켓플레이스 이름은 `installed_ids`와 이름 공간이 달라, 실으면
+  디렉토리 마켓플레이스가 "미설치 플러그인"으로 보고된다(실측). 그 두 섹션이
+  `AutoFlagsUnavailable`의 skip 범위와 같은 짝이라, 필드가 실리는 곳에서는 설치 집합이
+  **항상 실제로 읽힌 값**이다
 
 status는 **아무것도 바꾸지 않는다.** base를 읽지도 갱신하지도 않는다(6.5).
 
@@ -992,10 +999,16 @@ status는 **아무것도 바꾸지 않는다.** base를 읽지도 갱신하지�
 2. 플러그인 설치        claude plugin install <id> --scope user
                         - -y를 붙이지 않는다 (D2)
                         - 의존성은 CLI가 알아서 끌어온다
+                        - 대상은 계획의 install — **이 기기에 설치되지 않은 id만**이다.
+                          이미 설치된 id는 skipped_already_installed로 빠진다.
+                          bare install을 이미 설치된 id에 내면 exit 1로 죽는다
 3. 값 맞추기            claude plugin enable|disable <id> --scope user
                         - 현재 상태와 다를 때만 호출한다 (멱등이 아니다)
 4. 설정 채우기          claude plugin install <id> --config k=v --scope user
                         - 사용자가 값을 준 항목만
+                        - 대상은 계획의 config_keys이고 **설치 여부로 좁히지 않는다.**
+                          이미 설치된 id의 설정도 여기서 채운다 — 좁히면 그 id의
+                          설정이 어디에서도 채워지지 않는다
 ```
 
 **`--scope user`를 반드시 명시한다.** help는 기본값이 `user`라고 적고 실측 출력도 `(scope: user)`였지만,

@@ -4839,40 +4839,271 @@ git commit -m "feat(restore): apply-base — 선택 override 넷과 plugins-held
 
 - [ ] **Step 1: 실패하는 test 작성**
 
-**이 Step은 요구 단정을 규정하고, fixture 코드는 구현자가 쓴다.** 기존 헬퍼(`write_installed`·`write_settings`·`write_repo`·`build_plan`·`compare`)의 실제 시그니처를 **파일에서 확인하고** 쓸 것 — 규정이 없는 헬퍼를 지어내면 `NameError`가 난다(Task 10에서 실제로 그랬다).
+`tests/test_plugin_config.py`와 `tests/test_plugin_scripts.py`에 더한다.
 
-아래 단정이 **전부** 있어야 한다. 각 항목은 **비지 않은 값을 만드는 fixture**에서 나와야 하고, 빈 목록을 단정할 때는 같은 fixture가 "비지 않을 수도 있었다"를 보여야 한다.
+```python
+def test_read_installed_returns_auto_and_installed_from_one_parse(tmp_path):
+    """(auto_ids, installed_ids) — installed_ids는 auto 여부와 무관하다 (3.4).
 
-**A. `read_installed` (`tests/test_plugin_config.py`)**
+    "이 기기에 설치되어 있는가"와 "의존성으로 딸려 왔는가"는 다른 질문이고, 9.3.1의
+    2단계/4단계를 가르는 것은 전자뿐이다. auto가 아닌 manual@m과 auto 키가 아예 없는
+    plain@m을 함께 두어 auto_ids ⊊ installed_ids가 **실측으로** 성립하게 한다 —
+    두 집합이 같은 fixture만 있으면 installed_ids에 auto 조건이 섞여도 드러나지 않는다.
+    """
+    path = write_installed(tmp_path, {
+        "dep@m": [{"scope": "user", "auto": True}],
+        "manual@m": [{"scope": "user", "auto": False}],
+        "plain@m": [{"scope": "user"}],
+    })
+    auto_ids, installed_ids = pc.read_installed(path)
+    assert auto_ids == frozenset({"dep@m"})
+    assert installed_ids == frozenset({"dep@m", "manual@m", "plain@m"})
+    assert auto_ids < installed_ids
 
-1. `(auto_ids, installed_ids)`를 돌려주고, **user 스코프 항목이 있는 id는 auto 여부와 무관하게 `installed_ids`에 든다.** fixture에 auto인 것 하나·auto 아닌 것 하나를 두어 `auto_ids ⊊ installed_ids`가 실측으로 성립할 것
-2. **user 스코프가 아닌 항목만 가진 id는 `installed_ids`에 들지 않는다.** 같은 fixture에 user 스코프 id를 함께 두어 단정이 공허해지지 않게 할 것
-3. `read_auto_ids`가 `read_installed`에 위임해도 **기존 15개 테스트가 그대로 통과한다**(약화·삭제 0)
-4. **파싱은 한 번뿐이다** — `read_hold_inputs`가 `installed_plugins.json`을 여는 횟수를 세어 1임을 단정할 것(`open` monkeypatch 또는 동등한 수단)
-5. 실패 갈래는 여전히 `AutoFlagsUnavailable` 하나다 — 기존 실패 테스트가 `read_installed`에도 적용됨
 
-**B. `read_hold_inputs`의 4-튜플 (`tests/test_plugin_config.py`)**
+def test_read_installed_counts_user_scope_only(tmp_path):
+    """설치 판정의 스코프는 user다 — auto 판정과 같은 근거다 (9.3.1).
 
-6. `(auto_ids, installed_ids, held_state, skipped)`를 돌려준다
-7. `AutoFlagsUnavailable`일 때 `installed_ids`가 **빈 frozenset으로 접히고** 두 섹션이 skip된다 — 이 자리가 조용한 fail-open의 입구다(빈 집합이 "아무것도 설치 안 됨"으로 읽히면 restore가 전부 재설치를 시도한다)
+    이 동기화 전체가 --scope user로 동작하므로 project 스코프에만 있는 플러그인은
+    restore가 만들 수 있는 상태가 아니다. "설치됨"으로 세면 2단계를 건너뛰어 영영
+    설치되지 않는다. user 스코프 항목을 **하나라도** 가진 both@m을 같은 fixture에 두어
+    빈 결과가 "아무것도 세지 않았다"와 구별되게 한다.
+    """
+    path = write_installed(tmp_path, {
+        "proj@m": [{"scope": "project", "auto": True}],
+        "proj-plain@m": [{"scope": "project"}],
+        "both@m": [{"scope": "project"}, {"scope": "user"}],
+    })
+    auto_ids, installed_ids = pc.read_installed(path)
+    assert installed_ids == frozenset({"both@m"})
+    assert auto_ids == frozenset()
 
-**C. `compare_plugins`의 설치 구별 (`tests/test_plugin_scripts.py`)**
 
-8. `absent_locally`의 항목 중 **실제로 설치된 것**과 **설치되지 않은 것**을 갈라 보고한다. 필드 이름·모양은 구현자가 정하고 근거를 남길 것 — 다만 **`absent_locally`를 없애지 말 것**(그 필드는 "보존합니다가 거짓이 되는 조건"이라는 별개의 사실이고 spec 8.4가 요구한다)
-9. auto 설치된 의존성(`installed_plugins.json`에 있고 `settings.json`에 없음)이 **"미설치"로 보고되지 않는다** — Task 8이 이름을 바꾼 계기가 된 바로 그 조합
-10. `enabledPlugins`가 skip된 실행에서 이 필드가 **없거나 skip 모양**이다(`skipped_section`) — 설치 집합을 못 읽었는데 "전부 미설치"로 접히면 안 된다
+def test_read_installed_shares_the_single_failure_branch(tmp_path):
+    """실패 갈래는 read_auto_ids와 **같은 AutoFlagsUnavailable 하나**다.
 
-**D. `plan_plugins build_plan`의 2단계/4단계 분리 (`tests/test_plugin_scripts.py`)**
+    같은 파일의 같은 파싱에서 나오므로 나눌 근거가 없고, 나누면 read_hold_inputs의
+    skip 범위 표가 둘로 갈린다. 정상 문서를 먼저 재어 "무엇을 넣어도 raise"와 구별한다.
+    """
+    ok = write_installed(tmp_path, {"p@m": [{"scope": "user"}]})
+    assert pc.read_installed(ok) == (frozenset(), frozenset({"p@m"}))
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    bad_entry = tmp_path / "entry.json"
+    bad_entry.write_text(json.dumps({"version": 2, "plugins": {"p@m": "손상"}}),
+                         encoding="utf-8")
+    no_plugins = tmp_path / "nokey.json"
+    no_plugins.write_text(json.dumps({"version": 2}), encoding="utf-8")
+    for path in (tmp_path / "none.json", broken, bad_entry, no_plugins):
+        with pytest.raises(pc.AutoFlagsUnavailable):
+            pc.read_installed(str(path))
 
-11. **로컬에 설치되지 않은 키**는 2단계 목록(`install`)에, **이미 설치된 키**는 4단계 목록에 든다. 두 목록이 **서로 다른 비지 않은 값**을 갖는 fixture일 것
-12. Task 9 quality review가 실측한 재현이 닫힌다 — 로컬에 `p@m`이 **설치돼 있고** 레포에만 `pluginConfigs["p@m"]`이 있으면, `p@m`은 2단계가 아니라 4단계다
-13. **`enabledPlugins`에 값이 없지만 설치는 된** 키가 2단계로 가지 않는다(매니페스트 기본값 위임 — 이 task의 존재 이유)
-14. `disable_after_install`·`depends_on`·`config_keys`가 **두 목록 중 어느 쪽을 기준으로 하는지** 규정되고 측정된다. 구현자가 정하고 근거를 남길 것
-15. 기존 `install` 소비자(`depends_on`의 `install ⊆ restorable` 전제 등)가 깨지지 않는다
 
-**E. 형제 일관성**
+def test_read_auto_ids_delegates_instead_of_keeping_a_second_parser(tmp_path,
+                                                                   monkeypatch):
+    """위임 자체는 **값으로 잴 수 없다** — 옛 본문을 복사해 두어도 결과가 같기 때문이다.
 
-16. `collect_plugins`는 4-튜플 언팩만 바뀐다 — 동작 변경 0. 기존 테스트가 그대로 통과함으로 확인
+    그래서 read_installed를 갈아끼우고 **그 반환의 첫 자리가 그대로 나오는지**를 잰다.
+    본문 사본이 남아 있으면 이 단정이 실제 파일을 다시 파싱한 값을 돌려주어 실패한다.
+    파일은 정상 문서로 둔다 — 사본이 예외로 죽는 것이 아니라 **다른 값**을 내는 것으로
+    구별되어야 한다.
+    """
+    path = write_installed(tmp_path, {"dep@m": [{"scope": "user", "auto": True}]})
+    assert pc.read_auto_ids(path) == frozenset({"dep@m"})
+    monkeypatch.setattr(pc, "read_installed",
+                        lambda p=None: (frozenset({"stub@m"}), frozenset({"other@m"})))
+    assert pc.read_auto_ids(path) == frozenset({"stub@m"})
+
+
+def test_read_hold_inputs_parses_the_installed_file_once(tmp_path, monkeypatch):
+    """파서는 한 벌이다 — read_auto_ids가 read_installed에 **위임한다**.
+
+    옆에 두 번째 파서를 두면 두 판의 예외 갈래가 갈리고, 갈리면 부분 skip이 조용히
+    전체 skip이 된다. **횟수 단정이 그 위임의 유일한 검출자다** — 옛 본문을 복사해
+    되돌려도 두 집합의 값은 그대로이기 때문이다.
+    """
+    installed = write_installed(tmp_path, {
+        "dep@m": [{"scope": "user", "auto": True}],
+        "manual@m": [{"scope": "user", "auto": False}]})
+    held = write_held(tmp_path, {"version": 1, "pluginConfigs": {"delta@m": "abc"}})
+    opened = []
+    real_open = builtins.open
+
+    def counting_open(path, *args, **kwargs):
+        opened.append(path)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", counting_open)
+    auto_ids, installed_ids, held_state, skipped = pc.read_hold_inputs(installed, held)
+    monkeypatch.undo()
+    assert opened.count(installed) == 1
+    # 아래 넷이 비지 않아야 위의 1이 "한 번도 안 열었다"가 아님이 증명된다.
+    assert auto_ids == frozenset({"dep@m"})
+    assert installed_ids == frozenset({"dep@m", "manual@m"})
+    assert held_state["pluginConfigs"] == {"delta@m": "abc"}
+    assert skipped == {}
+
+
+def test_read_hold_inputs_returns_four_values_and_folds_installed_on_failure(tmp_path):
+    """(auto_ids, installed_ids, held_state, skipped).
+
+    **빈 installed_ids가 조용한 fail-open이 아닌 근거는 같은 갈래의 skip이다** —
+    enabledPlugins·pluginConfigs 두 섹션이 함께 접히므로 그 값이 쓰이지 않는다.
+    접지 않고 전파하면 소비자가 그것을 "아무것도 설치 안 됨"으로 읽어 restore가 전부
+    재설치를 시도한다. 정상 갈래를 먼저 재어 빈 집합 단정이 공허하지 않게 한다.
+    """
+    good = write_installed(tmp_path, {"p@m": [{"scope": "user"}]})
+    ok = pc.read_hold_inputs(good, str(tmp_path / "none-held.json"))
+    assert len(ok) == 4
+    assert ok[1] == frozenset({"p@m"}) and ok[3] == {}
+    auto_ids, installed_ids, held_state, skipped = pc.read_hold_inputs(
+        str(tmp_path / "missing.json"), str(tmp_path / "none-held.json"))
+    assert auto_ids == frozenset() and installed_ids == frozenset()
+    assert held_state == pc.EMPTY_HELD
+    assert sorted(skipped) == ["enabledPlugins", "pluginConfigs"]
+
+
+# --- 6.4 보류 상태 파일 ---
+
+
+def test_compare_splits_absent_locally_by_actual_installation(tmp_path):
+    """9.2 — H3 항목은 "설치됨"과 "미설치"를 구별해 말한다.
+
+    dep@m은 **설치되어 있으면서** settings.json에 없다(auto 의존성). ghost@m은 어디에도
+    없다. 한 fixture에서 두 갈래가 **둘 다 비지 않아야** 이 배선이 "absent_locally를
+    그대로 복사한 것"이나 하드코딩과 구별된다.
+
+    absent_locally는 그대로 둔다 — "레포 값을 보존합니다"가 거짓이 되는 조건은 설치
+    여부와 별개의 사실이고 spec 8.4가 그것을 요구한다.
+
+    stale@m은 이 필드가 **absent_locally의 부분집합**임을 못박는다 — 로컬 문서에 값이
+    있으면서 설치되지 않은 상태다. CLI는 그런 상태를 만들지 않는다(9.3.3: uninstall이
+    키를 지운다). 보류 키 전체에서 뽑으면 이 키가 들어와, 문구가 값 차이를 말해야 할
+    항목(8.4의 셋째 행)까지 "미설치"로 보고된다.
+    """
+    out = compare(tmp_path, local={"enabledPlugins": {"stale@m": True}},
+                  repo={"enabledPlugins": {"dep@m": True, "ghost@m": ["1.0.0"],
+                                           "stale@m": ["2.0.0"]}},
+                  installed=write_installed(
+                      tmp_path, {"dep@m": [{"scope": "user", "auto": True}]}))
+    section = out["sections"]["enabledPlugins"]
+    # 세 키가 전부 보류다 — 하나라도 빠지면 아래 두 목록이 저절로 좁아진다.
+    assert section["held"] == {"auto": ["dep@m"], "local_marketplace": [],
+                               "extended_value": ["ghost@m", "stale@m"]}
+    assert section["absent_locally"] == ["dep@m", "ghost@m"]
+    assert section["not_installed"] == ["ghost@m"]
+
+
+def test_compare_does_not_call_a_marketplace_uninstalled(tmp_path):
+    """설치 구별은 **키가 플러그인 id인 두 섹션에만** 싣는다.
+
+    extraKnownMarketplaces의 키는 마켓플레이스 이름이라 installed_ids와 이름 공간이
+    다르다 — 실으면 등록만 안 된 마켓플레이스가 전부 "미설치 플러그인"으로 보고된다.
+    같은 실행의 enabledPlugins가 그 필드를 **갖는** 것을 함께 재어, 필드가 어디에도
+    없는 회귀와 구별한다.
+    """
+    doc = {"enabledPlugins": {"p@d": True}, "extraKnownMarketplaces": {"d": DIR_SOURCE}}
+    out = compare(tmp_path, local={}, repo=doc)
+    markets = out["sections"]["extraKnownMarketplaces"]
+    # 비지 않았다 — 실을 값이 있었는데도 싣지 않은 것이다.
+    assert markets["absent_locally"] == ["d"]
+    assert "not_installed" not in markets
+    assert out["sections"]["enabledPlugins"]["not_installed"] == ["p@d"]
+
+
+def test_compare_does_not_claim_everything_is_uninstalled_when_a_section_is_skipped(
+        tmp_path):
+    """설치 집합을 못 읽었는데 "전부 미설치"로 접히면 restore가 전부 재설치를 시도한다.
+
+    같은 fixture를 정상 installed 파일로 한 번 더 돌려 not_installed가 **비지 않게**
+    나오는 것을 함께 잰다 — 없으면 "필드가 없다"가 설치 판정과 무관하게 참이 된다.
+    """
+    repo = {"enabledPlugins": {"ghost@m": ["1.0.0"]}}
+    ok = compare(tmp_path, local={}, repo=repo)
+    assert ok["sections"]["enabledPlugins"]["not_installed"] == ["ghost@m"]
+    out = compare(tmp_path, local={}, repo=repo,
+                  installed=str(tmp_path / "missing.json"))
+    section = out["sections"]["enabledPlugins"]
+    assert section == pc.skipped_section(section["reason"])
+    assert "not_installed" not in section
+
+
+def test_plan_splits_bare_install_from_the_config_step_by_the_installed_set(tmp_path):
+    """9.3.1 — 2단계(`plugin install <id>`)와 4단계(`install --config k=v`)는 다른 단계다.
+
+    Task 9 quality review가 실측한 재현이 이것이다: 이미 설치된 플러그인에 bare install이
+    나가면 CLI가 exit 1로 죽어 **거짓 실패**가 된다. old@m은 이 기기에 **설치돼 있고**
+    레포에만 pluginConfigs가 있으므로 2단계가 아니라 4단계다.
+
+    두 목록이 **서로 다른 비지 않은 값**을 갖는다 — 한쪽이 비면 분리 자체가 측정되지 않고
+    "합쳐도 같은 결과"와 구별할 수 없다.
+    """
+    out = build_plan(
+        tmp_path, local={},
+        repo={"enabledPlugins": {"new@m": True},
+              "extraKnownMarketplaces": {"m": GH},
+              "pluginConfigs": {"old@m": {"options": {"apiKey": pc.SENTINEL}}}},
+        installed=write_installed(tmp_path, {"old@m": [{"scope": "user"}]}))
+    # 두 섹션이 각각 후보를 하나씩 냈다 — 한 섹션만 기여하면 분리가 절반만 측정된다.
+    assert out["sections"]["enabledPlugins"]["add"] == ["new@m"]
+    assert out["sections"]["pluginConfigs"]["needs_secret"] == ["old@m"]
+    assert out["install"] == ["new@m"]
+    assert out["skipped_already_installed"] == ["old@m"]
+    assert out["config_keys"] == {"old@m": ["apiKey"]}
+
+
+def test_plan_does_not_reinstall_what_only_the_manifest_default_enables(tmp_path):
+    """**enabledPlugins의 키 부재는 미설치가 아니다** — 매니페스트 기본값(defaultEnabled)에
+    위임하는 상태다. 이 task의 존재 이유가 그 구별이다.
+
+    default@m은 settings.json의 enabledPlugins에 **없지만** 설치돼 있다. 2단계/4단계
+    판정을 설치 집합 대신 **로컬 섹션 문서**로 하면 이 키가 2단계로 가서 bare install이
+    나가고, 이미 설치된 플러그인이라 exit 1로 실패한다.
+
+    miss@m은 어디에도 없다 — 2단계가 비지 않아야 위 단정이 "install이 늘 빈다"로 저절로
+    참이 되지 않는다.
+    """
+    out = build_plan(
+        tmp_path, local={},
+        repo={"enabledPlugins": {"default@m": True, "miss@m": True},
+              "extraKnownMarketplaces": {"m": GH}},
+        installed=write_installed(tmp_path, {"default@m": [{"scope": "user"}]}))
+    # 둘 다 add 버킷이다 — 로컬 섹션 문서만 보면 구별할 수 없다는 사실을 못박는다.
+    assert out["sections"]["enabledPlugins"]["add"] == ["default@m", "miss@m"]
+    assert out["install"] == ["miss@m"]
+    assert out["skipped_already_installed"] == ["default@m"]
+
+
+def test_plan_keeps_the_value_and_dependency_steps_on_both_lists(tmp_path):
+    """3·4단계의 기준은 2단계 목록이 아니라 **두 목록의 합집합**이다.
+
+    disable_after_install — 이미 설치된 id도 값 맞추기(3단계) 대상이다. here@m은 설치돼
+      있고 로컬 enabledPlugins에 값이 없으며(매니페스트 기본값에 위임 = 켜짐으로 가정)
+      레포가 false다. 2단계 목록으로 좁히면 이 disable이 사라져 플러그인이 켜진 채 남는다.
+    depends_on — 9.3.2가 "같은 규칙이 3·4단계에도 적용된다"를 못 박는다. 두 단계 모두
+      `plugin install <id@marketplace>` 형태라 1단계 등록에 의존한다. 좁히면 등록에
+      실패한 마켓플레이스로 4단계 명령이 나가 거짓 실패를 양산한다.
+    config_keys — 코어의 needs_secret 버킷에서 나오고 설치 여부와 무관하다. 어느 한쪽으로
+      좁히면 다른 쪽 id의 설정이 어디에서도 채워지지 않는다.
+
+    세 필드가 **두 목록의 항목을 모두** 담는지가 요지이므로, 각 목록에 항목이 하나씩
+    들어가는 fixture를 쓴다.
+    """
+    out = build_plan(
+        tmp_path, local={},
+        repo={"enabledPlugins": {"here@m": False, "gone@m": False},
+              "extraKnownMarketplaces": {"m": GH},
+              "pluginConfigs": {"here@m": {"options": {"apiKey": pc.SENTINEL}},
+                                "gone@m": {"options": {"token": pc.SENTINEL}}}},
+        installed=write_installed(tmp_path, {"here@m": [{"scope": "user"}]}))
+    assert out["install"] == ["gone@m"]
+    assert out["skipped_already_installed"] == ["here@m"]
+    assert out["disable_after_install"] == ["gone@m", "here@m"]
+    assert out["depends_on"] == {"gone@m": "m", "here@m": "m"}
+    assert out["config_keys"] == {"gone@m": ["token"], "here@m": ["apiKey"]}
+    # 값 페이로드도 합집합을 따른다 — 좁히면 SKILL.md가 3·4단계 문구를 만들 값을 잃는다.
+    assert sorted(out["repo_values"]) == ["gone@m", "here@m"]
+```
 
 - [ ] **Step 2: test를 실행하여 실패를 확인**
 
@@ -4932,10 +5163,10 @@ def read_auto_ids(installed_path=None):
 
 - `read_installed`의 스코프 필터(`scope == "user"`)를 지워 전 스코프를 세기 → A-2가 잡아야 한다
 - `installed_ids`에 `auto is True` 조건을 **추가**해 auto 집합과 같게 만들기 → A-1이 잡아야 한다
-- `read_auto_ids`를 위임 대신 옛 본문 복사로 되돌리기 → **파싱 횟수 단정(A-4)이 유일한 검출자다.** 그것이 없으면 이 변조는 SURVIVED이고 파서가 조용히 두 벌이 된다
+- `read_auto_ids`를 위임 대신 옛 본문 복사로 되돌리기 → **파싱 횟수 단정만으로는 잡히지 않는다**(실측 SURVIVED). `read_hold_inputs`가 `read_installed`를 직접 부르므로 `read_auto_ids`에 사본을 남겨도 파일 열림 횟수는 1이다. 위임 자체를 재려면 `read_installed`를 스텁으로 갈아끼워 `read_auto_ids`가 그것을 통과하는지 보는 단정이 필요하다. 파싱이 실제로 두 번 나는 형태는 `read_hold_inputs`가 두 함수를 따로 부르는 쪽이고, 그것을 A-4가 잡는다
 - `read_hold_inputs`의 실패 갈래에서 `installed_ids`를 **접지 않고** 전파하기 → B-7이 잡아야 한다
 - 2단계/4단계 분리를 되돌려 `install` 하나로 합치기 → D-11·D-12가 잡아야 한다
-- 4단계 판정을 `local["enabledPlugins"]` 유무로 바꾸기(설치 집합 대신) → **D-13이 유일한 검출자다** — 이 task의 존재 이유가 그 구별이다
+- 4단계 판정을 `local["enabledPlugins"]` 유무로 바꾸기(설치 집합 대신) → D-13이 잡아야 한다. **"유일한 검출자"는 아니다**(실측: 테스트 넷이 잡는다) — 이 task의 존재 이유가 그 구별이라 여러 단정이 겹친다
 - `compare_plugins`의 설치 구별을 `absent_locally` 전체로 되돌리기 → C-8·C-9가 잡아야 한다
 - 섹션 skip 시 설치 구별 필드를 "전부 미설치"로 채우기 → C-10이 잡아야 한다
 
