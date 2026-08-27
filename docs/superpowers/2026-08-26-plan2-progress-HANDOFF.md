@@ -195,6 +195,45 @@ install: []
 
 ---
 
+## Task 14 인계 — 어떤 CLI 명령도 받지 않는 id (2026-08-27, Task 10.5)
+
+`skipped_already_installed`에 들면서 `config_keys`·`disable_after_install` 어디에도 없는
+id는 이번 restore에서 **아무 명령도 받지 않는다.** 손실은 아니다 — bare install은 이미
+설치된 id에 exit 1이라 애초에 대안이 아니다. 다만 **SKILL.md가 무엇이라고 말할지**가
+열려 있고, 모집단이 **둘**이다. 하나만 알고 문구를 만들면 나머지에 거짓이 나간다.
+
+| 갈래 | 조건 | 판별 | 올바른 문구 |
+|---|---|---|---|
+| (b) | `enabledPlugins` 기여 + **H3 확장 포맷 값** + 이미 설치됨 | `repo_values[k]`가 **비불리언** | spec 8.4의 **"레포 값을 보존합니다"** |
+| (c) | `pluginConfigs` 기여인데 되물을 option 키가 없음 | `repo_values`에 **키 부재** | 되물을 값이 없어 넘어간다 |
+
+**(b)에 "이미 같은 상태입니다"라고 말하면 거짓이다.** `value_command`는 레포 값이
+불리언이 아니면 **무조건 `None`**을 돌려주므로(`plugin_config.py`), 확장 포맷 키는 상태가
+같은 것이 아니라 **아예 알려진 바가 없다.** 실행으로 재현했다 — repo
+`{"enabledPlugins": {"ext@m": ["1.0.0"]}}` + installed `{"ext@m": [{"scope":"user"}]}` →
+`install=[]`, `skipped_already_installed=["ext@m"]`, `disable_after_install=[]`,
+`config_keys={}`.
+
+**판별에 코드 변경은 필요 없다** — `repo_values`가 이미 계획에 실려 있다.
+
+**`disable_after_install`이라는 이름도 재검토 대상이다.** 이제 절반만 맞다 — 이번 실행에서
+설치하지 않는 id(이미 설치된 것)도 그 목록에 든다.
+
+---
+
+## plan ③으로 넘길 것 (2026-08-27 추가)
+
+**`defaultEnabled: false`인 플러그인의 복원이 조용히 실패한다.** `disable_after_install`의
+현재 상태 추정은 `local_masked.get(k, True)`이고, 그 기본값 `True`는 **매니페스트
+`defaultEnabled`가 true라는 가정**이다(spec의 "기본 `true`"). 설치돼 있고 로컬 키가 없으며
+매니페스트가 `defaultEnabled: false`인 플러그인은 **실제로 꺼져 있는데** 레포가 `true`면
+`value_command(True, True) = None`이 되어 **아무 명령도 나가지 않는다.**
+
+**로컬 문서만으로는 닫을 수 없다** — 매니페스트를 읽어야 알 수 있고, spec 9.3.1이 그
+갈래를 규정하지 않는다. 구현으로 막을 수 없으므로 spec부터 정해야 한다.
+
+---
+
 ## 배포 전 확인 (변하지 않았다)
 
 - **이 개발 기기의 캐시는 아직 `claude-sync/2.0.0`이다. `/sync-backup`을 실행하지 마라 —
