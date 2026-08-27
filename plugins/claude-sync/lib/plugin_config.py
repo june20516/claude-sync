@@ -168,7 +168,10 @@ def read_installed(installed_path=None):
 
     **스코프를 user로 좁히는 것이 auto 판정과 같은 근거다.** 이 동기화 전체가
     --scope user로 동작한다(9.3.1). 두 판정이 아래에서 **같은 user_entries**를 보는 것이
-    그 근거를 구조로 바꾼 것이다 — 한쪽만 넓히는 변조가 다른 쪽에서도 드러난다.
+    그 근거를 구조로 바꾼 것이다 — 이 **필터 식**을 넓히면 두 판정이 함께 바뀐다.
+    (구조가 막는 것은 두 판정이 서로 다른 필터를 보게 되는 쪽이다. 한쪽 **사용처**만
+    넓히는 변조는 여전히 그쪽에서만 드러난다 — 아래 설치 판정 한 줄만 entries로 바꾸면
+    auto_ids는 그대로이고 설치 집합만 넓어진다, 실측.)
     project 스코프에만 있는 플러그인은 restore가 만들 수 있는 상태가 아니므로
     "설치됨"으로 세면 2단계를 건너뛰어 영영 설치되지 않는다.
 
@@ -253,12 +256,18 @@ def read_installed(installed_path=None):
 def read_auto_ids(installed_path=None):
     """의존성으로 자동 설치된 플러그인 id 집합 (3.4). read_installed에 위임한다.
 
-    서명을 유지하는 것은 이 함수에 테스트 열다섯이 걸려 있고, 그 열다섯이 실패 갈래
-    열 가지의 전수 목록을 지키기 때문이다. 위임으로 바꿔도 그 보증이 그대로 남는다.
+    **오늘 프로덕션 호출부는 없다** — read_hold_inputs도 read_installed를 직접 부른다.
+    그래도 이름을 남기는 근거는 spec 3.4의 개념(auto 집합)을 라이브러리 표면에 그대로
+    노출하는 접근자라는 것이다. "이 함수에 테스트가 걸려 있어서"는 근거가 아니다 —
+    순환이고, 그 테스트들이 지키는 실패 갈래 열 가지는 read_installed의 계약이라
+    test_read_installed_shares_the_single_failure_branch가 그중 넷을 그쪽에서도 잰다.
 
     **위임 자체는 값으로 잴 수 없다** — 본문을 복사해 되돌려도 결과가 같기 때문이다.
-    그래서 테스트 둘이 따로 지킨다: read_installed를 갈아끼워 그 반환이 그대로 나오는지
-    보는 것과, read_hold_inputs가 installed_plugins.json을 여는 횟수를 세는 것.
+    그것을 잡는 것은 read_installed를 스텁으로 갈아끼우는 테스트 **하나뿐**이다
+    (test_read_auto_ids_delegates_instead_of_keeping_a_second_parser).
+    read_hold_inputs가 installed_plugins.json을 여는 횟수를 세는 단정은 위임이 아니라
+    **read_hold_inputs가 두 함수를 따로 부르지 않는 형태**를 지킨다 — 여기 옛 본문
+    사본을 남겨도 그 횟수는 그대로 1이다(실측).
     """
     return read_installed(installed_path)[0]
 

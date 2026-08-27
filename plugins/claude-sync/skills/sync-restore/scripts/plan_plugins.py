@@ -66,8 +66,9 @@ def _install_dependencies(candidates):
     **2단계와 4단계를 모두 받는다.** 근거는 명령의 **형태**다 — 두 단계가 내는 것이
     둘 다 `plugin install <id@marketplace>` 형태라 1단계 등록에 똑같이 의존한다.
     (9.3.2가 규정하는 것은 "2단계가 실패한 id는 3·4단계를 건너뛴다"이고, 그것은 2단계
-    자체가 없는 skipped_already_installed에는 도달하지 않는다 — 여기 근거가 아니다.) 2단계로 좁히면 등록에 실패한 마켓플레이스로 4단계
-    명령이 나가 거짓 실패를 양산한다 — 이 함수가 막으려는 바로 그 실패다.
+    자체가 없는 skipped_already_installed에는 도달하지 않는다 — 여기 근거가 아니다.)
+    2단계로 좁히면 등록에 실패한 마켓플레이스로 4단계 명령이 나가 거짓 실패를 양산한다 —
+    이 함수가 막으려는 바로 그 실패다.
 
     등록이 실패한 마켓플레이스의 플러그인은 설치를 시도하지 않는다 — 시도하면 CLI가
     모호한 문구로 실패해 거짓 실패를 양산한다. always-known 다섯은 등록 단계가 애초에
@@ -177,11 +178,25 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 1단계의 skipped_always_known과 같은 결의 **제외 목록**이다 — 어느 단계에서 왜
     # 빠졌는지를 보고에 남겨야 SKILL.md가 "아무 일도 일어나지 않았다"와 구별할 수 있다.
     # 이 id들에 남은 것은 3단계(disable_after_install)와 4단계(config_keys)뿐이다.
-    # **둘 다에 없으면 낼 명령이 없다.** enabledPlugins 기여로 들어온 id는 레포 값이
-    # 현재 상태와 같다는 뜻이고(value_command가 None을 냈다), pluginConfigs 기여로 들어온
-    # id는 되물을 option 키가 없다는 뜻이다(_config_secret_keys는 options만 본다).
-    # 후자가 레포와 완전히 같아졌다는 보장은 여기 없다 — 다만 **이미 설치된 플러그인에
-    # bare install을 내는 것은 exit 1로 죽으므로 대안이 아니다.**
+    # **둘 다에 없으면 낼 명령이 없다. 그런데 그 이유가 세 갈래고, 사용자 문구가 서로
+    # 다르다** — "이미 같은 상태"로 뭉뚱그리면 (b)에서 실측으로 거짓이 된다:
+    #   (a) enabledPlugins 기여이고 레포 값이 **불리언**인데 현재 상태와 같다
+    #       (value_command가 None을 냈다). 여기서 "현재 상태"는 로컬 키가 없을 때
+    #       아래 local_masked.get(k, True)로 **가정한** 값이다 — 매니페스트
+    #       defaultEnabled가 true라는 가정이고, false인 플러그인에서는 참이 아니다.
+    #   (b) enabledPlugins 기여인데 레포 값이 **확장 포맷**이라 밀 CLI가 없다(H3).
+    #       value_command는 레포 값이 불리언이 아니면 무조건 None이므로 여기도 명령이
+    #       없지만, **상태가 같다는 뜻이 아니다** — 현재 상태는 알려진 바가 없다.
+    #       H3 보류 키는 add 버킷으로 들어오므로(위 INSTALL_BUCKETS) 도달 가능하다.
+    #       문구는 8.4의 "레포 값을 보존합니다"다.
+    #   (c) pluginConfigs 기여인데 되물을 option 키가 없다(_config_secret_keys는 options만
+    #       본다). 이쪽도 레포와 완전히 같아졌다는 보장은 없다.
+    # **갈래는 repo_values로 판별한다** — 값이 불리언이면 (a), 비불리언이면 (b), 키가
+    # 아예 없으면 (c)다(repo_values는 레포 enabledPlugins에 있는 키만 싣는다). 한 id가
+    # 두 섹션에 함께 기여하면 갈래도 겹친다. 여기서 미리 갈라 싣지 않는 것은 같은
+    # 분할을 두 곳에서 만들지 않기 위해서다.
+    # 세 갈래 모두 **이미 설치된 플러그인에 bare install을 내는 것은 exit 1로 죽으므로
+    # 대안이 아니다.**
     skipped_already_installed = [k for k in candidates if k in installed_ids]
     # **3단계의 기준은 두 목록 전부(candidates)다.** 이미 설치된 id도 값 맞추기 대상이다 —
     # 로컬 enabledPlugins에 값이 없고(매니페스트 기본값에 위임) 레포가 false이면 그
