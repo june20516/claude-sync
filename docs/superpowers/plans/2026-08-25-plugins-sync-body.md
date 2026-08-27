@@ -5844,6 +5844,7 @@ def test_marketplace_remove_cascades_to_member_plugins(tmp_path):
     assert cli.marketplace_remove("m") == 0
     assert cli.settings()["enabledPlugins"] == {"q@other": True}
     assert cli.settings()["pluginConfigs"] == {}
+    assert cli.marketplace_remove("m") == 1      # 1-b #8 — 재실행은 exit 1
 
 
 def test_dependency_install_marks_auto_and_explicit_install_clears_it(tmp_path):
@@ -5882,6 +5883,23 @@ def test_backup_without_push_does_not_advance_base(tmp_path):
     dev = make_device(tmp_path)
     dev.cli.install("p@m")
     dev.backup(push=False)
+    assert dev.base() is None
+
+
+def test_a_skipped_backup_does_not_promote_stale_staging(tmp_path):
+    """`Device.backup`의 rmtree를 지키는 단정 — 없으면 옛 staged 내용이 base로 올라간다.
+
+    두 조건이 갈리려면 **base가 빈 채로 staged만 남은 시점**이 필요하다. 첫 백업을
+    `push=False`로 돌려 그 시점을 만든 뒤 settings.json을 지우고 백업하면, rmtree가
+    있으면 게이트가 끝내 닫혀 base가 생기지 않고 없으면 옛 파일이 base로 올라간다.
+    """
+    dev = make_device(tmp_path)
+    dev.cli.install("p@m")
+    dev.backup(push=False)
+    assert os.path.exists(os.path.join(dev.staging, pc.BACKUP_RELPATH))
+    os.remove(dev.cli.settings_path)
+    report = dev.backup()
+    assert report["status"] == "skipped"
     assert dev.base() is None
 
 
@@ -6116,7 +6134,8 @@ class PluginCLI:
 - `install`의 `_mark_installed(plugin_id, auto=False)`를 지우기 → auto 해제 테스트가 잡아야 한다
 - `install --config`의 `options.update`를 `entry["options"] = config`로 바꾸기 → 부분 병합 테스트가 잡아야 한다
 - `Device.backup`의 게이트 `os.path.exists(staged)`를 `report["status"] == "ok"`로 바꾸기 → **등가 변이다(실측). 잡히지 않는 것이 정상이다.** 두 조건이 갈리는 상태는 둘뿐이고 둘 다 관측 불가다 — (i) `status "ok"` + staged 부재는 `update_base.py`가 경고만 내고 exit 0, base SHA 불변이며, (ii) `status "skipped"` + staged 잔존은 **존재 게이트 쪽이 오히려 위험한데**(옛 staged 내용이 base를 덮는다) `backup()`의 `rmtree`가 그 상태를 막는다. 존재 게이트를 쓰는 이유는 더 강해서가 아니라 **SKILL.md 배선이라서**이고, 같은 계약을 `update_base`가 한 번 더 진다. 그 근거를 `Device.backup` 주석에 남길 것
-- `collect`의 rename을 레포 쓰기보다 **앞으로** 옮기기 → rename 계약을 실제로 관측하는 단정이 잡아야 한다. **규정의 `test_base_does_not_advance_when_the_repo_file_cannot_be_written`의 base 단정만으로는 부족하다** — 그 테스트는 `update_base`를 아예 부르지 않아 base가 무조건 그대로이고, 그 단정은 공허하다(실측). 스테이징 최종 파일이 직전 백업 내용 그대로인지를 재는 단정이 함께 있어야 한다
+- `collect`의 rename을 레포 쓰기보다 **앞으로** 옮기기 → 잡혀야 한다. 다만 **이것은 무방비 지점이 아니다** — 이 task 이전부터 있던 `tests/test_plugin_scripts.py`의 `test_collect_does_not_stage_when_repo_write_fails`가 이미 스크립트 층에서 잡는다(실측). 여기서 고쳐야 하는 것은 무방비가 아니라 **하네스 층 단정의 공허함**이다: 규정의 `test_base_does_not_advance_when_the_repo_file_cannot_be_written`의 base 단정은 그 테스트가 `update_base`를 아예 부르지 않는 데다 `collect_plugins.py`가 base를 쓰지도 않아 **어떤 구현에서도 참이다**(실측). 스테이징 최종 파일이 직전 백업 내용 그대로인지를 재는 **대체 단정**이 함께 있어야 한다
+- `Device.backup`의 `shutil.rmtree(self.staging, ignore_errors=True)`를 지우기 → **잡혀야 한다.** 바로 위 일곱째를 등가로 판정하는 근거 전체가 이 한 줄에 걸려 있다 — rmtree가 없으면 (ii)가 실재하는 상태가 되고, `status "skipped"`인데도 옛 staged 내용이 base를 덮는다. 관측하려면 **base가 빈 채로 staged만 남은 시점**을 만들어야 한다: `backup(push=False)` → `settings.json` 제거 → `backup()` → `base() is None`. 두 번째 백업이 skipped라 새 staged가 생기지 않으므로, rmtree가 있으면 게이트가 끝내 닫히고 없으면 `update_base`가 옛 파일을 올린다. (규정 초판은 이 변조를 지시하지 않았고, 그 결과 rmtree를 지워도 **757 passed**였다 — 실측)
 
 - [ ] **Step 5: Commit**
 
