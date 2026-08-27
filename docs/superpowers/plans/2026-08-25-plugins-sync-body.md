@@ -5026,16 +5026,18 @@ def test_compare_splits_plugin_configs_by_installation_too(tmp_path):
                                           "gone@d": {"options": {}},
                                           "also@d": {"options": {}},
                                           "mid@d": {"options": {}},
-                                          "zap@d": {"options": {}}}},
+                                          "zap@d": {"options": {}},
+                                          "brio@d": {"options": {}},
+                                          "quix@d": {"options": {}}}},
                   installed=write_installed(tmp_path, {"here@d": [{"scope": "user"}]}))
     section = out["sections"]["pluginConfigs"]
+    expected = ["also@d", "brio@d", "gone@d", "here@d", "mid@d", "quix@d", "zap@d"]
     assert section["status"] == "ok"
     assert section["held"] == {"auto": [], "declined": [],
-                               "local_marketplace": ["also@d", "gone@d", "here@d",
-                                                     "mid@d", "zap@d"]}
-    assert section["absent_locally"] == ["also@d", "gone@d", "here@d", "mid@d", "zap@d"]
+                               "local_marketplace": expected}
+    assert section["absent_locally"] == expected
     # here@d만 빠진다 — 설치돼 있기 때문이다(auto는 아니다).
-    assert section["not_installed"] == ["also@d", "gone@d", "mid@d", "zap@d"]
+    assert section["not_installed"] == [k for k in expected if k != "here@d"]
 
 
 def test_compare_does_not_call_a_marketplace_uninstalled(tmp_path):
@@ -5097,23 +5099,28 @@ def test_a_broken_held_file_does_not_empty_the_installed_set(tmp_path):
     # 값이 확장 포맷이라 다섯 다 H3 보류다 — 보류여야 absent_locally에 들어온다.
     repo = {"enabledPlugins": {"one@m": ["1.0.0"], "two@m": ["2.0.0"],
                                "three@m": ["3.0.0"], "four@m": ["4.0.0"],
+                               "five@m": ["5.0.0"], "six@m": ["6.0.0"],
                                "ghost@m": ["9.0.0"]},
             "extraKnownMarketplaces": {"m": GH}}
     installed = write_installed(tmp_path, {"one@m": [{"scope": "user"}],
                                            "two@m": [{"scope": "user"}],
                                            "three@m": [{"scope": "user"}],
-                                           "four@m": [{"scope": "user"}]})
+                                           "four@m": [{"scope": "user"}],
+                                           "five@m": [{"scope": "user"}],
+                                           "six@m": [{"scope": "user"}]})
     out = compare(tmp_path, local={}, repo=repo, installed=installed, held=str(held))
     assert out["sections"]["pluginConfigs"]["status"] == "skipped"
     section = out["sections"]["enabledPlugins"]
     assert section["status"] == "ok"
-    assert section["absent_locally"] == ["four@m", "ghost@m", "one@m", "three@m", "two@m"]
+    assert section["absent_locally"] == ["five@m", "four@m", "ghost@m", "one@m",
+                                        "six@m", "three@m", "two@m"]
     assert section["not_installed"] == ["ghost@m"]
 
     plan = build_plan(tmp_path, local={}, repo=repo, installed=installed, held=str(held))
     assert plan["sections"]["pluginConfigs"]["status"] == "skipped"
     assert plan["install"] == ["ghost@m"]
-    assert plan["skipped_already_installed"] == ["four@m", "one@m", "three@m", "two@m"]
+    assert plan["skipped_already_installed"] == ["five@m", "four@m", "one@m",
+                                                "six@m", "three@m", "two@m"]
 
 
 def test_plan_splits_bare_install_from_the_config_step_by_the_installed_set(tmp_path):
@@ -5260,12 +5267,12 @@ def read_auto_ids(installed_path=None):
 - `compare_plugins`의 설치 구별을 `absent_locally` 전체로 되돌리기 → C-8·C-9가 잡아야 한다
 - 섹션 skip 시 설치 구별 필드를 "전부 미설치"로 채우기 → C-10이 잡아야 한다
 
-**SURVIVE가 나오면 인계 전에 닫는다.** 등가 변이라면 왜 관측 불가능한지 근거를 적는다.
-
 - `INSTALL_KEYED_SECTIONS`를 `("enabledPlugins",)`로 좁히기 → `pluginConfigs` 쪽 설치 구별 테스트가 잡아야 한다. **이 변조가 없으면 두 섹션 중 하나가 통째로 미측정으로 남는다**(실측 SURVIVED였다)
 - `compare`의 설치 판정을 `installed_ids` 대신 `auto_ids`로 바꾸기 → **auto가 아닌 설치 항목을 가진 fixture만이 잡는다.** 이 task의 존재 이유가 그 구별인데, 배선 쪽에서 처음엔 무보증이었다
 - `read_hold_inputs`의 `HeldStateUnavailable` 갈래에도 `installed_ids`를 접기 → 부분 실패 테스트가 잡아야 한다. 보류 파일만 깨진 실행에서 `enabledPlugins`는 살아 있는데 설치 집합이 비면, 설치된 플러그인 전부가 "미설치"로 보고되고 restore가 전부 bare install을 시도한다 — **docstring이 스스로 경고한 fail-open이다**
 - `not_installed`·`skipped_already_installed`의 집합 차 순서를 뒤집기 → 해당 테스트가 잡는다. **다만 이 catch는 확률적이다**(집합 순회 순서에 의존). 원소 수를 넷으로 두면 시드당 통과율이 5% 아래이고, 결정적으로 만들려면 프로덕션 코드를 건드려야 한다 — 그 성질을 테스트 docstring에 적을 것
+
+**SURVIVE가 나오면 인계 전에 닫는다.** 등가 변이라면 왜 관측 불가능한지 근거를 적는다.
 
 - [ ] **Step 5: Commit**
 

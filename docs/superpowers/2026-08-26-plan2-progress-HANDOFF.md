@@ -200,10 +200,11 @@ install: []
 `skipped_already_installed`에 들면서 `config_keys`·`disable_after_install` 어디에도 없는
 id는 이번 restore에서 **아무 명령도 받지 않는다.** 손실은 아니다 — bare install은 이미
 설치된 id에 exit 1이라 애초에 대안이 아니다. 다만 **SKILL.md가 무엇이라고 말할지**가
-열려 있고, 모집단이 **둘**이다. 하나만 알고 문구를 만들면 나머지에 거짓이 나간다.
+열려 있고, 모집단이 **셋**이다. 일부만 알고 문구를 만들면 나머지에 거짓이 나간다.
 
 | 갈래 | 조건 | 판별 | 올바른 문구 |
 |---|---|---|---|
+| (a) | 레포 값이 불리언이고 현재 상태와 같아 낼 명령이 없음 | `repo_values[k]`가 **불리언** | "이미 같은 상태입니다" — 단 `defaultEnabled=true` **가정** 위에서다 |
 | (b) | `enabledPlugins` 기여 + **H3 확장 포맷 값** + 이미 설치됨 | `repo_values[k]`가 **비불리언** | spec 8.4의 **"레포 값을 보존합니다"** |
 | (c) | `pluginConfigs` 기여인데 되물을 option 키가 없음 | `repo_values`에 **키 부재** | 되물을 값이 없어 넘어간다 |
 
@@ -214,7 +215,10 @@ id는 이번 restore에서 **아무 명령도 받지 않는다.** 손실은 아�
 `install=[]`, `skipped_already_installed=["ext@m"]`, `disable_after_install=[]`,
 `config_keys={}`.
 
-**판별에 코드 변경은 필요 없다** — `repo_values`가 이미 계획에 실려 있다.
+**판별에 코드 변경은 필요 없다** — `repo_values`가 이미 계획에 실려 있다. 다만 **"키 부재"는
+(c)의 충분조건일 뿐 필요조건이 아니다** — `enabledPlugins`가 in_sync인 채 `pluginConfigs`만
+기여하는 id는 불리언으로 실려 (a)로 보인다. 그 경우 `add` 버킷의 `pluginConfigs` 항목은
+정의상 options가 비어 실질이 없으므로 **문구는 갈리지 않는다.**
 
 **`disable_after_install`이라는 이름도 재검토 대상이다.** 이제 절반만 맞다 — 이번 실행에서
 설치하지 않는 id(이미 설치된 것)도 그 목록에 든다.

@@ -195,6 +195,10 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 아예 없으면 (c)다(repo_values는 레포 enabledPlugins에 있는 키만 싣는다). 한 id가
     # 두 섹션에 함께 기여하면 갈래도 겹친다. 여기서 미리 갈라 싣지 않는 것은 같은
     # 분할을 두 곳에서 만들지 않기 위해서다.
+    # **"키 부재"는 (c)의 충분조건일 뿐 필요조건이 아니다** — enabledPlugins가 in_sync라
+    # 기여하지 않고 pluginConfigs만 기여하는 id는 불리언으로 실려 (a)로 보인다. 그래도
+    # 문구는 갈리지 않는다: _config_secret_keys가 option 키 전부를 되물을 목록으로
+    # 돌려주므로, add 버킷에 남는 pluginConfigs 항목은 정의상 options가 비어 실질이 없다.
     # 세 갈래 모두 **이미 설치된 플러그인에 bare install을 내는 것은 exit 1로 죽으므로
     # 대안이 아니다.**
     skipped_already_installed = [k for k in candidates if k in installed_ids]

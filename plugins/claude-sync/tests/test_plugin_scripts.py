@@ -816,16 +816,18 @@ def test_compare_splits_plugin_configs_by_installation_too(tmp_path):
                                           "gone@d": {"options": {}},
                                           "also@d": {"options": {}},
                                           "mid@d": {"options": {}},
-                                          "zap@d": {"options": {}}}},
+                                          "zap@d": {"options": {}},
+                                          "brio@d": {"options": {}},
+                                          "quix@d": {"options": {}}}},
                   installed=write_installed(tmp_path, {"here@d": [{"scope": "user"}]}))
     section = out["sections"]["pluginConfigs"]
+    expected = ["also@d", "brio@d", "gone@d", "here@d", "mid@d", "quix@d", "zap@d"]
     assert section["status"] == "ok"
     assert section["held"] == {"auto": [], "declined": [],
-                               "local_marketplace": ["also@d", "gone@d", "here@d",
-                                                     "mid@d", "zap@d"]}
-    assert section["absent_locally"] == ["also@d", "gone@d", "here@d", "mid@d", "zap@d"]
+                               "local_marketplace": expected}
+    assert section["absent_locally"] == expected
     # here@d만 빠진다 — 설치돼 있기 때문이다(auto는 아니다).
-    assert section["not_installed"] == ["also@d", "gone@d", "mid@d", "zap@d"]
+    assert section["not_installed"] == [k for k in expected if k != "here@d"]
 
 
 def test_compare_does_not_call_a_marketplace_uninstalled(tmp_path):
@@ -1395,23 +1397,28 @@ def test_a_broken_held_file_does_not_empty_the_installed_set(tmp_path):
     # 값이 확장 포맷이라 다섯 다 H3 보류다 — 보류여야 absent_locally에 들어온다.
     repo = {"enabledPlugins": {"one@m": ["1.0.0"], "two@m": ["2.0.0"],
                                "three@m": ["3.0.0"], "four@m": ["4.0.0"],
+                               "five@m": ["5.0.0"], "six@m": ["6.0.0"],
                                "ghost@m": ["9.0.0"]},
             "extraKnownMarketplaces": {"m": GH}}
     installed = write_installed(tmp_path, {"one@m": [{"scope": "user"}],
                                            "two@m": [{"scope": "user"}],
                                            "three@m": [{"scope": "user"}],
-                                           "four@m": [{"scope": "user"}]})
+                                           "four@m": [{"scope": "user"}],
+                                           "five@m": [{"scope": "user"}],
+                                           "six@m": [{"scope": "user"}]})
     out = compare(tmp_path, local={}, repo=repo, installed=installed, held=str(held))
     assert out["sections"]["pluginConfigs"]["status"] == "skipped"
     section = out["sections"]["enabledPlugins"]
     assert section["status"] == "ok"
-    assert section["absent_locally"] == ["four@m", "ghost@m", "one@m", "three@m", "two@m"]
+    assert section["absent_locally"] == ["five@m", "four@m", "ghost@m", "one@m",
+                                        "six@m", "three@m", "two@m"]
     assert section["not_installed"] == ["ghost@m"]
 
     plan = build_plan(tmp_path, local={}, repo=repo, installed=installed, held=str(held))
     assert plan["sections"]["pluginConfigs"]["status"] == "skipped"
     assert plan["install"] == ["ghost@m"]
-    assert plan["skipped_already_installed"] == ["four@m", "one@m", "three@m", "two@m"]
+    assert plan["skipped_already_installed"] == ["five@m", "four@m", "one@m",
+                                                "six@m", "three@m", "two@m"]
 
 
 def test_plan_keeps_the_value_and_dependency_steps_on_both_lists(tmp_path):
