@@ -5298,6 +5298,8 @@ git commit -m "feat(plugins): 설치 집합을 읽어 2단계와 4단계를 가�
 
 **`ADAPTERS`에 한 줄만 더하면 된다는 것은 사실이 아니다.** plan ① Task 9 리뷰가 실측으로 반증했다 — `pluginConfigs`·`extraKnownMarketplaces`는 그대로 돌지만(20 passed), `enabledPlugins`는 **불리언이든 배열이든 돌지 않는다**(각각 3 failed / 5 failed). 불리언은 값이 둘뿐이라 케이스 9를 표현할 수 없고, 배열이면 H3로 전부 보류된다.
 
+**`Adapter`가 픽스처 값을 한 번 정규화해 싣는다.** `pluginConfigs` 값을 원본 그대로 실으면 판정표 서른 중 **여덟이 FAIL**한다(실측) — `merge`·`next_base`는 마스킹된 값을 돌려주는데 기존 단정은 원본을 기대하기 때문이다. 픽스처 값은 그대로 두고 `Adapter`에서 통과시키는 것이 `normalize`의 멱등 계약(5.2) 위에서 성립한다. (plan ①의 "`pluginConfigs`는 그대로 돈다"는 이 픽스처에 대해 사실이 아니다.)
+
 **보류 훅은 테스트 더블이 아니라 실제 어댑터의 것을 쓴다.** 가짜 훅을 쓰면 `_make_hold`의 회귀를 이 파일이 하나도 잡지 못한다.
 
 **Files:**
@@ -5308,55 +5310,6 @@ git commit -m "feat(plugins): 설치 집합을 읽어 2단계와 4단계를 가�
 파일 상단의 docstring과 `Adapter`·`ADAPTERS`·`repeat_backup`을 교체하고 보류 시나리오를 더한다.
 
 ```python
-"""backup을 반복 적용했을 때 고정점에 도달하는지 검증한다.
-
-단발 호출 테스트는 상태 기계 결함을 잡지 못한다. 이전 설계의 Critical 결함
-("base ← 레포 파일 전체")은 판정표를 100% 덮은 테스트를 전부 통과했지만,
-2회차 백업에서 타 기기의 서버를 전멸시켰다.
-
-**어댑터와 값 픽스처를 주입받는다.** 열 개의 판정표 시나리오는 세 어댑터가 공유한다 —
-MCP, 그리고 플러그인의 두 섹션이다.
-
-**enabledPlugins는 이 시나리오 집합을 쓸 수 없다.** 케이스 9가 서로 다른 값 셋을
-요구하는데 불리언은 값이 둘뿐이고, 값을 확장 포맷으로 늘리면 H3가 전부 보류해 판정표를
-타지 않는다. 그 섹션은 아래 **보류 시나리오**가 맡는다 — 보류의 진입·유지·이탈은
-회차 사이에 상태가 변해야 표현되므로 애초에 다른 하네스가 필요하다.
-
-(파일 이름이 여전히 test_mcp_state_machine.py인 것은 앵커를 늘리지 않기 위해서다.
-내용은 더 이상 MCP 전용이 아니다.)
-"""
-import pytest
-
-import keyed_sync as ks
-import mcp_config as mc
-import plugin_config as pc
-
-
-class Adapter:
-    """상태 기계 테스트가 어댑터에 요구하는 최소 표면.
-
-    merge(local, repo, base)와 next_base(local, base, merged)를 **위치 인자 셋**으로
-    부른다 — normalize·hold는 어댑터가 클로저로 닫아 넣는다(spec 5.5의 위치 인자 순서).
-    merge는 병합 결과를 merged_key에, 다음 base를 "next_base"에 담아 돌려줘야 한다.
-
-    values는 (A, B, ORIG)이고 **정규화 후에도 셋이 서로 달라야 한다.** 케이스 9가
-    local·repo·base 세 값이 모두 다를 것을 요구하기 때문이다. 마스킹이 값을 뭉개는
-    섹션(pluginConfigs)에서는 **키 이름으로** 값을 갈라야 한다 — 값만 다르게 두면
-    정규화 후 셋이 같아져 케이스 9가 조용히 케이스 6이 된다.
-    """
-
-    def __init__(self, name, merge, next_base, values, merged_key="servers", normalize=None):
-        self.name, self.merge, self.next_base = name, merge, next_base
-        self.merged_key = merged_key
-        self.A, self.B, self.ORIG = values
-        self.normalize = normalize or (lambda mapping: mapping)
-        one = lambda value: self.normalize({"k": value})["k"]  # noqa: E731
-        pairs = ((self.A, self.B), (self.B, self.ORIG), (self.A, self.ORIG))
-        assert not any(ks.same(one(x), one(y)) for x, y in pairs), (
-            "%s: A·B·ORIG가 정규화 후에도 서로 달라야 한다 — 케이스 9를 표현할 수 없다"
-            % name)
-
-
 def plugin_adapter(section, values, hold=None):
     """플러그인 한 섹션을 상태 기계 하네스에 맞춘다.
 
@@ -5403,11 +5356,11 @@ def test_adapters_cover_every_section_that_can_run_the_decision_table():
     """
     assert {adapter.name for adapter in ADAPTERS} == {
         "mcp", "plugins:extraKnownMarketplaces", "plugins:pluginConfigs"}
-```
 
-`repeat_backup`에 회차별 오버라이드 훅을 더한다.
 
-```python
+@pytest.fixture(params=ADAPTERS, ids=lambda a: a.name)
+
+
 def repeat_backup(adapter, local, repo, base, rounds=3, before_round=None):
     """같은 로컬로 backup을 rounds회 반복하고 매 회차의 (보고, 레포, base)를 모은다.
 
@@ -5427,16 +5380,7 @@ def repeat_backup(adapter, local, repo, base, rounds=3, before_round=None):
         report = {k: v for k, v in result.items() if k not in exclude}
         snapshots.append((report, repo, base))
     return snapshots
-```
 
-파일 끝에 보류 시나리오를 더한다.
-
-```python
-# ---------------------------------------------------------------- 보류 시나리오
-#
-# 위 열 개는 보류가 **없는** 상태의 판정표다. 아래는 보류가 걸린 키가 회차를 넘어
-# 어떻게 움직이는지를 본다 — 진입해서 유지될 때, 이탈할 때, 그리고 보류 중에 레포에서
-# 사라졌을 때. 셋 다 다회차가 아니면 표현되지 않는다.
 
 def held_state(released=()):
     return {"pluginConfigs": {}, "release": {"enabledPlugins": sorted(released)}}
@@ -5447,6 +5391,10 @@ def live_hold(section, state):
 
     테스트 더블을 쓰면 _make_hold의 회귀를 이 파일이 하나도 잡지 못한다.
     state는 before_round가 바꾼다 — 그것이 보류의 진입·이탈이다.
+
+    섹션 하나짜리 문서를 넘기므로 held_context의 directory_names가 비고, 따라서 이
+    시나리오들에서 발화하는 것은 **H1과 H3뿐이다** — H2는 소스가 없어 항상 거짓이고
+    H4는 pluginConfigs 섹션에서만 본다.
     """
     def hold(local, repo):
         hooks = pc.build_hooks({section: local}, {section: repo},
@@ -5465,6 +5413,11 @@ def test_h3_hold_preserves_the_repo_value_across_rounds():
     """보류 유지 — 레포의 버전 제약이 회차를 거쳐도 true로 덮이지 않는다.
 
     코어의 "보류 키는 레포 값을 그대로 싣는다"를 지우면 여기서 걸린다.
+
+    두 빈 단정의 무게가 다르다(실측) — H3를 지우면 conflicts가 ["p@m"]으로 **채워진다**
+    (케이스 9). deleted는 채워질 수 없다: 그 갈래는 `not in_l`을 요구하는데 로컬이
+    p@m을 계속 쥐고 있다. 채워지는 배치는 아래
+    test_release_of_a_key_missing_from_the_local_lands_on_case2_not_case3이다.
     """
     state = {"auto_ids": frozenset(), "held": held_state()}
     adapter = enabled_adapter(state)
@@ -5491,6 +5444,12 @@ def test_h3_release_lands_on_case7_not_case9():
         if index == 2:                                  # restore의 "이 기기 값으로 통일"
             state["held"] = held_state(["p@m"])         # 해제 표식
             base = dict(base, **{"p@m": repo["p@m"]})   # 동시에 keep_local
+        if index == 3:
+            # next_held_state의 release 정리를 흉내낸다 — "레포 값이 불리언이 되었거나
+            # 키가 사라진 항목을 정리한다". 표식을 남겨두면 마지막 held 단정이 **표식
+            # 때문에도** 참이 되어, 그 아래 적은 "레포 값이 불리언 → 자연 해제"를
+            # 확인하지 못한다(H3의 두 조건이 함께 거짓이라 어느 쪽이 이겼는지 모른다).
+            state["held"] = held_state()
         return local, repo, base
 
     snapshots = repeat_backup(adapter, {"p@m": True}, {"p@m": ["1.0.0"]}, {},
@@ -5531,6 +5490,11 @@ def test_held_key_missing_from_the_repo_does_not_become_a_deletion():
     보류 중에는 판정표를 타지 않으므로 조용하고, 이탈하면 base에 그 키가 없으므로
     케이스 1(로컬 신규)로 착지해 **레포로 되돌아간다.** 이것이 base 제거 규칙(5.3)이
     보장하는 성질이고, 14.2 #4가 테스트로 강제하라고 지목한 것이다.
+
+    (H1의 value.add를 지우면 local_stale이 ["z@m"]으로 **채워진다**(케이스 4, 실측).
+    반면 deleted는 여기서 채워질 수 없다 — 로컬이 z@m을 계속 쥐고 있어 `not in_l`이
+    성립하지 않는다. **케이스 3이 실제로 날 수 있는 배치**는 아래
+    test_release_of_a_key_missing_from_the_local_lands_on_case2_not_case3이 맡는다.)
     """
     state = {"auto_ids": frozenset({"z@m"}), "held": held_state()}
     adapter = plugin_adapter("enabledPlugins", (True, False, ["1.0.0"]),
@@ -5564,6 +5528,60 @@ def test_auto_hold_keeps_the_entry_out_of_the_repo_across_rounds():
         assert repo["mine@m"] is True
         assert report["held"] == ["dep@m"]
     assert_fixed_point_from_second_round(snapshots)
+
+
+def test_restore_base_drops_the_held_key_instead_of_freezing_it():
+    """restore 경로의 계약 — apply-base가 value_held를 **스스로 계산해** 넘긴다.
+
+    plan_plugins.apply_base는 pc.value_held_for로 집합을 만들어 ks.next_base에 넘긴다.
+    plugin_adapter.next_base가 그 형태를 그대로 흉내내는데, 위 다섯 시나리오는 전부
+    merge 경로(backup_round)만 타므로 그 한 줄을 지나지 않는다 — 여기가 유일한 자리다.
+    빼면 예외도 경고도 없이 보류 키가 **이전 base 값으로** 얼어붙는다.
+    """
+    state = {"auto_ids": frozenset(), "held": held_state()}
+    adapter = enabled_adapter(state)
+    local = {"mine@m": True}
+    repo = {"mine@m": True, "p@m": ["1.0.0"]}
+    frozen = {"mine@m": True, "p@m": True}      # 보류가 걸리기 전에 합의했던 값
+    base = adapter.next_base(local, frozen, repo)
+    assert "p@m" not in base                    # 값 보류 키는 base에서 제거된다 (5.3)
+    assert base["mine@m"] is True               # 보류가 아닌 키는 그대로 전진한다
+
+
+def test_release_of_a_key_missing_from_the_local_lands_on_case2_not_case3():
+    """5.3이 지목한 손실 경로 — 보류 키가 base에 얼어붙으면 해제 순간 케이스 3이 난다.
+
+    이 기기는 p@m을 켜지 않았고(로컬에 없다), 타 기기가 레포에 버전 제약을 올려 H3가
+    보류한다. 보류 중 base에서 그 키가 빠지므로(5.3) 해제 시 in_s가 거짓이 되어
+    **케이스 2**로 착지하고 레포 값이 살아남는다. base에 남으면 in_s가 참이 되어
+    **케이스 3(deleted)** 이 나고 타 기기가 올린 값이 레포에서 지워진다 — 위 시나리오들의
+    deleted 단정이 구조적으로 채워질 수 없는 것과 달리, 여기서는 실제로 채워진다.
+    """
+    state = {"auto_ids": frozenset(), "held": held_state()}
+    adapter = enabled_adapter(state)
+
+    def before(index, local, repo, base):
+        if index == 2:
+            state["held"] = held_state(["p@m"])         # 해제만 한다 — keep_local 없음
+        return local, repo, base
+
+    snapshots = repeat_backup(adapter, {"mine@m": True},
+                              {"mine@m": True, "p@m": ["1.0.0"]},
+                              {"mine@m": True, "p@m": True},
+                              rounds=4, before_round=before)
+    for report, repo, base in snapshots[:2]:
+        assert report["held"] == ["p@m"]
+        # conflicts는 여기서 채워질 수 없다(양 갈래 모두 `in_l`을 요구한다) — 동반 기록이다.
+        assert report["deleted"] == [] and report["conflicts"] == []
+        assert repo["p@m"] == ["1.0.0"]
+        assert "p@m" not in base                        # 보류 중 base에서 빠진다 (5.3)
+    report, repo, base = snapshots[2]
+    # 실측: base 제거 규칙을 지우면 여기서 deleted == ["p@m"]이 되고 레포가
+    # {"mine@m": True}로 줄어든다 — 타 기기가 올린 버전 제약이 사라진다.
+    assert report["deleted"] == []                      # 케이스 3이 **아니다**
+    assert report["repo_ahead"] == ["p@m"]              # 케이스 2로 착지
+    assert repo["p@m"] == ["1.0.0"]
+    assert snapshots[3] == snapshots[2]                 # 이후 불변
 ```
 
 - [ ] **Step 2: test를 실행하여 실패를 확인**
@@ -5593,9 +5611,9 @@ Step 1의 편집이 곧 구현이다. **소스 코드는 바꾸지 않는다** �
 
 - `keyed_sync.merge`의 값 보류 갈래에서 `if name in repo: merged[name] = repo[name]`을 지우기 → **보류 유지 시나리오가 잡아야 한다.** 잡지 못하면 이 task는 실패다
 - `_next_base_normalized`의 `if name in value_held: continue`를 지우기 → base 제거 단정이 잡아야 한다
-- `plugin_adapter.next_base`에서 `value_held=`를 빼기 → 같은 단정이 잡아야 한다
+- `plugin_adapter.next_base`에서 `value_held=`를 빼기 → **restore 경로를 지나는 시나리오만이 잡는다.** merge 경로만 타는 시나리오로는 SURVIVE한다(실측) — 보류 키의 base 제거를 재는 시나리오가 반드시 하나 있어야 한다
 - `plugin_config._make_hold`의 H3에서 `key not in released` 검사를 지우기 → 해제 착지 시나리오가 잡아야 한다
-- H1의 `action.add`/`value.add` 중 하나를 지우기 → auto 시나리오가 잡아야 한다
+- H1의 **`value.add`**를 지우기 → auto 시나리오가 잡아야 한다. **`action.add`는 이 파일이 구조적으로 잡을 수 없다** — 코어가 "action 축은 `restore_plan`만 소비한다, `diff`·`merge`·`next_base`는 value 축만 본다"를 명시하고 이 파일은 그 셋만 돈다. 그쪽 가드는 `test_plugin_config.py`·`test_plugin_scripts.py`가 진다
 - `Adapter.__init__`의 정규화 단정을 지우고 `pluginConfigs`의 값을 `{"options": {"k": "a"}}`류로 되돌리기 → **케이스 9 시나리오가 조용히 케이스 6이 된다.** 단정이 그것을 잡아야 한다
 - `repeat_backup`의 `before_round` 호출을 루프 **뒤로** 옮기기 → 해제 시나리오의 회차 인덱스가 어긋나 FAIL해야 한다
 
