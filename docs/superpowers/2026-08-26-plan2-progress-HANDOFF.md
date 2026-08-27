@@ -1,9 +1,10 @@
-# 다음 세션 인계 — plan ② 실행 중 (7.5 / 15)
+# 다음 세션 인계 — plan ② 실행 중 (11 / 16)
 
-- 갱신: 2026-08-26
-- 브랜치: `feat/plugin-config` (푸시 안 됨), HEAD `f28d18f`
-- 테스트: **612 passed** (착수 시 446)
-- **상태: Task 1~7 완료, Task 8은 spec review ✅ 통과하고 quality review만 남았다.**
+- 갱신: 2026-08-27
+- 브랜치: `feat/plugin-config` (푸시 안 됨), HEAD `fcfa072`
+- 테스트: **713 passed** (착수 시 446)
+- **상태: Task 1~10.5 완료. Task 11(상태 기계) 실행 중.**
+- **task 수가 15 → 16이다** — 사용자 결정으로 Task 10.5(설치 집합 읽기)를 중간 삽입했다.
 
 ---
 
@@ -14,9 +15,9 @@ claude-sync 저장소에서 plan ②(플러그인 동기화 본체) 실행을 �
 
 먼저 이 문서를 읽어라: docs/superpowers/2026-08-26-plan2-progress-HANDOFF.md
 
-Task 1~7이 완료됐고 Task 8은 spec review까지 끝났다. quality review부터 재개한다.
+Task 1~10.5가 완료됐다. Task 11(상태 기계)부터 재개한다.
 실행 방식은 subagent-driven이다 — task마다 새 subagent, task 사이에 spec 준수 review와
-code quality review. 남은 것은 Task 8(quality) 그리고 Task 9~15다.
+code quality review. 남은 것은 Task 11~15다.
 ```
 
 ---
@@ -26,20 +27,20 @@ code quality review. 남은 것은 Task 8(quality) 그리고 Task 9~15다.
 | Task | 상태 | 결과물 |
 |---|---|---|
 | 1 원자적 쓰기 | ✅ | `ks.dump_bytes`(+fsync), 세 경로 라우팅 고정 |
-| 2 `base_staging` 배선 | ✅ | 게이트 두 축 명문화, spec의 `reason` 이름 충돌 제거 |
+| 2 `base_staging` 배선 | ✅ | 게이트 두 축 명문화 |
 | 3 테스트 위생 | ✅ | root skip 마커, `recognize` 완전성 소스 스캔 |
 | 4 어댑터 읽기·인식 | ✅ | `lib/plugin_config.py` 신규 |
 | 5 정규화·보류 | ✅ | H1~H4 두 축, `held_context` |
-| 6 복원 가능성 | ✅ | `restorable`·`reason`·`orphaned`, **어댑터 완성**(약 850줄) |
+| 6 복원 가능성 | ✅ | `restorable`·`reason`·`orphaned` |
 | 7 `collect_plugins.py` | ✅ | 첫 스크립트, `hooks_and_context`·`skipped_section` |
-| **8 `compare_plugins.py`** | **spec ✅ / quality 남음** | 읽기 전용 비교 |
-| 9~15 | ⬜ | `plan_plugins`(plan/apply-base), 검증 셋, 배선·문서 |
+| 8 `compare_plugins.py` | ✅ | 읽기 전용 비교, `absent_locally`·`changed_detail` |
+| 9 `plan_plugins.py plan` | ✅ | 복원 계획, `value_command` |
+| 10 `apply-base` | ✅ | 선택 반영, `plugins-held.json` 소유 |
+| **10.5 설치 집합 읽기** | ✅ | `read_installed`, `not_installed`, 2단계/4단계 분리 |
+| **11 상태 기계** | **실행 중** | 보류의 다회차 커버리지 |
+| 12~15 | ⬜ | CLI 에뮬레이터, 교대 시나리오, **세 스킬 배선**, 문서 정정 |
 
-**다음 행동:** Task 8의 code quality review를 dispatch한다.
-`git diff cf69c4f..c076a71 -- plugins/claude-sync`가 대상이고,
-REPORT_FILE은 `~/.claude/suberpowers/reviews/2026-08-26-claude-sync-task-8-quality.md`.
-
----
+**다음 행동:** Task 11의 구현이 끝나면 spec review → quality review 순으로 진행한다.
 
 ## 작업 자산이 어디 있나
 
@@ -73,6 +74,40 @@ plan 본문이 바뀌면 분할 파일을 다시 만들어야 한다(헤딩 `^##
 (실제로 4회). orchestrator가 python 배치로 돌리면 짧게 끝나 절전에 걸리지 않는다.
 Task 5에서 그렇게 15종을 한 번에 돌렸다.
 
+**6. 변조 하네스를 쓴다 — 매번 새로 짜지 않는다.**
+`~/.claude/suberpowers/tools/mutate.py --repo <저장소> --spec <json> --jobs 8`.
+무동작 대조군을 먼저 단독 실행하고(깨지면 중단), 변조마다 독립 복사본에서 `__pycache__`를
+전량 삭제한 뒤 `PYTHONDONTWRITEBYTECODE=1`로 돌리며, **치환이 기대 횟수와 다르면
+`SURVIVED`가 아니라 `APPLY_FAIL`로 갈라낸다** — "변조가 안 먹었는데 통과했으니 살아남았다"가
+이 하네스가 낼 수 있는 가장 위험한 거짓말이라 구조로 막았다. 19종이 순차 185초 → 병렬 50초.
+
+**7. 하네스를 구현자에게도 준다.** 리뷰에만 주면 리뷰가 상류의 실패를 대신 메운다.
+Task 9(하네스 없음)는 구현자가 19종을 돌려 0건을 닫고 리뷰가 8건을 찾았다. Task 10은
+33종에 5건을 인계 전에 닫아 **spec 라운드 하나가 통째로 사라졌다.** 지시에
+**"Step 4b는 최소치다 — 새 가드가 목록에 없으면 변조를 추가하고 SURVIVE는 인계 전에 닫아라"**를
+반드시 넣을 것.
+
+**8. CAUGHT가 결정적인지 확률적인지 구별한다.** set을 정렬하는 자리는 catch가 `1 - 1/n!`이다.
+이 세션에서 "CAUGHT"를 그냥 받았다가 나중에 확률적이었음이 드러난 것이 두 번 있다.
+의심되면 `PYTHONHASHSEED`를 바꿔 가며 실측하고, 확률적이면 **그 성질을 docstring에 적고
+원소 수를 늘려 확률을 낮춘다**(넷 = 4.2%, 여섯 = 0.14%).
+
+**9. 규정에 "유일한 검출자" 같은 예측을 쓰지 않는다.** 무엇이 무엇을 잡는지는 돌려 보지
+않으면 알 수 없다. 이 세션에서 그 문구가 두 번 실측으로 반증됐고, 한 번은 테스트
+docstring으로 복제되기까지 했다. **"이것이 잡아야 한다"까지만 쓰고 검출자 목록은
+구현자가 실측으로 채운다.**
+
+**10. 규정의 Step 1에 테스트 코드를 직접 쓸 때는 헬퍼와 실제 동작을 먼저 확인한다.**
+Task 10에서 존재하지 않는 헬퍼를 지어내고 `dump_json(sort_keys=True)`를 확인하지 않아
+성립 불가능한 단정을 써서 결함 넷을 만들었다. 확신이 없으면 **요구 단정만 규정하고 코드는
+구현자가 쓰게 한 뒤, 구현 후 그 테스트로 Step 1을 동기화**한다(Task 10.5가 그 방식).
+
+**11. 매 task 끝에 규정 드리프트를 검사한다.**
+`python3 ~/.claude/suberpowers/tools/split-plan.py <body> <dir> --check`.
+이 세션에서 분할 파일 다섯이 body와 어긋나 있었고 그중 둘이 바로 다음에 실행할
+task였다. 분할기는 소수점 번호(10.5)를 지원한다 — 중간 삽입 task를 위해 11~15를
+재번호하면 그 번호를 가리키는 참조가 전부 깨진다.
+
 **5. reviewer 중단 시 REPORT_FILE 체크포인트를 먼저 읽는다.** 대부분 상당히 채워져 있어
 확정된 항목의 재검증을 건너뛰고 이어받을 수 있다.
 
@@ -103,18 +138,23 @@ Task 5에서 그렇게 15종을 한 번에 돌렸다.
 
 ---
 
-## 어댑터 공개 표면 (Task 9~10이 쓸 것)
+## 어댑터 공개 표면 (Task 12~15가 쓸 것)
 
 `lib/plugin_config.py` — 스크립트가 부르는 것만:
 
 ```
-read_local_sections / read_auto_ids / read_held_state / read_hold_inputs
+read_local_sections / read_held_state / normalized_sections
+read_installed(path) -> (auto_ids, installed_ids)      # 파싱은 한 번. read_auto_ids가 위임한다
+read_hold_inputs(...) -> (auto_ids, installed_ids, held_state, skipped)   # **4-튜플**
 load_backup / parse_base / parse_backup / dump_backup
 hooks_and_context(local, repo, *, auto_ids, held_state) -> (hooks, context)
+build_hooks(local, repo, *, auto_ids, held_state, _context=None)
     hooks[section] = {normalize, hold, restorable, secret_keys, reason}   # 코어 계약은 넷
 held_kinds(section, keys, **context, repo_norm=...)
 value_held_for(section, hooks, local, repo)     # next_base에 넘길 값 보류
 skipped_section(reason)                          # 섹션 skip 보고의 공유 모양
+value_command(local_value, repo_value)           # 멱등이 아닌 enable/disable
+choice_list / next_held_state(previous, repo_norm, choices) / write_held_state
 orphaned / marketplace_arg / unrestorable_reason / value_fingerprint / marketplace_of
 ALWAYS_KNOWN(5) / PSEUDO_SOURCES(4) / RESERVED_MARKETPLACE_NAMES(16) / SECTIONS(3)
 ```
@@ -247,9 +287,9 @@ id는 이번 restore에서 **아무 명령도 받지 않는다.** 손실은 아�
 
 ## 남은 것
 
-Task 8(quality) → 9 `plan_plugins.py plan` → 10 `apply-base` →
-11 보류 상태 기계 → 12 CLI 에뮬레이터 → 13 교대 시나리오 →
+Task 11 상태 기계(실행 중) → 12 CLI 에뮬레이터 → 13 교대 시나리오 →
 **14 세 스킬 배선(사용자 가치가 여기서 처음 나온다)** → 15 문서 정정 여덟 곳.
 
-그다음 plan ③(다운그레이드·호환 확장, spec 11장). 완료 정의와 plan ③으로 넘길 것은
-plan 본문 말미에 있다.
+그다음 plan ③(다운그레이드·호환 확장, spec 11장). 위의 "plan ③으로 넘길 것" 둘 —
+깨진 레포 JSON의 restore 취급과 `defaultEnabled: false` 갈래 — 을 함께 다룬다.
+완료 정의는 plan 본문 말미에 있다.
