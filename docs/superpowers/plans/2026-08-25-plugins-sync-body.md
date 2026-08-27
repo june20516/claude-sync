@@ -5587,7 +5587,7 @@ def test_release_of_a_key_missing_from_the_local_lands_on_case2_not_case3():
 - [ ] **Step 2: test를 실행하여 실패를 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_mcp_state_machine.py -v`
-기대: 보류 시나리오 다섯이 FAIL 또는 ERROR(헬퍼 미정의). 판정표 열 개는 **세 어댑터로 30개**가 되어야 한다.
+기대: 보류 시나리오 일곱이 FAIL 또는 ERROR(헬퍼 미정의). 판정표 열 개는 **세 어댑터로 30개**가 되어야 한다.
 
 - [ ] **Step 3: 구현**
 
@@ -5596,7 +5596,7 @@ Step 1의 편집이 곧 구현이다. **소스 코드는 바꾸지 않는다** �
 - [ ] **Step 4: 개수와 단정이 약해지지 않았는지 확인**
 
 실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_mcp_state_machine.py -v`
-기대: 판정표 시나리오 10개 × 어댑터 3 = **30개**, 어댑터 목록 가드 1개, 보류 시나리오 5개.
+기대: 판정표 시나리오 10개 × 어댑터 3 = **30개**, 어댑터 목록 가드 1개, 보류 시나리오 7개 — 이 파일에서 **38개**다.
 
 실행: `git diff plugins/claude-sync/tests/test_mcp_state_machine.py | grep '^-' | grep -c assert`
 실행: `git diff plugins/claude-sync/tests/test_mcp_state_machine.py | grep '^+' | grep -c assert`

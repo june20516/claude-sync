@@ -261,7 +261,8 @@ def test_new_machine_without_base_does_not_delete_others_on_second_round(adapter
 # 위 열 개는 보류가 **없는** 상태의 판정표다. 아래는 보류가 걸린 키가 회차를 넘어
 # 어떻게 움직이는지를 본다 — 진입해서 유지될 때, 이탈할 때, 보류 중에 레포에서
 # 사라졌을 때, 그리고 이탈이 **삭제로 착지할 수 있는** 배치일 때. 다회차가 아니면
-# 넷 다 표현되지 않는다. 마지막 하나(restore 경로의 base 갱신)만 단발이다 —
+# 넷 다 표현되지 않는다. 일곱 중 하나(restore 경로의 base 갱신,
+# test_restore_base_drops_the_held_key_instead_of_freezing_it)만 단발이다 —
 # merge 경로가 그 코드를 지나지 않기 때문이다.
 
 def held_state(released=()):
