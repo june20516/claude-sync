@@ -12,13 +12,16 @@
 드리프트가 보이게 하려는 것이다. **명령 메서드에 번호가 없는 동작은 아래 목록에 있어야
 한다**(순수 파일 입출력 헬퍼 `_read`/`_write`는 CLI 동작이 아니라 근거가 없다).
 
-**실측 없음 — 추정으로 채운 갈래 여덟.** 실제 CLI와 어긋날 수 있고, 어긋나도 이 저장소
+**실측 없음 — 추정으로 채운 갈래 열.** 실제 CLI와 어긋날 수 있고, 어긋나도 이 저장소
 안에서는 드러나지 않는다(에뮬레이터가 곧 기준이므로).
+
+*표시 규약*: 사용처에는 **`**실측 없음 — 추정**(모듈 docstring N번)` 한 형태로만** 적는다.
+번호가 양방향으로 걸려 있어야 사용처만 읽는 사람도 이것이 선언된 추정임을 알 수 있다.
 
 *목록의 규율*: **CLI가 파일에 무엇을 남기는지를 정하는 자리는 헬퍼라도 넣는다**
 (`_forget_installed`·`_mark_installed`가 그래서 2번·8번이다). 순수 입출력(`_read`/`_write`)과
-CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`)는 넣지 않는다 — 대신 그 자리에
-픽스처 결정임을 적는다.
+CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`·`set_manifest`·
+`set_directory_marketplace`)는 넣지 않는다 — 대신 그 자리에 픽스처 결정임을 적는다.
 
   1. `marketplace remove`가 `pluginConfigs`까지 지우는가. 1-b #8은 `enabledPlugins`에서
      사라진다는 것만 쟀다. #6(`uninstall`)이 두 필드를 함께 지우므로 같은 규율을 폈다.
@@ -28,7 +31,8 @@ CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`)는 넣지 않�
   3. 값이 `false`인 플러그인을 다시 `install` 했을 때의 값. #2의 멱등성은 켜진 항목에서
      쟀고 C1 표는 배열·객체만 쟀다. 여기서는 `true`로 쓴다 — spec 8.4가 "로컬에 키가
      없다"에 대해 두는 가정과 같은 방향이다.
-  4. 설치되지 않은 id에 `enable`/`disable`을 냈을 때. `_set_value` 주석 참조.
+  4. 설치되지 않은 id에 `enable`/`disable`을 냈을 때. 여기서는 exit 1을 내고 **값도
+     설치 기록도 만들지 않는다**(`_set_value`).
   5. `prune`의 exit code, 그리고 N3의 `-y` 요구가 `prune`에도 걸리는 갈래. 여기서는
      언제나 0이고 `-y` 개념이 없다.
   6. `marketplace add`가 만드는 **값의 모양**. 이 에뮬레이터는 언제나 github 출처로 쓴다.
@@ -40,18 +44,35 @@ CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`)는 넣지 않�
   8. `install`이 **다른 스코프 항목을 보존하는가**(`_mark_installed`). N4는 배열의 존재와
      항목의 필드를 쟀을 뿐, `install --scope user`가 project 스코프 항목을 건드리지
      않는다는 것은 재지 않았다.
+  9. **이미 설치된** 플러그인의 **객체 값**을 `install`이 어떻게 하는가. 1-c C1과
+     spec 1.2의 표는 네 행뿐이다 — 배열/미설치·배열/재실행·객체/미설치·건드리지 않음.
+     **객체/재실행 행이 없다.** 이 에뮬레이터는 설치 여부로 분기하지 않으므로 측정된
+     객체/미설치 행과 같은 결과(`true`)를 낸다.
+ 10. `marketplace remove`의 **소속 판정 규칙**(`pid.endswith("@" + name)`). 1-b #8은
+     소속 플러그인이 전부 사라진다는 **결과**만 쟀지 소속을 무엇으로 판정하는지는 재지
+     않았다. `plugin_config.marketplace_of`는 `@`가 정확히 하나일 때만 마켓플레이스를
+     알아보므로 `a@b@m` 같은 id에서 두 규칙이 갈린다.
 
 **재현하지 않는 것(의도).** `install --scope project|local`(이 동기화는 전부 user
 스코프다 — spec 9.3.1), `plugin update`, `plugin tag`, `uninstall --keep-data`,
 `~/.claude/plugins/cache/`(1-b #13 — uninstall 후에도 남는다. 한 플러그인의 버전
 디렉토리가 여럿 쌓인다는 것은 1-c "그 밖에 기록해 둘 표면"이다),
 `known_marketplaces.json`(1-b #9·N4 — 기기별 절대 경로 `installLocation`이
-들어 있어 동기화 대상이 될 수 없다), 그리고 **`install`의 실패 갈래 둘**(1-b #3 미등록
+들어 있어 동기화 대상이 될 수 없다), `installed_plugins.json` 항목의 **다섯 필드**
+(`installPath`·`version`·`installedAt`·`lastUpdated`·`gitCommitSha` — N4는 `scope`·`auto`와
+함께 일곱을 쟀는데 여기서는 둘만 쓴다. `read_installed`가 나머지를 읽지 않아 판정은
+갈리지 않지만, 그래서 이 하네스는 **실기기 모양의 `installed_plugins.json`을 한 번도
+통과시키지 않는다**), 그리고 **`install`의 실패 갈래 둘**(1-b #3 미등록
 마켓플레이스 · #4 없는 플러그인 — 둘 다 **exit 1을 실측**했으나 여기서는 언제나 0이다).
 마지막 것은 추정이 아니라 의도적 미재현이다. #3의 **결과**(등록 실패 → 소속 플러그인
-미설치)는 `Device.restore`의 `fail_marketplaces`가 층을 바꿔 흉내내므로 9.3.2의 blocked
-갈래는 검증된다. #4에는 대역이 없다 — 없는 플러그인을 설치하려는 계획을 만드는 시나리오를
-쓸 때 이 자리를 먼저 고칠 것.
+미설치)는 `Device.restore`의 `fail_marketplaces`가 층을 바꿔 흉내낸다 — 그 필터는
+2·3단계뿐 아니라 **4단계에도** 걸린다(9.3.2: 4단계도 `plugin install <id@marketplace>
+--config k=v` 형태라 등록되지 않은 마켓플레이스로는 똑같이 죽고, 그래서
+`plan_plugins._install_dependencies`가 `depends_on`에 2단계∪4단계를 싣는다).
+`test_a_blocked_marketplace_stops_the_install_and_config_steps`가 그중 **2·4단계를 직접
+잰다** — 3단계는 미측정이다(위 4번 때문에 `disable`이 미설치 id에 아무것도 쓰지 않아
+필터를 지워도 관측되지 않는다). #4에는 대역이 없다 — 없는 플러그인을 설치하려는 계획을
+만드는 시나리오를 쓸 때 이 자리를 먼저 고칠 것.
 """
 import json
 import os
@@ -83,7 +104,7 @@ class PluginCLI:
         # N4 — installed_plugins.json은 자체 "version": 2 스키마를 갖고, plugins[<id>]가
         # 배열이다. plugin_config.read_installed가 그 형태를 요구한다.
         self._write(self.installed_path, {"version": 2, "plugins": {}})
-        self._parents = {}          # 부모 → 의존성으로 끌려온 자식들
+        self._manifests = {}        # 플러그인 id → plugin.json의 dependencies 배열
 
     # --- 파일 ---
     def _read(self, path):
@@ -100,6 +121,7 @@ class PluginCLI:
     def installed(self):
         return self._read(self.installed_path)
 
+    # --- 픽스처 (CLI 명령이 아니다) ---
     def set_enabled(self, plugin_id, value):
         """테스트가 확장 포맷 값을 심을 때 쓴다. CLI 명령이 아니다.
 
@@ -112,13 +134,43 @@ class PluginCLI:
         self._write(self.settings_path, data)
         self._mark_installed(plugin_id, auto=False)
 
+    def set_manifest(self, plugin_id, dependencies=()):
+        """플러그인 매니페스트(`plugin.json`)의 `dependencies`. CLI 명령이 아니다.
+
+        **명령의 인자가 아니라 플러그인 자신의 내용이다**(N1). 그래서 `install`이 인자로
+        받지 않고 여기서 읽는다 — 인자로 받으면 같은 부모를 설치하는 모든 호출부가 그
+        배열을 기억해야 하고, 잊으면 자식이 조용히 딸려오지 않는다. 특히
+        `Device.restore`의 2단계는 `install(plugin_id)`로만 부르므로, 인자 형태에서는
+        **복원 경로에서 의존성 끌어오기가 영영 표현되지 않는다**(spec 9.3.1).
+        """
+        self._manifests[plugin_id] = list(dependencies)
+
+    def set_directory_marketplace(self, name, path):
+        """로컬 디렉토리 출처를 심는다 (H2). CLI 명령이 아니라 픽스처다.
+
+        `marketplace add <경로>`의 **결과**이지만 `marketplace_add`와 나누어 둔 것은
+        복원 경로가 이 갈래에 도달하지 않기 때문이다 — directory 출처는 H2로 보류되고
+        (`plugin_config.directory_marketplaces`), `plugin_config.marketplace_arg`의
+        docstring이 *"directory 출처는 여기 오지 않는다"*로 못 박는다. 즉 이 값은 계획이
+        만들어 주지 않고 테스트가 직접 심어야 하는 로컬 상태다.
+
+        1-b의 픽스처가 로컬 디렉토리 마켓플레이스였으므로 이 출처는 실재한다. 다만
+        값의 모양은 브리프에 기록돼 있지 않다 — **실측 없음 — 추정**(모듈 docstring 7번).
+        `plugin_config._source_kind`가 읽는 형태에 맞췄다.
+        """
+        data = self.settings()
+        data["extraKnownMarketplaces"][name] = {
+            "source": {"source": "directory", "path": path}}
+        self._write(self.settings_path, data)
+        return 0
+
     # --- installed_plugins.json ---
     def _mark_installed(self, plugin_id, auto):
         """user 스코프 항목 하나를 갈아 끼운다 (N4 — 항목은 스코프별 배열이다).
 
         다른 스코프 항목은 보존한다. read_installed가 user 스코프만 보고 auto·설치를
         판정하므로(spec 3.4), 그 필터가 실제로 필터로 동작하는 입력을 만들 수 있어야 한다.
-        **보존 자체는 실측 없음 — 추정**(모듈 docstring 8번): N4는 배열의 존재와 항목의
+        보존 자체는 **실측 없음 — 추정**(모듈 docstring 8번): N4는 배열의 존재와 항목의
         필드를 쟀을 뿐 다른 스코프 항목의 운명은 재지 않았다.
         """
         data = self.installed()
@@ -135,11 +187,12 @@ class PluginCLI:
         self._write(self.installed_path, data)
 
     # --- 명령 ---
-    def install(self, plugin_id, config=None, dependencies=()):
+    def install(self, plugin_id, config=None):
         """키를 true로. **단 기존 값이 배열이면 보존**하고 객체는 평탄화한다 (1.2).
 
         이미 설치돼 있어도 exit 0(멱등). 명시적 설치는 auto 표식을 지운다(N6) —
-        되돌릴 수 없다. config는 **부분 병합**이다(N2).
+        되돌릴 수 없다. config는 **부분 병합**이다(N2). 의존성은 매니페스트에서 읽는다
+        (`set_manifest`) — 명령의 인자가 아니다.
 
         근거: C1 표(배열은 미설치·재설치 양쪽에서 보존, 객체는 `true`로 평탄화),
         1-b #2(멱등, exit 0), N2(`--config`가 pluginConfigs[id]["options"]에 평문 저장,
@@ -147,9 +200,11 @@ class PluginCLI:
         모양**으로 enabledPlugins에 들어가고 구별 수단은 auto 플래그 하나뿐),
         N6(명시적 설치가 auto를 지운다).
 
-        **값이 `false`인 항목의 재설치는 미측정이다**(모듈 docstring 3번) — 여기서는
-        배열이 아니므로 `true`가 된다.
+        값이 `false`인 항목의 재설치는 **실측 없음 — 추정**(모듈 docstring 3번) —
+        여기서는 배열이 아니므로 `true`가 된다. **이미 설치된** 항목의 객체 값도
+        마찬가지다 — **실측 없음 — 추정**(모듈 docstring 9번).
         """
+        dependencies = self._manifests.get(plugin_id, ())
         data = self.settings()
         current = data["enabledPlugins"].get(plugin_id)
         if not isinstance(current, list):
@@ -171,8 +226,6 @@ class PluginCLI:
             # 경로는 실측에 없다.
             if child not in self.installed()["plugins"]:
                 self._mark_installed(child, auto=True)
-        if dependencies:
-            self._parents[plugin_id] = list(dependencies)
         return 0
 
     def enable(self, plugin_id):
@@ -187,7 +240,8 @@ class PluginCLI:
         1-b #5 — `disable`/`enable`은 키를 유지한 채 값만 true↔false로 바꾸고,
         **멱등이 아니다**(이미 그 상태면 exit 1, `already disabled`).
 
-        설치되지 않은 id에 대한 동작은 미측정이다 — 여기서는 exit 1로 둔다.
+        설치되지 않은 id에 대한 갈래는 **실측 없음 — 추정**(모듈 docstring 4번) —
+        여기서는 exit 1을 내고 **값도 설치 기록도 만들지 않는다.**
         복원 흐름은 설치 뒤에만 부르므로 이 갈래에 의존하지 않는다.
         """
         data = self.settings()
@@ -204,7 +258,8 @@ class PluginCLI:
 
         1-b #6 — 활성·비활성 상태와 무관하게 키를 지우고 pluginConfigs의 같은 키도
         함께 지운다. 재실행은 exit 1(`not found in installed plugins`).
-        설치 기록 삭제는 추정이다(모듈 docstring 2번).
+        설치 기록 삭제는 **실측 없음 — 추정**(모듈 docstring 2번).
+        실패 갈래는 두 파일 어느 쪽도 건드리지 않는다.
         """
         data = self.settings()
         if plugin_id not in data["enabledPlugins"]:
@@ -220,7 +275,10 @@ class PluginCLI:
 
         1-b #7 — 재실행도 exit 0(`Marketplace 'x' already on disk`).
         1-b #10 — `autoUpdate`를 설정하는 옵션이 CLI에 **없으므로** 여기서도 쓰지 않는다.
-        값의 모양(항상 github)은 추정이다(모듈 docstring 6번).
+        값의 모양(언제나 github)은 **실측 없음 — 추정**(모듈 docstring 6번) — 실제 CLI는
+        인자 하나에서 출처 종류를 판별한다. 그래서 directory 갈래는 여기가 아니라
+        픽스처(`set_directory_marketplace`)가 심는다. **이 메서드에 경로를 넘기면 조용히
+        github 출처가 된다** — url·git 출처도 마찬가지이므로 6번을 먼저 고칠 것.
         """
         data = self.settings()
         data["extraKnownMarketplaces"][name] = {
@@ -233,7 +291,8 @@ class PluginCLI:
 
         1-b #8 — 그 마켓플레이스 소속 플러그인이 enabledPlugins에서 전부 사라지고,
         비대화형에서 확인 프롬프트 없이 즉시 수행된다. 재실행은 exit 1.
-        **pluginConfigs 연쇄는 추정이다**(모듈 docstring 1번).
+        pluginConfigs 연쇄는 **실측 없음 — 추정**(모듈 docstring 1번).
+        소속 판정 규칙(`endswith`)도 **실측 없음 — 추정**(모듈 docstring 10번).
         """
         data = self.settings()
         if name not in data["extraKnownMarketplaces"]:
@@ -248,19 +307,6 @@ class PluginCLI:
             self._forget_installed(plugin_id)
         return 0
 
-    def set_directory_marketplace(self, name, path):
-        """로컬 디렉토리 출처를 심는다 (H2). `marketplace add <경로>`의 결과다.
-
-        1-b의 픽스처가 로컬 디렉토리 마켓플레이스였으므로 이 출처는 실재한다. 다만
-        **값의 모양은 브리프에 기록돼 있지 않아 추정이다**(모듈 docstring 7번) —
-        plugin_config._source_kind가 읽는 형태에 맞췄다.
-        """
-        data = self.settings()
-        data["extraKnownMarketplaces"][name] = {
-            "source": {"source": "directory", "path": path}}
-        self._write(self.settings_path, data)
-        return 0
-
     def prune(self):
         """부모가 사라진 auto 항목을 제거한다.
 
@@ -268,15 +314,16 @@ class PluginCLI:
         `no longer needed`로 잡는다. N6 — 명시적으로 설치돼 auto가 지워진 항목은
         부모를 지워도 `Nothing to prune`이다(아래 auto 조건이 그것이다).
 
-        부모 관계는 실제 CLI가 매니페스트의 `dependencies`에서 읽지만 여기서는 install이
-        기록해 둔 것을 본다. exit code는 추정이다(모듈 docstring 5번).
+        부모 관계는 실제 CLI와 같은 자리 — 매니페스트의 `dependencies` — 에서 읽는다
+        (`set_manifest`). exit code, 그리고 N3의 `-y` 요구가 이 명령에도 걸리는지는
+        **실측 없음 — 추정**(모듈 docstring 5번) — 여기서는 언제나 0이고 `-y` 개념이 없다.
         """
         data = self.settings()
         installed = self.installed()["plugins"]
         removed = []
         for plugin_id, entries in list(installed.items()):
             auto = any(e.get("scope") == "user" and e.get("auto") is True for e in entries)
-            parents = [p for p, children in self._parents.items()
+            parents = [p for p, children in self._manifests.items()
                        if plugin_id in children and p in data["enabledPlugins"]]
             if auto and not parents:
                 removed.append(plugin_id)

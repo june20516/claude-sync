@@ -81,6 +81,12 @@ class Device:
         #
         # 존재 게이트를 쓰는 것은 SKILL.md의 배선을 그대로 옮긴 것이지 더 강해서가 아니다.
         # **rmtree를 이 함수에서 빼면 (ii)가 살아난다.**
+        #
+        # **형제 하네스와 조건이 다르다.** test_mcp_cycle.py:66은 여기에 없는
+        # `report["status"] == "ok"` 축을 하나 더 갖는다. 플러그인 배선은 아직 SKILL.md에
+        # 없지만(Task 14), MCP 배선인 sync-backup/SKILL.md:400은 `REPO_HAS_CONTENT`와
+        # 파일 존재 두 축뿐이고 그 자리 주석이 "status 값을 다시 읽을 필요가 없다"라고
+        # 못 박는다. 둘을 "맞추는" 수정을 한다면 MCP 쪽을 SKILL.md에 맞출 것.
         if push and os.path.exists(staged):
             self._run(UPDATE_BASE, self.staging, pc.BACKUP_RELPATH)
         return report
@@ -102,21 +108,43 @@ class Device:
                 continue
             self.cli.marketplace_add(entry["name"], entry["arg"])
         for plugin_id in plan["install"]:                           # 2단계
-            if plan["depends_on"].get(plugin_id) in blocked:
+            if self._blocked(plan, plugin_id, blocked):
                 continue
             self.cli.install(plugin_id)
         for plugin_id in plan["disable_after_install"]:             # 3단계
-            if plan["depends_on"].get(plugin_id) in blocked:
+            if self._blocked(plan, plugin_id, blocked):
                 continue
             self.cli.disable(plugin_id)
         for plugin_id, options in (secrets or {}).items():          # 4단계
+            if self._blocked(plan, plugin_id, blocked):
+                continue
             self.cli.install(plugin_id, config=options)
         return self._apply_base(backup_path, plan, choices or {})
+
+    @staticmethod
+    def _blocked(plan, plugin_id, blocked):
+        """1단계 등록이 실패한 마켓플레이스에 속하는가 (9.3.2).
+
+        **2·3·4단계가 같은 술어를 쓴다.** 근거는 단계 종속이 아니라 명령의 형태다 —
+        4단계도 `plugin install <id@marketplace> --config k=v` 형태라 등록되지 않은
+        마켓플레이스로는 2단계와 똑같이 죽는다. 그래서 `plan_plugins._install_dependencies`가
+        `depends_on`에 2단계 목록이 아니라 **2단계 ∪ 4단계**를 싣는다.
+
+        4단계에서 빠뜨리면 조용한 fail-open이 된다 — 이 에뮬레이터의 `install`은 언제나
+        exit 0이므로, **실제 CLI가 도달할 수 없는 상태**(등록에 실패한 마켓플레이스의
+        플러그인에 설정이 채워진 상태)를 만들고 이어지는 백업이 그 값을 레포로 밀어
+        시나리오가 초록으로 통과한다.
+        """
+        return plan["depends_on"].get(plugin_id) in blocked
 
     def _apply_base(self, backup_path, plan, choices):
         merged = {section: {"keep_stale": [], "keep_local": []} for section in pc.SECTIONS}
         for section, values in choices.items():
-            merged.setdefault(section, {}).update(values)
+            # setdefault로 두면 섹션 이름 오타가 예외 없이 통과한다 — plan_plugins의
+            # choice_list가 모르는 섹션을 그냥 무시하므로, **선택을 하나도 적용하지 않은
+            # restore**가 초록으로 지나간다(9.3.4의 세 선택지를 섹션별로 쓸 때 밟는다).
+            assert section in pc.SECTIONS, section
+            merged[section].update(values)
         path = os.path.join(self.home, "choices.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(merged, f)
@@ -156,7 +184,16 @@ def test_install_writes_true_but_preserves_an_existing_array(tmp_path):
 
 
 def test_install_flattens_an_existing_object_value(tmp_path):
-    """실측 — 객체 형태 한 갈래만 true로 평탄화된다 (1.2)."""
+    """**실측 없음 — 추정**(plugin_cli 모듈 docstring 9번).
+
+    1.2와 브리프 C1이 재는 것은 **객체/미설치** 행이다. `set_enabled`가 설치 기록을 함께
+    남기므로(그 자리 docstring 참조) 여기서 만드는 상태는 **객체/이미 설치 → 재실행**이고,
+    그 행은 두 표 어디에도 없다. 이 에뮬레이터는 설치 여부로 분기하지 않으므로 측정된
+    행과 같은 결과를 낸다 — **결론이 아니라 근거가 추정이다.**
+
+    평탄화가 객체 한 갈래뿐이라는 것(배열은 살아남는다)은 실측이고, 그쪽은
+    test_install_writes_true_but_preserves_an_existing_array가 잰다.
+    """
     cli = PluginCLI(str(tmp_path))
     cli.set_enabled("o@m", {"version": "1.0.0"})
     cli.install("o@m")
@@ -185,6 +222,11 @@ def test_enable_and_disable_reject_an_unknown_plugin(tmp_path):
     assert cli.enable("ghost@m") == 1
     assert cli.disable("ghost@m") == 1
     assert cli.settings()["enabledPlugins"] == {}
+    # **두 파일 중 다른 쪽도 함께 잰다.** settings.json만 보면 실패 갈래가
+    # installed_plugins.json에 항목을 남겨도 조용하다 — 그러면 read_installed의
+    # installed_ids에 유령 id가 들어가 restore의 2단계가 그것을
+    # skipped_already_installed로 접는다.
+    assert cli.installed()["plugins"] == {}
 
 
 def test_uninstall_removes_the_config_too_and_fails_when_absent(tmp_path):
@@ -198,6 +240,30 @@ def test_uninstall_removes_the_config_too_and_fails_when_absent(tmp_path):
     # skipped_already_installed로 접어 영영 설치하지 않는다.
     assert cli.installed()["plugins"] == {}
     assert cli.uninstall("p@m") == 1
+
+
+def test_a_failed_uninstall_leaves_the_installed_record_alone(tmp_path):
+    """**에뮬레이터의 규약이지 실측이 아니다.** 실패 갈래의 두 파일 일관성을 잰다.
+
+    성공 갈래는 명령마다 두 파일의 절반이 따로 단정돼 있지만, 실패 갈래는 exit code와
+    settings.json만 보면 `installed_plugins.json` 쪽 부작용이 조용히 지나간다.
+    갈리면 `read_installed`의 installed_ids가 로컬 값과 어긋나 restore의 2단계/4단계
+    분리가 틀린 쪽으로 떨어진다.
+
+    "설치 기록만 있고 enabledPlugins에는 없는 id"는 공개 API로 만들 수 없으므로
+    파일을 직접 심는다(스코프 테스트와 같은 방식). 그 상태 자체는 실측이 아니라
+    이 단정을 공허하지 않게 만드는 픽스처다.
+    """
+    cli = PluginCLI(str(tmp_path))
+    cli.install("q@m")
+    data = cli.installed()
+    data["plugins"]["orphan@m"] = [{"scope": "user", "auto": False}]
+    with open(cli.installed_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    assert cli.uninstall("orphan@m") == 1
+    assert set(cli.installed()["plugins"]) == {"q@m", "orphan@m"}
+    # 실패한 명령은 다른 항목의 기록도 건드리지 않는다.
+    assert cli.settings()["enabledPlugins"] == {"q@m": True}
 
 
 def test_install_config_merges_partially(tmp_path):
@@ -227,7 +293,8 @@ def test_marketplace_remove_cascades_to_member_plugins(tmp_path):
 def test_dependency_install_marks_auto_and_explicit_install_clears_it(tmp_path):
     """N6 — 명시적 설치는 auto 표식을 **되돌릴 수 없게** 지운다."""
     cli = PluginCLI(str(tmp_path))
-    cli.install("parent@m", dependencies=["child@m"])
+    cli.set_manifest("parent@m", ["child@m"])
+    cli.install("parent@m")
     assert pc.read_auto_ids(cli.installed_path) == frozenset({"child@m"})
     cli.install("child@m")
     assert pc.read_auto_ids(cli.installed_path) == frozenset()
@@ -241,7 +308,8 @@ def test_dependency_install_leaves_an_already_installed_child_alone(tmp_path):
     """
     cli = PluginCLI(str(tmp_path))
     cli.set_enabled("child@m", ["1.0.0"])
-    cli.install("parent@m", dependencies=["child@m"])
+    cli.set_manifest("parent@m", ["child@m"])
+    cli.install("parent@m")
     assert cli.settings()["enabledPlugins"]["child@m"] == ["1.0.0"]
     assert pc.read_auto_ids(cli.installed_path) == frozenset()
 
@@ -268,7 +336,8 @@ def test_installing_at_user_scope_keeps_other_scope_entries(tmp_path):
 
 def test_prune_removes_orphaned_auto_entries(tmp_path):
     cli = PluginCLI(str(tmp_path))
-    cli.install("parent@m", dependencies=["child@m"])
+    cli.set_manifest("parent@m", ["child@m"])
+    cli.install("parent@m")
     cli.uninstall("parent@m")
     cli.prune()
     assert "child@m" not in cli.settings()["enabledPlugins"]
@@ -278,7 +347,8 @@ def test_prune_removes_orphaned_auto_entries(tmp_path):
 def test_prune_keeps_a_manually_promoted_child(tmp_path):
     """N6 — auto가 지워진 항목은 부모가 사라져도 prune 대상이 아니다."""
     cli = PluginCLI(str(tmp_path))
-    cli.install("parent@m", dependencies=["child@m"])
+    cli.set_manifest("parent@m", ["child@m"])
+    cli.install("parent@m")
     cli.install("child@m")
     cli.uninstall("parent@m")
     cli.prune()
@@ -348,8 +418,11 @@ def test_base_does_not_advance_when_the_repo_file_cannot_be_written(tmp_path):
         os.chmod(os.path.join(dev.repo, pc.BACKUP_RELPATH), 0o600)
     assert report["status"] == "skipped"
     assert dev.base()["enabledPlugins"] == {"p@m": True}
-    # base 단정만으로는 rename 계약을 관측하지 못한다 — 이 테스트는 update_base를 아예
-    # 부르지 않으므로 base는 어차피 그대로다. **실제로 재는 것은 여기다**: 스테이징의
+    # base 단정이 재는 범위는 좁다 — 이 테스트는 update_base를 아예 부르지 않으므로
+    # 남는 것은 "`collect_plugins.py`가 base를 건드리지 않는다"뿐이다(rename 계약 자체는
+    # 아래에서 잰다). **공허해 보인다고 이 형태를 복제하지 말 것** — 여기 남겨 둔 이유는
+    # 그 좁은 성질도 회귀 대상이기 때문이고, 그것을 이 줄에 적어 두는 것이 조건이다.
+    # **실제로 rename 계약을 재는 것은 여기다**: 스테이징의
     # 최종 파일이 직전 백업의 내용 그대로여야 한다. 레포 쓰기 실패에도 rename이 일어나면
     # 이 파일이 q@m을 담고, 다음 push 성공 시 base가 레포에 없는 값으로 전진한다.
     staged = os.path.join(dev.staging, pc.BACKUP_RELPATH)
@@ -365,3 +438,67 @@ def test_skipped_backup_touches_neither_repo_nor_base(tmp_path):
     assert report["status"] == "skipped"
     assert repo_doc(dev.repo)["enabledPlugins"] == {"p@m": True}
     assert dev.base()["enabledPlugins"] == {"p@m": True}
+
+
+# --- 9.3.2 등록 실패가 막는 단계 ---
+
+BLOCKED_REPO = {
+    "enabledPlugins": {"p@m": True, "q@m": True},
+    "extraKnownMarketplaces": {"m": GH},
+    "pluginConfigs": {"p@m": {"options": {"token": "s3cr3t"}}},
+}
+
+
+def _blocked_device(tmp_path, name):
+    """마켓플레이스 m을 등록해야 하는 계획을 만드는 기기.
+
+    p@m을 **미리 설치해 둔다** — 그래야 p@m이 2단계(install)가 아니라
+    skipped_already_installed로 접히고, 4단계(config_keys)만 남는다. 그 분리가 없으면
+    2단계 필터가 4단계 필터의 부재를 가려 이 테스트가 4단계를 재지 못한다.
+    """
+    dev = make_device(os.path.join(str(tmp_path), name), repo_init=BLOCKED_REPO)
+    dev.cli.install("p@m")
+    return dev
+
+
+def test_a_blocked_marketplace_stops_the_install_and_config_steps(tmp_path):
+    """9.3.2 — 1단계 등록 실패는 2단계뿐 아니라 **4단계도** 막는다.
+
+    근거는 단계 종속이 아니라 명령의 형태다 — 4단계도 `plugin install <id@marketplace>
+    --config k=v` 형태라 등록되지 않은 마켓플레이스로는 똑같이 죽는다. 그래서
+    `plan_plugins._install_dependencies`가 `depends_on`에 2단계 ∪ 4단계를 싣는다.
+
+    아래 `ok` 절반이 이 단정을 공허하지 않게 만든다 — 같은 픽스처에서 등록이 성공하면
+    두 단계가 실제로 값을 만든다. 3단계는 이 테스트가 재지 않는다(에뮬레이터의
+    `disable`이 미설치 id에 아무것도 쓰지 않아 필터를 지워도 관측되지 않는다 —
+    plugin_cli 모듈 docstring 4번).
+    """
+    dev = _blocked_device(tmp_path, "blocked")
+    plan = dev.restore(secrets={"p@m": {"token": "s3cr3t"}}, fail_marketplaces={"m"})
+    # 픽스처가 의도한 계획인지 먼저 확인한다 — 아니면 아래 단정이 공허해진다.
+    assert plan["install"] == ["q@m"]                       # 2단계 대상
+    assert plan["skipped_already_installed"] == ["p@m"]     # 2단계 대상이 아니다
+    assert plan["config_keys"] == {"p@m": ["token"]}        # 4단계 대상
+    assert plan["depends_on"] == {"p@m": "m", "q@m": "m"}
+    assert dev.cli.settings()["extraKnownMarketplaces"] == {}   # 등록이 실제로 실패했다
+    assert "q@m" not in dev.cli.settings()["enabledPlugins"]    # 2단계가 막혔다
+    assert dev.cli.settings()["pluginConfigs"] == {}            # 4단계가 막혔다
+
+    ok = _blocked_device(tmp_path, "ok")
+    ok.restore(secrets={"p@m": {"token": "s3cr3t"}})
+    assert ok.cli.settings()["enabledPlugins"]["q@m"] is True
+    assert ok.cli.settings()["pluginConfigs"]["p@m"]["options"] == {"token": "s3cr3t"}
+
+
+def test_restore_rejects_an_unknown_choice_section(tmp_path):
+    """선택지 섹션 이름 오타는 조용히 무시되지 않는다 (9.3.4).
+
+    `plan_plugins`의 `choice_list`는 모르는 섹션을 그냥 무시하므로, 하네스가 오타를
+    삼키면 **선택을 하나도 적용하지 않은 restore**가 초록으로 지나간다. 정상 이름이
+    통과한다는 절반을 함께 두어 이 단정이 "언제나 죽는다"가 아님을 잰다.
+    """
+    ok = _blocked_device(tmp_path, "ok")
+    assert ok.restore(choices={"enabledPlugins": {"keep_local": []}})["status"] == "ok"
+    typo = _blocked_device(tmp_path, "typo")
+    with pytest.raises(AssertionError):
+        typo.restore(choices={"enabledPlugin": {"keep_local": ["q@m"]}})
