@@ -10,10 +10,15 @@
 1-b 실측 결과 표(항목 #2~#13, `claude 2.1.241`), 그 아래 발견 N1·N2·N4·N6,
 1-c의 C1(확장 포맷 값 표). 메서드마다 근거 항목 번호를 적어 둔다 — 실제 CLI가 바뀌었을 때
 드리프트가 보이게 하려는 것이다. **명령 메서드에 번호가 없는 동작은 아래 목록에 있어야
-한다**(파일 입출력 헬퍼는 CLI 동작이 아니라 근거가 없다).
+한다**(순수 파일 입출력 헬퍼 `_read`/`_write`는 CLI 동작이 아니라 근거가 없다).
 
-**실측 없음 — 추정으로 채운 갈래 일곱.** 실제 CLI와 어긋날 수 있고, 어긋나도 이 저장소
+**실측 없음 — 추정으로 채운 갈래 여덟.** 실제 CLI와 어긋날 수 있고, 어긋나도 이 저장소
 안에서는 드러나지 않는다(에뮬레이터가 곧 기준이므로).
+
+*목록의 규율*: **CLI가 파일에 무엇을 남기는지를 정하는 자리는 헬퍼라도 넣는다**
+(`_forget_installed`·`_mark_installed`가 그래서 2번·8번이다). 순수 입출력(`_read`/`_write`)과
+CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`)는 넣지 않는다 — 대신 그 자리에
+픽스처 결정임을 적는다.
 
   1. `marketplace remove`가 `pluginConfigs`까지 지우는가. 1-b #8은 `enabledPlugins`에서
      사라진다는 것만 쟀다. #6(`uninstall`)이 두 필드를 함께 지우므로 같은 규율을 폈다.
@@ -32,12 +37,21 @@
   7. directory 출처 값의 모양(`set_directory_marketplace`). 1-b의 픽스처가 로컬 디렉토리
      마켓플레이스였으므로 그 출처 자체는 실재하지만, 브리프에 JSON 모양이 기록돼 있지
      않다. `plugin_config._source_kind`가 읽는 형태에 맞췄다.
+  8. `install`이 **다른 스코프 항목을 보존하는가**(`_mark_installed`). N4는 배열의 존재와
+     항목의 필드를 쟀을 뿐, `install --scope user`가 project 스코프 항목을 건드리지
+     않는다는 것은 재지 않았다.
 
 **재현하지 않는 것(의도).** `install --scope project|local`(이 동기화는 전부 user
 스코프다 — spec 9.3.1), `plugin update`, `plugin tag`, `uninstall --keep-data`,
-`~/.claude/plugins/cache/`(1-b #13 — uninstall 후에도 남고 한 플러그인의 버전 디렉토리가
-여럿 쌓인다), `known_marketplaces.json`(1-b #9·N4 — 기기별 절대 경로 `installLocation`이
-들어 있어 동기화 대상이 될 수 없다).
+`~/.claude/plugins/cache/`(1-b #13 — uninstall 후에도 남는다. 한 플러그인의 버전
+디렉토리가 여럿 쌓인다는 것은 1-c "그 밖에 기록해 둘 표면"이다),
+`known_marketplaces.json`(1-b #9·N4 — 기기별 절대 경로 `installLocation`이
+들어 있어 동기화 대상이 될 수 없다), 그리고 **`install`의 실패 갈래 둘**(1-b #3 미등록
+마켓플레이스 · #4 없는 플러그인 — 둘 다 **exit 1을 실측**했으나 여기서는 언제나 0이다).
+마지막 것은 추정이 아니라 의도적 미재현이다. #3의 **결과**(등록 실패 → 소속 플러그인
+미설치)는 `Device.restore`의 `fail_marketplaces`가 층을 바꿔 흉내내므로 9.3.2의 blocked
+갈래는 검증된다. #4에는 대역이 없다 — 없는 플러그인을 설치하려는 계획을 만드는 시나리오를
+쓸 때 이 자리를 먼저 고칠 것.
 """
 import json
 import os
@@ -58,6 +72,12 @@ class PluginCLI:
         self.held_path = os.path.join(home, ".claude", ".sync-state", "plugins-held.json")
         os.makedirs(os.path.dirname(self.settings_path), exist_ok=True)
         os.makedirs(os.path.dirname(self.installed_path), exist_ok=True)
+        # **픽스처 결정이지 CLI 동작이 아니다.** 1-b #3은 실제 CLI가 실패했을 때
+        # settings.json을 "만들지도 않는다"고 기록한다 — 즉 이 파일의 존재를 CLI가
+        # 보장하지 않는다. 여기서 미리 만드는 것은 명령 메서드가 읽기-수정-쓰기만
+        # 하도록 두어 각 메서드의 근거를 1-b 항목 하나에 묶어 두기 위해서다.
+        # 파일 부재 자체를 재는 시나리오는 이 인스턴스를 쓰지 말고 직접 지울 것
+        # (test_plugin_cycle.py의 skipped 계열이 그렇게 한다).
         self._write(self.settings_path, {"enabledPlugins": {}, "extraKnownMarketplaces": {},
                                          "pluginConfigs": {}})
         # N4 — installed_plugins.json은 자체 "version": 2 스키마를 갖고, plugins[<id>]가
@@ -98,6 +118,8 @@ class PluginCLI:
 
         다른 스코프 항목은 보존한다. read_installed가 user 스코프만 보고 auto·설치를
         판정하므로(spec 3.4), 그 필터가 실제로 필터로 동작하는 입력을 만들 수 있어야 한다.
+        **보존 자체는 실측 없음 — 추정**(모듈 docstring 8번): N4는 배열의 존재와 항목의
+        필드를 쟀을 뿐 다른 스코프 항목의 운명은 재지 않았다.
         """
         data = self.installed()
         entries = [e for e in data["plugins"].get(plugin_id, [])

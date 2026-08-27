@@ -219,6 +219,9 @@ def test_marketplace_remove_cascades_to_member_plugins(tmp_path):
     assert cli.settings()["pluginConfigs"] == {}
     # 설치 기록도 소속 플러그인만 사라진다.
     assert set(cli.installed()["plugins"]) == {"q@other"}
+    # 재실행은 exit 1 (1-b #8). uninstall(#6)·enable/disable(#5)의 같은 갈래와 짝이다 —
+    # restore가 이 명령을 실행하지 않더라도 세 형제의 규약은 함께 고정해 둔다.
+    assert cli.marketplace_remove("m") == 1
 
 
 def test_dependency_install_marks_auto_and_explicit_install_clears_it(tmp_path):
@@ -248,8 +251,8 @@ def test_installing_at_user_scope_keeps_other_scope_entries(tmp_path):
 
     이 동기화는 전부 user 스코프로 동작하므로(9.3.1), project 항목을 함께 지우면
     read_installed의 스코프 필터가 필터로 동작하는 입력 자체를 만들 수 없게 된다.
-    **실측 없음 — 추정**: N4가 배열의 존재와 항목의 필드를 쟀을 뿐, `install --scope
-    user`가 다른 스코프 항목을 건드리지 않는다는 것은 재지 않았다.
+    **실측 없음 — 추정**(plugin_cli 모듈 docstring 8번): N4가 배열의 존재와 항목의 필드를
+    쟀을 뿐, `install --scope user`가 다른 스코프 항목을 건드리지 않는다는 것은 재지 않았다.
     """
     cli = PluginCLI(str(tmp_path))
     with open(cli.installed_path, "w", encoding="utf-8") as f:
@@ -300,6 +303,31 @@ def test_backup_without_push_does_not_advance_base(tmp_path):
     dev = make_device(tmp_path)
     dev.cli.install("p@m")
     dev.backup(push=False)
+    assert dev.base() is None
+
+
+def test_a_skipped_backup_does_not_promote_stale_staging(tmp_path):
+    """`Device.backup`의 `rmtree`를 지키는 단정. 없으면 옛 staged 내용이 base로 올라간다.
+
+    이 함수 위의 주석이 M7 등가성의 근거로 드는 것이 그 rmtree다 — 상태 (ii)
+    (`status "skipped"` + staged 잔존)를 rmtree가 애초에 만들지 않는다는 것. 그 근거를
+    여기서 관측한다.
+
+    두 조건이 갈리려면 **base가 비어 있는 채로 staged만 남은 시점**이 필요하다. 첫 백업을
+    `push=False`로 돌리면 그 시점이 만들어진다. 이어서 settings.json을 지우고 백업하면
+    collect가 skipped로 접히므로, rmtree가 있으면 게이트가 끝내 닫혀 base가 생기지 않고,
+    rmtree가 없으면 update_base가 앞선 실행이 남긴 파일을 base로 옮긴다.
+
+    (실측 — 이 테스트가 없을 때 "rmtree 제거" 변조가 757 passed로 살아남았다.)
+    """
+    dev = make_device(tmp_path)
+    dev.cli.install("p@m")
+    dev.backup(push=False)
+    # 이 시점에 staged가 실제로 남아 있어야 아래 단정이 공허하지 않다.
+    assert os.path.exists(os.path.join(dev.staging, pc.BACKUP_RELPATH))
+    os.remove(dev.cli.settings_path)
+    report = dev.backup()
+    assert report["status"] == "skipped"
     assert dev.base() is None
 
 
