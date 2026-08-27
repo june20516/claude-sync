@@ -6115,7 +6115,8 @@ class PluginCLI:
 - `marketplace_remove`의 연쇄 삭제를 지우기 → 연쇄 테스트가 잡아야 한다
 - `install`의 `_mark_installed(plugin_id, auto=False)`를 지우기 → auto 해제 테스트가 잡아야 한다
 - `install --config`의 `options.update`를 `entry["options"] = config`로 바꾸기 → 부분 병합 테스트가 잡아야 한다
-- `Device.backup`의 게이트 `os.path.exists(staged)`를 `report["status"] == "ok"`로 바꾸기 → **rename 계약이 무의미해진다.** 레포 쓰기 실패 테스트가 잡아야 한다
+- `Device.backup`의 게이트 `os.path.exists(staged)`를 `report["status"] == "ok"`로 바꾸기 → **등가 변이다(실측). 잡히지 않는 것이 정상이다.** 두 조건이 갈리는 상태는 둘뿐이고 둘 다 관측 불가다 — (i) `status "ok"` + staged 부재는 `update_base.py`가 경고만 내고 exit 0, base SHA 불변이며, (ii) `status "skipped"` + staged 잔존은 **존재 게이트 쪽이 오히려 위험한데**(옛 staged 내용이 base를 덮는다) `backup()`의 `rmtree`가 그 상태를 막는다. 존재 게이트를 쓰는 이유는 더 강해서가 아니라 **SKILL.md 배선이라서**이고, 같은 계약을 `update_base`가 한 번 더 진다. 그 근거를 `Device.backup` 주석에 남길 것
+- `collect`의 rename을 레포 쓰기보다 **앞으로** 옮기기 → rename 계약을 실제로 관측하는 단정이 잡아야 한다. **규정의 `test_base_does_not_advance_when_the_repo_file_cannot_be_written`의 base 단정만으로는 부족하다** — 그 테스트는 `update_base`를 아예 부르지 않아 base가 무조건 그대로이고, 그 단정은 공허하다(실측). 스테이징 최종 파일이 직전 백업 내용 그대로인지를 재는 단정이 함께 있어야 한다
 
 - [ ] **Step 5: Commit**
 
@@ -6131,6 +6132,10 @@ git commit -m "test: CLI 에뮬레이터와 교대 하네스, 부트스트랩·r
 **근거:** spec 14.2 #2·#3·#4·#5·#7·#8, 6.4, 7.3, 9.3.4, 9.3.5
 
 **판정표를 100% 덮은 테스트가 전부 통과하는데도 시스템이 데이터를 잃을 수 있다.** 아래 여섯은 단위 테스트로 잡히지 않는 것들이고, 특히 #4·#5·#8은 서로를 대체하지 못한다 — #2·#3은 보류가 **유지되는 동안만** 보고, #2는 "사라지지 않음"만 보므로 **영원히 다시 묻는** 실패를 통과시킨다.
+
+**에뮬레이터의 `marketplace add`는 언제나 github 모양의 값을 만든다(Task 12의 추정 — 실측 없음).** url·git 출처 시나리오를 쓰려면 **그 자리를 먼저 고쳐야 한다.** 고치지 않고 쓰면 시나리오가 조용히 github를 검증하고, `restorable`·`marketplace_arg`의 출처별 갈래는 하나도 타지 않는다.
+
+**`Device.restore`는 Task 12에서 어떤 테스트도 타지 않는다** — 이 task가 그 경로의 첫 소비자다. 그때까지 그 경로의 변조는 전부 살아남는 상태였으므로, 여기서 도입하는 시나리오가 그 가드를 함께 세운다.
 
 **Files:**
 - Modify: `plugins/claude-sync/tests/test_plugin_cycle.py`
