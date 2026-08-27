@@ -788,6 +788,46 @@ def test_compare_splits_absent_locally_by_actual_installation(tmp_path):
     assert section["not_installed"] == ["ghost@m"]
 
 
+def test_compare_splits_plugin_configs_by_installation_too(tmp_path):
+    """설치 구별은 **두 섹션 모두**에 실린다 — 위의 enabledPlugins만 재면 절반이 미측정이다.
+
+    INSTALL_KEYED_SECTIONS를 enabledPlugins 하나로 좁히는 회귀는 그 섹션을 재는 단정에
+    걸리지 않는다 — 거기서는 필드가 그대로 남기 때문이다. 좁히면 pluginConfigs의
+    "미설치" 문구가 통째로 사라지고, read_hold_inputs가 installed_ids를 접어도 되는
+    근거("그 값을 읽는 자리가 전부 함께 접힌 **두** 섹션 안에 있다")의 절반이 검증되지
+    않은 채 남는다.
+
+    here@d는 **설치돼 있으면서 auto가 아니다.** auto 집합과 설치 집합이 같은 fixture에서는
+    이 필드를 auto 집합으로 판정하는 회귀가 무증상이라, 그 변조가 compare 쪽에서 오래
+    미측정으로 남아 있었다(Task 10.5 quality review Q9). 실제 증상은 수동 설치한
+    플러그인을 전부 "미설치"로 보고하는 것이다.
+
+    보류는 H2(레포의 directory 마켓플레이스)로 만든다. 다섯 키가 전부 보류여야 아래 두
+    목록이 저절로 좁아진 것과 구별된다.
+
+    **not_installed을 원소 넷으로 두는 것은 순서를 재기 위해서다** — 이 목록을 집합
+    순회로 만드는 회귀는 정렬 순서를 깬다. 다만 그 가드는 **확률적이다**: 집합 순회
+    순서가 우연히 정렬 순서와 같으면 통과한다(실측 — 원소 셋에서 PYTHONHASHSEED에 따라
+    통과하는 시드가 있었다). 원소를 늘리는 것이 그 확률을 낮추는 유일한 수단이다.
+    """
+    out = compare(tmp_path, local={},
+                  repo={"extraKnownMarketplaces": {"d": DIR_SOURCE},
+                        "pluginConfigs": {"here@d": {"options": {}},
+                                          "gone@d": {"options": {}},
+                                          "also@d": {"options": {}},
+                                          "mid@d": {"options": {}},
+                                          "zap@d": {"options": {}}}},
+                  installed=write_installed(tmp_path, {"here@d": [{"scope": "user"}]}))
+    section = out["sections"]["pluginConfigs"]
+    assert section["status"] == "ok"
+    assert section["held"] == {"auto": [], "declined": [],
+                               "local_marketplace": ["also@d", "gone@d", "here@d",
+                                                     "mid@d", "zap@d"]}
+    assert section["absent_locally"] == ["also@d", "gone@d", "here@d", "mid@d", "zap@d"]
+    # here@d만 빠진다 — 설치돼 있기 때문이다(auto는 아니다).
+    assert section["not_installed"] == ["also@d", "gone@d", "mid@d", "zap@d"]
+
+
 def test_compare_does_not_call_a_marketplace_uninstalled(tmp_path):
     """설치 구별은 **키가 플러그인 id인 두 섹션에만** 싣는다.
 
@@ -1328,6 +1368,50 @@ def test_plan_does_not_reinstall_what_only_the_manifest_default_enables(tmp_path
     assert out["sections"]["enabledPlugins"]["add"] == ["default@m", "miss@m"]
     assert out["install"] == ["miss@m"]
     assert out["skipped_already_installed"] == ["default@m"]
+
+
+def test_a_broken_held_file_does_not_empty_the_installed_set(tmp_path):
+    """부분 실패 — 보류 파일만 깨진 실행에서 설치 집합은 **살아 있어야 한다**.
+
+    read_hold_inputs가 installed_ids를 빈 frozenset으로 접는 갈래는 AutoFlagsUnavailable
+    **하나뿐**이고, 그 갈래는 enabledPlugins·pluginConfigs를 함께 skip한다. 그 대응이 이
+    접힘이 fail-open이 아닌 유일한 근거다. 보류 파일 갈래(HeldStateUnavailable)는
+    pluginConfigs 하나만 skip하므로, 여기서도 설치 집합을 접으면 enabledPlugins가 살아
+    있는 채로 그 집합만 비어 정확히 근거가 경고한 재앙이 일어난다 — compare는 설치된
+    플러그인 전부를 "미설치"로 보고하고, build_plan은 그 전부를 2단계에 실어
+    bare install → exit 1의 거짓 실패를 양산한다(9.3.1).
+
+    **한 fixture를 두 스크립트에 함께 건다.** 설치 집합의 소비자가 그 둘뿐이라, 한쪽만
+    재면 다른 쪽에서 조용히 갈릴 수 있다.
+
+    ghost@m은 정말로 설치돼 있지 않다 — 없으면 "미설치가 비었다"와 "2단계가 비었다"가
+    설치 판정과 무관하게 저절로 참이 된다.
+
+    **설치된 넷은 skipped_already_installed의 순서를 재기 위한 개수다** — 이 목록을 설치
+    집합 순회로 만드는 회귀는 정렬 순서를 깬다. 그 가드도 위와 같은 이유로 확률적이다.
+    """
+    held = tmp_path / "plugins-held.json"
+    held.write_text("{not json", encoding="utf-8")
+    # 값이 확장 포맷이라 다섯 다 H3 보류다 — 보류여야 absent_locally에 들어온다.
+    repo = {"enabledPlugins": {"one@m": ["1.0.0"], "two@m": ["2.0.0"],
+                               "three@m": ["3.0.0"], "four@m": ["4.0.0"],
+                               "ghost@m": ["9.0.0"]},
+            "extraKnownMarketplaces": {"m": GH}}
+    installed = write_installed(tmp_path, {"one@m": [{"scope": "user"}],
+                                           "two@m": [{"scope": "user"}],
+                                           "three@m": [{"scope": "user"}],
+                                           "four@m": [{"scope": "user"}]})
+    out = compare(tmp_path, local={}, repo=repo, installed=installed, held=str(held))
+    assert out["sections"]["pluginConfigs"]["status"] == "skipped"
+    section = out["sections"]["enabledPlugins"]
+    assert section["status"] == "ok"
+    assert section["absent_locally"] == ["four@m", "ghost@m", "one@m", "three@m", "two@m"]
+    assert section["not_installed"] == ["ghost@m"]
+
+    plan = build_plan(tmp_path, local={}, repo=repo, installed=installed, held=str(held))
+    assert plan["sections"]["pluginConfigs"]["status"] == "skipped"
+    assert plan["install"] == ["ghost@m"]
+    assert plan["skipped_already_installed"] == ["four@m", "one@m", "three@m", "two@m"]
 
 
 def test_plan_keeps_the_value_and_dependency_steps_on_both_lists(tmp_path):
