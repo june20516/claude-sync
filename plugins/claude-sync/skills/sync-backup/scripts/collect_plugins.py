@@ -66,7 +66,10 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
     repo = pc.load_backup(repo_file)
     base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
 
-    auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
+    # installed_ids는 쓰지 않는다 — backup은 "이 기기에 설치돼 있는가"를 묻지 않는다.
+    # 그 질문이 필요한 곳은 restore의 2단계/4단계와 status의 설치 구별 둘뿐이다(9.3.1).
+    auto_ids, _installed_ids, held_state, skipped = pc.read_hold_inputs(
+        installed_path, held_path)
     # 훅과 보고 컨텍스트를 **한 번의 (local, repo)** 로 만든다. 따로 부르면 두 입력이
     # 같다는 보장이 이 줄의 규율뿐이고, 어긋나면 held_kinds가 분류에 실패해 섹션이
     # 통째로 skipped가 된다.

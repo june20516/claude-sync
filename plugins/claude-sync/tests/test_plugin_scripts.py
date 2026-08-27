@@ -740,10 +740,12 @@ def test_compare_distinguishes_installed_extended_values(tmp_path):
 def test_absent_locally_is_not_a_claim_that_the_plugin_is_not_installed(tmp_path):
     """이름이 뜻하는 것은 "로컬 섹션 문서에 값이 없다"이지 "미설치"가 아니다.
 
-    installed_plugins.json에 있다는 것 자체가 이 기기에 설치되어 있다는 뜻인데(3.4),
-    그 파일에서 auto 플래그만 읽는 이 스크립트는 설치 여부를 알 수 없다. 아래가 그
-    반례다 — dep@m은 **설치되어 있으면서** settings.json에는 없다. 이 조합에
+    installed_plugins.json에 있다는 것 자체가 이 기기에 설치되어 있다는 뜻이다(3.4).
+    아래가 그 반례다 — dep@m은 **설치되어 있으면서** settings.json에는 없다. 이 조합에
     "미설치"라는 이름을 붙이면 보고가 실측으로 거짓이 된다.
+
+    설치 여부는 **not_installed가 따로 말한다**(9.2). 두 필드가 같은 fixture에서 서로
+    다른 답을 내는 것이 이 이름을 유지한 이유다.
     """
     out = compare(tmp_path, local={}, repo={"enabledPlugins": {"dep@m": True}},
                   installed=write_installed(tmp_path,
@@ -754,6 +756,70 @@ def test_absent_locally_is_not_a_claim_that_the_plugin_is_not_installed(tmp_path
     assert section["held"]["auto"] == ["dep@m"]
     # 그런데도 여기 들어온다 — "레포 값을 보존합니다"가 거짓이 되는 조건이 이것이다.
     assert section["absent_locally"] == ["dep@m"]
+    # Task 8이 이름을 바꾼 계기가 된 조합이다. 여기 들어가면 보고가 거짓이 된다.
+    assert section["not_installed"] == []
+
+
+def test_compare_splits_absent_locally_by_actual_installation(tmp_path):
+    """9.2 — H3 항목은 "설치됨"과 "미설치"를 구별해 말한다.
+
+    dep@m은 **설치되어 있으면서** settings.json에 없다(auto 의존성). ghost@m은 어디에도
+    없다. 한 fixture에서 두 갈래가 **둘 다 비지 않아야** 이 배선이 "absent_locally를
+    그대로 복사한 것"이나 하드코딩과 구별된다.
+
+    absent_locally는 그대로 둔다 — "레포 값을 보존합니다"가 거짓이 되는 조건은 설치
+    여부와 별개의 사실이고 spec 8.4가 그것을 요구한다.
+
+    stale@m은 이 필드가 **absent_locally의 부분집합**임을 못박는다 — 로컬 문서에 값이
+    있으면서 설치되지 않은 상태다. CLI는 그런 상태를 만들지 않는다(9.3.3: uninstall이
+    키를 지운다). 보류 키 전체에서 뽑으면 이 키가 들어와, 문구가 값 차이를 말해야 할
+    항목(8.4의 셋째 행)까지 "미설치"로 보고된다.
+    """
+    out = compare(tmp_path, local={"enabledPlugins": {"stale@m": True}},
+                  repo={"enabledPlugins": {"dep@m": True, "ghost@m": ["1.0.0"],
+                                           "stale@m": ["2.0.0"]}},
+                  installed=write_installed(
+                      tmp_path, {"dep@m": [{"scope": "user", "auto": True}]}))
+    section = out["sections"]["enabledPlugins"]
+    # 세 키가 전부 보류다 — 하나라도 빠지면 아래 두 목록이 저절로 좁아진다.
+    assert section["held"] == {"auto": ["dep@m"], "local_marketplace": [],
+                               "extended_value": ["ghost@m", "stale@m"]}
+    assert section["absent_locally"] == ["dep@m", "ghost@m"]
+    assert section["not_installed"] == ["ghost@m"]
+
+
+def test_compare_does_not_call_a_marketplace_uninstalled(tmp_path):
+    """설치 구별은 **키가 플러그인 id인 두 섹션에만** 싣는다.
+
+    extraKnownMarketplaces의 키는 마켓플레이스 이름이라 installed_ids와 이름 공간이
+    다르다 — 실으면 등록만 안 된 마켓플레이스가 전부 "미설치 플러그인"으로 보고된다.
+    같은 실행의 enabledPlugins가 그 필드를 **갖는** 것을 함께 재어, 필드가 어디에도
+    없는 회귀와 구별한다.
+    """
+    doc = {"enabledPlugins": {"p@d": True}, "extraKnownMarketplaces": {"d": DIR_SOURCE}}
+    out = compare(tmp_path, local={}, repo=doc)
+    markets = out["sections"]["extraKnownMarketplaces"]
+    # 비지 않았다 — 실을 값이 있었는데도 싣지 않은 것이다.
+    assert markets["absent_locally"] == ["d"]
+    assert "not_installed" not in markets
+    assert out["sections"]["enabledPlugins"]["not_installed"] == ["p@d"]
+
+
+def test_compare_does_not_claim_everything_is_uninstalled_when_a_section_is_skipped(
+        tmp_path):
+    """설치 집합을 못 읽었는데 "전부 미설치"로 접히면 restore가 전부 재설치를 시도한다.
+
+    같은 fixture를 정상 installed 파일로 한 번 더 돌려 not_installed가 **비지 않게**
+    나오는 것을 함께 잰다 — 없으면 "필드가 없다"가 설치 판정과 무관하게 참이 된다.
+    """
+    repo = {"enabledPlugins": {"ghost@m": ["1.0.0"]}}
+    ok = compare(tmp_path, local={}, repo=repo)
+    assert ok["sections"]["enabledPlugins"]["not_installed"] == ["ghost@m"]
+    out = compare(tmp_path, local={}, repo=repo,
+                  installed=str(tmp_path / "missing.json"))
+    section = out["sections"]["enabledPlugins"]
+    assert section == pc.skipped_section(section["reason"])
+    assert "not_installed" not in section
 
 
 def test_compare_splits_the_three_buckets_without_swapping_them(tmp_path):
@@ -1213,6 +1279,83 @@ def test_plan_carries_both_values_for_every_decided_key(tmp_path):
     # 정렬이 고정되고 같은 파일의 다른 출력은 아닌 비대칭이 남는다. 그것을 여기서 닫는다.
     assert list(out["repo_values"]) == sorted(out["repo_values"])
     assert list(out["local_values"]) == sorted(out["local_values"])
+
+
+def test_plan_splits_bare_install_from_the_config_step_by_the_installed_set(tmp_path):
+    """9.3.1 — 2단계(`plugin install <id>`)와 4단계(`install --config k=v`)는 다른 단계다.
+
+    Task 9 quality review가 실측한 재현이 이것이다: 이미 설치된 플러그인에 bare install이
+    나가면 CLI가 exit 1로 죽어 **거짓 실패**가 된다. old@m은 이 기기에 **설치돼 있고**
+    레포에만 pluginConfigs가 있으므로 2단계가 아니라 4단계다.
+
+    두 목록이 **서로 다른 비지 않은 값**을 갖는다 — 한쪽이 비면 분리 자체가 측정되지 않고
+    "합쳐도 같은 결과"와 구별할 수 없다.
+    """
+    out = build_plan(
+        tmp_path, local={},
+        repo={"enabledPlugins": {"new@m": True},
+              "extraKnownMarketplaces": {"m": GH},
+              "pluginConfigs": {"old@m": {"options": {"apiKey": pc.SENTINEL}}}},
+        installed=write_installed(tmp_path, {"old@m": [{"scope": "user"}]}))
+    # 두 섹션이 각각 후보를 하나씩 냈다 — 한 섹션만 기여하면 분리가 절반만 측정된다.
+    assert out["sections"]["enabledPlugins"]["add"] == ["new@m"]
+    assert out["sections"]["pluginConfigs"]["needs_secret"] == ["old@m"]
+    assert out["install"] == ["new@m"]
+    assert out["skipped_already_installed"] == ["old@m"]
+    assert out["config_keys"] == {"old@m": ["apiKey"]}
+
+
+def test_plan_does_not_reinstall_what_only_the_manifest_default_enables(tmp_path):
+    """**enabledPlugins의 키 부재는 미설치가 아니다** — 매니페스트 기본값(defaultEnabled)에
+    위임하는 상태다. 이 task의 존재 이유가 그 구별이다.
+
+    default@m은 settings.json의 enabledPlugins에 **없지만** 설치돼 있다. 2단계/4단계
+    판정을 설치 집합 대신 **로컬 섹션 문서**로 하면 이 키가 2단계로 가서 bare install이
+    나가고, 이미 설치된 플러그인이라 exit 1로 실패한다.
+
+    miss@m은 어디에도 없다 — 2단계가 비지 않아야 위 단정이 "install이 늘 빈다"로 저절로
+    참이 되지 않는다.
+    """
+    out = build_plan(
+        tmp_path, local={},
+        repo={"enabledPlugins": {"default@m": True, "miss@m": True},
+              "extraKnownMarketplaces": {"m": GH}},
+        installed=write_installed(tmp_path, {"default@m": [{"scope": "user"}]}))
+    # 둘 다 add 버킷이다 — 로컬 섹션 문서만 보면 구별할 수 없다는 사실을 못박는다.
+    assert out["sections"]["enabledPlugins"]["add"] == ["default@m", "miss@m"]
+    assert out["install"] == ["miss@m"]
+    assert out["skipped_already_installed"] == ["default@m"]
+
+
+def test_plan_keeps_the_value_and_dependency_steps_on_both_lists(tmp_path):
+    """3·4단계의 기준은 2단계 목록이 아니라 **두 목록의 합집합**이다.
+
+    disable_after_install — 이미 설치된 id도 값 맞추기(3단계) 대상이다. here@m은 설치돼
+      있고 로컬 enabledPlugins에 값이 없으며(매니페스트 기본값에 위임 = 켜짐으로 가정)
+      레포가 false다. 2단계 목록으로 좁히면 이 disable이 사라져 플러그인이 켜진 채 남는다.
+    depends_on — 9.3.2가 "같은 규칙이 3·4단계에도 적용된다"를 못 박는다. 두 단계 모두
+      `plugin install <id@marketplace>` 형태라 1단계 등록에 의존한다. 좁히면 등록에
+      실패한 마켓플레이스로 4단계 명령이 나가 거짓 실패를 양산한다.
+    config_keys — 코어의 needs_secret 버킷에서 나오고 설치 여부와 무관하다. 어느 한쪽으로
+      좁히면 다른 쪽 id의 설정이 어디에서도 채워지지 않는다.
+
+    세 필드가 **두 목록의 항목을 모두** 담는지가 요지이므로, 각 목록에 항목이 하나씩
+    들어가는 fixture를 쓴다.
+    """
+    out = build_plan(
+        tmp_path, local={},
+        repo={"enabledPlugins": {"here@m": False, "gone@m": False},
+              "extraKnownMarketplaces": {"m": GH},
+              "pluginConfigs": {"here@m": {"options": {"apiKey": pc.SENTINEL}},
+                                "gone@m": {"options": {"token": pc.SENTINEL}}}},
+        installed=write_installed(tmp_path, {"here@m": [{"scope": "user"}]}))
+    assert out["install"] == ["gone@m"]
+    assert out["skipped_already_installed"] == ["here@m"]
+    assert out["disable_after_install"] == ["gone@m", "here@m"]
+    assert out["depends_on"] == {"gone@m": "m", "here@m": "m"}
+    assert out["config_keys"] == {"gone@m": ["token"], "here@m": ["apiKey"]}
+    # 값 페이로드도 합집합을 따른다 — 좁히면 SKILL.md가 3·4단계 문구를 만들 값을 잃는다.
+    assert sorted(out["repo_values"]) == ["gone@m", "here@m"]
 
 
 def test_plan_reads_base_of_each_section_from_that_section(tmp_path):

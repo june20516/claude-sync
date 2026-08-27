@@ -21,6 +21,14 @@ sys.path.insert(
 import keyed_sync as ks  # noqa: E402
 import plugin_config as pc  # noqa: E402
 
+# 설치 구별(not_installed)을 실을 수 있는 섹션 — **키가 플러그인 id인 둘뿐이다.**
+# extraKnownMarketplaces의 키는 마켓플레이스 이름이라 installed_ids와 이름 공간이 달라,
+# 실으면 등록만 안 된 마켓플레이스가 전부 "미설치 플러그인"으로 보고된다.
+# 이 둘이 AutoFlagsUnavailable의 skip 범위와 **같은 짝**인 것은 우연이 아니다(3.4):
+# 설치 집합을 못 읽은 실행에서는 이 둘이 함께 접히므로, 이 필드가 실리는 곳에서는
+# installed_ids가 언제나 실제로 읽힌 값이다.
+INSTALL_KEYED_SECTIONS = ("enabledPlugins", "pluginConfigs")
+
 
 def compare(backup_path, settings_path=None, installed_path=None, held_path=None):
     """{"status": "ok", "sections": {섹션: {...}}}
@@ -47,7 +55,8 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
     """
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)
-    auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
+    auto_ids, installed_ids, held_state, skipped = pc.read_hold_inputs(
+        installed_path, held_path)
     # 훅과 보고 컨텍스트를 **한 번의 (local, repo)** 로 만든다. 따로 부르면 두 입력이
     # 어긋날 수 있고, 그러면 hold가 보류한 키를 held_kinds가 분류하지 못해 섹션이
     # 통째로 skipped가 된다 — 아무것도 잘못되지 않았는데 상태가 사라진다.
@@ -67,7 +76,7 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
         local_norm = normalize(local[section])
         out = ks.diff(local[section], repo[section],
                       normalize=normalize, hold=hooks[section]["hold"])
-        sections[section] = {
+        entry = {
             "status": "ok",
             "only_local": out["only_local"],
             "only_repo": out["only_repo"],
@@ -87,12 +96,23 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
             # **값 보류 키 중 로컬 섹션 문서에 값이 없는 것.** H3만이 아니라 out["held"]
             # 전부를 훑는다 — "레포 값을 보존합니다"가 거짓이 되는 조건이 종류와
             # 무관하게 정확히 이것이기 때문이다(spec 8.4).
-            # **not_installed이라 부르지 않는다.** 이 스크립트는 설치 여부를 알 수 없다 —
-            # installed_plugins.json에서 읽는 것은 auto 집합뿐이고(read_auto_ids), auto
-            # 키는 그 파일에 있다는 것 자체가 이 기기에 설치되어 있다는 뜻이라(spec 3.4)
-            # "미설치"로 부르면 실측으로 거짓이 된다.
+            # **이 필드는 "미설치"가 아니다.** 두 사실이 갈리기 때문이다 — auto 의존성은
+            # installed_plugins.json에 있으므로 **설치되어 있으면서** settings.json에는
+            # 없다(3.4). 설치 여부는 아래 not_installed가 따로 말한다.
             "absent_locally": [k for k in out["held"] if k not in local[section]],
         }
+        # **"설치됨"과 "미설치"를 갈라 말한다**(9.2). absent_locally의 부분집합이며,
+        # 나머지(= 설치되어 있는데 로컬 섹션 문서에 값이 없는 항목)가 "레포 값을
+        # 보존합니다"를 참으로 말할 수 있는 쪽이다. 두 목록을 따로 싣지 않는 것은 같은
+        # 분할을 두 곳에서 만들지 않기 위해서다 — 갈리면 증상이 없다.
+        # **보류 키 전체가 아니라 absent_locally에서 뽑는다.** 로컬 섹션 문서에 값이 있는
+        # 보류 키의 문구는 설치 여부가 아니라 값 차이를 말하고(8.4의 셋째 행), "값은
+        # 있는데 설치는 안 된" 상태는 CLI가 만들지 않는다 — uninstall이 키를 지우기
+        # 때문이다(9.3.3). 넓히면 그 문구가 "미설치"로 뒤집힌다.
+        if section in INSTALL_KEYED_SECTIONS:
+            entry["not_installed"] = [k for k in entry["absent_locally"]
+                                      if k not in installed_ids]
+        sections[section] = entry
     return {"status": "ok", "sections": sections}
 
 

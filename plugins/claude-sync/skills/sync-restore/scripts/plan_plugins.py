@@ -29,6 +29,8 @@ import sync_state as ss  # noqa: E402
 
 # 설치 대상이 되는 버킷. 값 보류만인 키(H3)는 add로 들어오므로 여기 포함된다 —
 # **설치는 한다.** 행동 보류 키는 코어가 action_held 버킷에만 넣으므로 자동으로 빠진다.
+# 이 버킷들이 내는 것은 "레포가 원하는 상태에 도달하려면 손대야 할 id" 전체다.
+# 그것을 2단계와 4단계로 가르는 것은 아래 build_plan의 설치 집합 하나다(9.3.1).
 INSTALL_BUCKETS = ("add", "needs_secret")
 
 # 등록 후보가 되는 버킷. to_register와 skipped_always_known이 **같은 집합**을 훑어야
@@ -58,22 +60,27 @@ def _plan_sections(local, repo, base, hooks, skipped):
     return out
 
 
-def _install_dependencies(install):
-    """설치 키 → 먼저 등록해야 할 마켓플레이스 이름 (9.3.2).
+def _install_dependencies(candidates):
+    """손댈 id → 먼저 등록해야 할 마켓플레이스 이름 (9.3.2).
+
+    **2단계와 4단계를 모두 받는다.** 9.3.2가 "같은 규칙이 3·4단계에도 적용된다"를 못
+    박고, 두 단계가 내는 명령이 둘 다 `plugin install <id@marketplace>` 형태라 1단계
+    등록에 똑같이 의존하기 때문이다. 2단계로 좁히면 등록에 실패한 마켓플레이스로 4단계
+    명령이 나가 거짓 실패를 양산한다 — 이 함수가 막으려는 바로 그 실패다.
 
     등록이 실패한 마켓플레이스의 플러그인은 설치를 시도하지 않는다 — 시도하면 CLI가
     모호한 문구로 실패해 거짓 실패를 양산한다. always-known 다섯은 등록 단계가 애초에
     없으므로 의존을 걸지 않는다(걸면 설치가 영영 차단된다).
 
-    **marketplace_of가 None인 갈래는 오늘 도달할 수 없다** — install ⊆ restorable이고
+    **marketplace_of가 None인 갈래는 오늘 도달할 수 없다** — candidates ⊆ restorable이고
     _plugin_restorable은 marketplace_of(key)가 None이면 거짓을 돌려주므로 그런 키는
-    unrestorable로 빠져 install에 들어오지 않는다. 그래도 거르는 이유는 빠졌을 때의
+    unrestorable로 빠져 candidates에 들어오지 않는다. 그래도 거르는 이유는 빠졌을 때의
     실패 모양이다: None은 ALWAYS_KNOWN에 없으므로 그대로 통과해 {"키": null}이 실리고,
     SKILL.md는 존재하지 않는 등록 단계를 기다리며 그 플러그인을 영영 차단한다 —
     조용하다. **도달 가능한 경로가 있다는 뜻으로 읽지 말 것.**
     """
     out = {}
-    for key in install:
+    for key in candidates:
         marketplace = pc.marketplace_of(key)
         if marketplace is not None and marketplace not in pc.ALWAYS_KNOWN:
             out[key] = marketplace
@@ -108,15 +115,25 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     접으면 마켓플레이스 등록처럼 멀쩡히 낼 수 있는 단계까지 함께 버려진다(9.3.6의 부분
     skip이 전체 skip으로 바뀐다). 그 대가로 **restore에서는 반대 방향이 위험하다**:
     installed_plugins.json 판정 불가로 두 섹션이 접힌 실행의 출력은
-    {"status": "ok", "install": [], "disable_after_install": [], "config_keys": {}}이라
+    {"status": "ok", "install": [], "skipped_already_installed": [],
+     "disable_after_install": [], "config_keys": {}}이라
     소비자가 최상위만 읽으면 "복원할 것이 없습니다"로 보고하고 **조용히 아무것도
     복원하지 않는다.** 섹션 단위 사실은 sections[<섹션>]["status"]에만 있고, 소비자는
     그것을 **반드시 따로 읽어야 한다.**
+
+    **2단계와 4단계가 갈리는 자리가 여기다**(9.3.1). 두 단계는 다른 명령이고 대상도
+    다르다 — 2단계는 `plugin install <id>`, 4단계는 `install --config k=v`다. 이미 설치된
+    플러그인에 2단계를 내면 CLI가 exit 1로 죽어 **거짓 실패**가 된다(Task 9 quality
+    review 실측). 가르는 기준은 **설치 집합 하나**이고 로컬 섹션 문서가 아니다 —
+    enabledPlugins의 키 부재는 미설치가 아니라 매니페스트 defaultEnabled에 위임하는
+    상태이므로(value_command가 같은 사실을 반대편에서 쓴다) 그것으로 가르면 이미 설치된
+    플러그인이 2단계로 간다.
     """
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)
     base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
-    auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
+    auto_ids, installed_ids, held_state, skipped = pc.read_hold_inputs(
+        installed_path, held_path)
     hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=held_state)
     sections = _plan_sections(local, repo, base, hooks, skipped)
 
@@ -145,20 +162,39 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
          "reserved": name in pc.RESERVED_MARKETPLACE_NAMES}
         for name in to_register]
 
-    # 2단계 — 설치. 3단계 — 값 맞추기. 부재는 여기 오지 않는다(레포에 있는 키만 본다).
-    install = [k for bucket in INSTALL_BUCKETS for k in plugins.get(bucket, [])]
-    install += [k for bucket in INSTALL_BUCKETS for k in configs.get(bucket, [])
-                if k not in install]
-    install = sorted(install)
-    # **install의 절반은 "설치 직후"가 아니다.** enabledPlugins 경로의 키는 정의상 로컬에
-    # 없으므로 설치 직후의 값 true가 맞지만, pluginConfigs 경로의 키는 이미 로컬에 설치돼
-    # 있을 수 있다 — 그 섹션의 route_new는 "그 섹션에" 레포 전용인 키를 훑을 뿐 플러그인
-    # 자체의 설치 여부와 무관하기 때문이다. 그래서 로컬에 값이 있으면 **그 값**을 쓰고,
-    # 없을 때만 설치 직후의 true로 떨어진다. 상수 true를 넣으면 value_command가 지키라고
-    # 받는 규칙("현재 상태와 다를 때만 낸다")을 유일한 호출부가 우회하고, 이미 꺼진
-    # 플러그인에 disable이 나가 exit 1의 거짓 실패가 된다(enable/disable은 멱등이 아니다).
+    # 손대야 할 id 전체. 부재는 여기 오지 않는다(레포에 있는 키만 본다).
+    # **이 목록을 한 번만 조립한다** — 아래 다섯 필드가 전부 여기서 파생된다. 두 곳에서
+    # 만들면 갈리고, 갈려도 증상이 없다.
+    candidates = [k for bucket in INSTALL_BUCKETS for k in plugins.get(bucket, [])]
+    candidates += [k for bucket in INSTALL_BUCKETS for k in configs.get(bucket, [])
+                   if k not in candidates]
+    candidates = sorted(candidates)
+    # 2단계 — `plugin install <id>`. 4단계 — `install --config k=v`(설정 값은 config_keys).
+    # **가르는 기준은 설치 집합 하나다**(위 docstring). 이미 설치된 id에 2단계를 내면
+    # CLI가 exit 1로 죽어 거짓 실패가 된다.
+    install = [k for k in candidates if k not in installed_ids]
+    # 1단계의 skipped_always_known과 같은 결의 **제외 목록**이다 — 어느 단계에서 왜
+    # 빠졌는지를 보고에 남겨야 SKILL.md가 "아무 일도 일어나지 않았다"와 구별할 수 있다.
+    # 이 id들에 남은 것은 3단계(disable_after_install)와 4단계(config_keys)뿐이다.
+    # **둘 다에 없으면 낼 명령이 없다.** enabledPlugins 기여로 들어온 id는 레포 값이
+    # 현재 상태와 같다는 뜻이고(value_command가 None을 냈다), pluginConfigs 기여로 들어온
+    # id는 되물을 option 키가 없다는 뜻이다(_config_secret_keys는 options만 본다).
+    # 후자가 레포와 완전히 같아졌다는 보장은 여기 없다 — 다만 **이미 설치된 플러그인에
+    # bare install을 내는 것은 exit 1로 죽으므로 대안이 아니다.**
+    skipped_already_installed = [k for k in candidates if k in installed_ids]
+    # **3단계의 기준은 두 목록 전부(candidates)다.** 이미 설치된 id도 값 맞추기 대상이다 —
+    # 로컬 enabledPlugins에 값이 없고(매니페스트 기본값에 위임) 레포가 false이면 그
+    # 플러그인은 켜진 채 남으므로 disable이 필요하다. 2단계로 좁히면 그 명령이 사라진다.
+    # **candidates의 절반은 "설치 직후"가 아니다.** enabledPlugins 경로의 키는 정의상
+    # 로컬 섹션 문서에 없지만, pluginConfigs 경로의 키는 이미 로컬에 값이 있을 수 있다 —
+    # 그 섹션의 route_new는 "그 섹션에" 레포 전용인 키를 훑을 뿐 플러그인 자체의 설치
+    # 여부와 무관하기 때문이다.
+    # 그래서 로컬에 값이 있으면 **그 값**을 쓰고, 없을 때만 설치 직후의 true로 떨어진다. 상수
+    # true를 넣으면 value_command가 지키라고 받는 규칙("현재 상태와 다를 때만 낸다")을
+    # 유일한 호출부가 우회하고, 이미 꺼진 플러그인에 disable이 나가 exit 1의 거짓 실패가
+    # 된다(enable/disable은 멱등이 아니다).
     disable_after_install = [
-        k for k in install
+        k for k in candidates
         if k in masked["enabledPlugins"]
         and pc.value_command(local_masked.get(k, True),
                              masked["enabledPlugins"][k]) == "disable"]
@@ -168,7 +204,7 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 직후의 3단계. SKILL.md가 value_command와 같은 규칙을 손으로 재구현하지 않게 하려는
     # 것이다 — 재구현하면 멱등이 아닌 명령을 같은 상태에 내어 거짓 실패를 양산한다.
     decided = sorted({k for bucket in ("repo_ahead", "both_changed", "value_held")
-                      for k in plugins.get(bucket, [])} | set(install))
+                      for k in plugins.get(bucket, [])} | set(candidates))
 
     return {
         "status": "ok",
@@ -177,18 +213,26 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
         "skipped_always_known": sorted(
             name for bucket in REGISTER_BUCKETS for name in markets.get(bucket, [])
             if name in pc.ALWAYS_KNOWN),
+        # 2단계 (9.3.1)
         "install": install,
+        # 2단계에서 제외된 id — 이미 이 기기에 설치되어 있다.
+        "skipped_already_installed": skipped_already_installed,
+        # 3단계 (9.3.1)
         "disable_after_install": disable_after_install,
+        # **4단계 (9.3.1)** — `install --config k=v`의 대상과 물어야 할 키 이름이다.
         # 코어가 needs_secret으로 라우팅할 때 부른 것과 **같은 훅**으로 키 목록을 만든다.
         # 자유 함수(SECTION_SECRET_KEYS)를 따로 부르면 라우팅과 보고가 갈릴 수 있고,
         # 갈려도 증상이 없다 — 사용자는 되물어야 할 키를 하나 덜 받을 뿐이다.
+        # **설치 집합으로 좁히지 않는다.** 2단계로 새로 깔린 id도, 이미 설치돼 있어
+        # 4단계만 남은 id도 똑같이 설정을 채워야 한다 — 한쪽으로 좁히면 다른 쪽 id의
+        # 설정이 어디에서도 채워지지 않는다.
         "config_keys": {k: hooks["pluginConfigs"]["secret_keys"](
             masked["pluginConfigs"][k])
             for k in configs.get("needs_secret", [])},
         "repo_values": {k: masked["enabledPlugins"][k] for k in decided
                         if k in masked["enabledPlugins"]},
         "local_values": {k: local_masked[k] for k in decided if k in local_masked},
-        "depends_on": _install_dependencies(install),
+        "depends_on": _install_dependencies(candidates),
         # 훅 묶음의 reason을 쓴다 — 자유 함수 unrestorable_reason에 repo를 따로 넘기면
         # 판정(restorable)과 사유가 **다른 repo**를 볼 수 있고 양쪽 다 무증상이다
         # (Task 6 quality review I2). build_hooks가 둘에 같은 repo를 닫아 준다.
@@ -314,7 +358,10 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)
     base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
-    auto_ids, held_state, skipped = pc.read_hold_inputs(installed_path, held_path)
+    # installed_ids는 쓰지 않는다 — base 계산은 "이 기기에 설치돼 있는가"를 묻지 않는다.
+    # 다음 base는 복원 후 로컬 값과 레포 값의 일치로만 전진한다(_next_base_sections).
+    auto_ids, _installed_ids, held_state, skipped = pc.read_hold_inputs(
+        installed_path, held_path)
 
     # **이번 실행의** 보류 상태로 훅을 만든다. 이것이 실제로 결과를 가르는 곳은 H4다 —
     # 이번에 declined된 pluginConfigs 키가 곧바로 value_held가 되어 base에서 빠진다.

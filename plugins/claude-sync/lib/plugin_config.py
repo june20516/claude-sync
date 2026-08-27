@@ -3,7 +3,7 @@
 
 데이터 소스는 두 파일이고 역할이 다르다(spec 3장) —
   ~/.claude/settings.json                    세 섹션 값의 **유일한** 원천
-  ~/.claude/plugins/installed_plugins.json   각 항목의 auto 플래그 **하나만**
+  ~/.claude/plugins/installed_plugins.json   각 항목의 auto 플래그와 **설치 여부**
 installed_plugins.json을 값의 원천으로 삼지 않는 이유는 그것이 settings.json에서
 파생되기 때문이다. `claude plugin list --json`을 쓰지 않는 이유는 "키 부재"와 false를
 구별하지 못하기 때문이다.
@@ -153,13 +153,27 @@ def read_local_sections(settings_path=None):
     }
 
 
-def read_auto_ids(installed_path=None):
-    """의존성으로 자동 설치된 플러그인 id 집합 (3.4).
+def read_installed(installed_path=None):
+    """(auto_ids, installed_ids) — **한 번의 파싱**으로 둘을 만든다 (3.4).
 
     plugins[<id>]는 **배열**이다 — 같은 플러그인이 스코프별로 여러 벌 설치될 수 있다.
     user 스코프 항목 중 auto가 True인 것이 하나라도 있으면 그 id는 auto다.
+    auto_ids는 hold 계산의 입력이다. **로컬에서 키를 지우는 데 쓰지 않는다.**
 
-    이 집합은 hold 계산의 입력이다. **로컬에서 키를 지우는 데 쓰지 않는다.**
+    installed_ids는 **user 스코프 항목이 하나라도 있는 id**다. auto 여부와 무관하다 —
+    "이 기기에 설치되어 있는가"와 "의존성으로 딸려 왔는가"는 다른 질문이고, 9.3.1의
+    2단계(`plugin install <id>`)와 4단계(`install --config k=v`)를 가르는 것은 전자뿐이다.
+    **enabledPlugins의 키 부재는 미설치가 아니므로**(매니페스트 defaultEnabled에 위임한다 —
+    value_command가 같은 사실을 반대편에서 쓴다) 로컬 섹션 문서로는 그 구별을 할 수 없다.
+
+    **스코프를 user로 좁히는 것이 auto 판정과 같은 근거다.** 이 동기화 전체가
+    --scope user로 동작한다(9.3.1). 두 판정이 아래에서 **같은 user_entries**를 보는 것이
+    그 근거를 구조로 바꾼 것이다 — 한쪽만 넓히는 변조가 다른 쪽에서도 드러난다.
+    project 스코프에만 있는 플러그인은 restore가 만들 수 있는 상태가 아니므로
+    "설치됨"으로 세면 2단계를 건너뛰어 영영 설치되지 않는다.
+
+    **파일을 두 번 파싱하지 않는다.** read_auto_ids가 이 함수에 위임한다 — 옆에 두 번째
+    파서를 두면 두 판의 예외 갈래가 갈리고, 갈리면 부분 skip이 조용히 전체 skip이 된다.
 
     **"알아볼 수 없다"의 전수 목록 — 아래는 전부 AutoFlagsUnavailable이다:**
       1. 파일 부재
@@ -189,7 +203,9 @@ def read_auto_ids(installed_path=None):
     path = DEFAULT_INSTALLED if installed_path is None else installed_path
 
     def unreadable(detail):
-        return AutoFlagsUnavailable("%s: %s — auto 판정 불가로 %s"
+        # 문구가 "설치·auto"인 것은 이 한 갈래가 두 판정을 함께 잃기 때문이다 —
+        # 같은 파싱에서 나오므로 예외를 나누지 않는다(3.4).
+        return AutoFlagsUnavailable("%s: %s — 설치·auto 판정 불가로 %s"
                                     % (path, detail, SKIP_AUTO_SECTIONS))
 
     try:
@@ -208,7 +224,7 @@ def read_auto_ids(installed_path=None):
     plugins = data["plugins"]
     if not isinstance(plugins, dict):
         raise unreadable("plugins가 객체가 아님(%s)" % type(plugins).__name__)
-    out = set()
+    auto_ids, installed_ids = set(), set()
     for plugin_id, entries in plugins.items():
         if not isinstance(entries, list):
             raise unreadable("plugins[%s]가 배열이 아님(%s)"
@@ -225,9 +241,26 @@ def read_auto_ids(installed_path=None):
             if "scope" in entry and not isinstance(entry["scope"], str):
                 raise unreadable("plugins[%s]의 scope가 문자열이 아님(%r)"
                                  % (plugin_id, entry["scope"]))
-        if any(e.get("scope") == "user" and e.get("auto") is True for e in entries):
-            out.add(plugin_id)
-    return frozenset(out)
+        # 스코프 필터를 **한 곳에서** 만들어 두 판정이 같은 것을 보게 한다(위 docstring).
+        user_entries = [e for e in entries if e.get("scope") == "user"]
+        if user_entries:
+            installed_ids.add(plugin_id)
+        if any(e.get("auto") is True for e in user_entries):
+            auto_ids.add(plugin_id)
+    return frozenset(auto_ids), frozenset(installed_ids)
+
+
+def read_auto_ids(installed_path=None):
+    """의존성으로 자동 설치된 플러그인 id 집합 (3.4). read_installed에 위임한다.
+
+    서명을 유지하는 것은 이 함수에 테스트 열다섯이 걸려 있고, 그 열다섯이 실패 갈래
+    열 가지의 전수 목록을 지키기 때문이다. 위임으로 바꿔도 그 보증이 그대로 남는다.
+
+    **위임 자체는 값으로 잴 수 없다** — 본문을 복사해 되돌려도 결과가 같기 때문이다.
+    그래서 테스트 둘이 따로 지킨다: read_installed를 갈아끼워 그 반환이 그대로 나오는지
+    보는 것과, read_hold_inputs가 installed_plugins.json을 여는 횟수를 세는 것.
+    """
+    return read_installed(installed_path)[0]
 
 
 def read_held_state(held_path=None):
@@ -280,9 +313,9 @@ def read_held_state(held_path=None):
 
 
 def read_hold_inputs(installed_path=None, held_path=None):
-    """auto 집합과 보류 상태를 읽고, 실패에 대응하는 **섹션 skip 사유**를 함께 돌려준다.
+    """auto·설치 집합과 보류 상태를 읽고, 실패에 대응하는 **섹션 skip 사유**를 함께 돌려준다.
 
-    반환: (auto_ids, held_state, {섹션: 사유})
+    반환: (auto_ids, installed_ids, held_state, {섹션: 사유})
 
     두 실패는 범위가 다르다(spec 9.1.2·9.3.6):
       installed_plugins.json 판정 불가 → enabledPlugins·pluginConfigs 두 섹션
@@ -296,14 +329,23 @@ def read_hold_inputs(installed_path=None, held_path=None):
     실패한 쪽의 값은 "보류 없음"으로 채우지만 **그 섹션은 어차피 skip되므로 쓰이지
     않는다.** 채우는 이유는 나머지 섹션의 훅을 만들 수 있게 하기 위해서다.
 
+    **installed_ids도 같은 갈래에서 빈 frozenset으로 접는다.** 빈 집합 자체는 위험한
+    값이다 — 소비자가 그것을 "아무것도 설치 안 됨"으로 읽으면 restore가 이미 설치된
+    플러그인 전부에 bare install을 내어 exit 1의 거짓 실패를 양산한다(9.3.1의 2단계).
+    **그런데도 접는 것이 옳은 근거는 그 값을 읽는 자리가 전부 함께 접힌 두 섹션 안에
+    있다는 것이다** — compare_plugins의 설치 구별은 enabledPlugins·pluginConfigs에만
+    실리고, plan_plugins의 2단계/4단계 분리는 그 두 섹션의 버킷에서만 후보를 모은다.
+    **그 대응이 깨지면 이 접힘이 곧 fail-open이 된다** — 설치 집합을 읽는 자리를 늘릴
+    때는 그 자리가 이 skip 범위 안에 있는지 먼저 확인할 것.
+
     PermissionError 등 그 외 OSError는 두 읽기 함수와 마찬가지로 전파한다 — 여기서
     삼키면 "읽을 수 없음"이 "auto 없음·보류 없음"으로 접혀 N6의 입구가 열린다.
     """
     skipped = {}
     try:
-        auto_ids = read_auto_ids(installed_path)
+        auto_ids, installed_ids = read_installed(installed_path)
     except AutoFlagsUnavailable as e:
-        auto_ids = frozenset()
+        auto_ids, installed_ids = frozenset(), frozenset()
         skipped["enabledPlugins"] = str(e)
         skipped["pluginConfigs"] = str(e)
     try:
@@ -314,7 +356,7 @@ def read_hold_inputs(installed_path=None, held_path=None):
         # 덮으면 사용자가 보는 reason이 "보류 파일이 깨졌다"뿐이라, 정작 enabledPlugins도
         # 함께 접힌 이유(auto 판정 불가)를 어디에서도 읽을 수 없게 된다.
         skipped.setdefault("pluginConfigs", str(e))
-    return auto_ids, held_state, skipped
+    return auto_ids, installed_ids, held_state, skipped
 
 
 def skipped_section(reason):
