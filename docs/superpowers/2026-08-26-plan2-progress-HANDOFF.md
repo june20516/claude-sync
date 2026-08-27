@@ -1,9 +1,9 @@
-# 다음 세션 인계 — plan ② 실행 중 (11 / 16)
+# 다음 세션 인계 — plan ② 실행 중 (12.9 / 16)
 
 - 갱신: 2026-08-27
-- 브랜치: `feat/plugin-config` (푸시 안 됨), HEAD `fcfa072`
-- 테스트: **713 passed** (착수 시 446)
-- **상태: Task 1~10.5 완료. Task 11(상태 기계) 실행 중.**
+- 브랜치: `feat/plugin-config` (푸시 안 됨), HEAD `898927f`
+- 테스트: **761 passed** (착수 시 446)
+- **상태: Task 1~11 완료. Task 12는 구현·spec·quality까지 끝나고 quality 재review만 남았다.**
 - **task 수가 15 → 16이다** — 사용자 결정으로 Task 10.5(설치 집합 읽기)를 중간 삽입했다.
 
 ---
@@ -15,9 +15,9 @@ claude-sync 저장소에서 plan ②(플러그인 동기화 본체) 실행을 �
 
 먼저 이 문서를 읽어라: docs/superpowers/2026-08-26-plan2-progress-HANDOFF.md
 
-Task 1~10.5가 완료됐다. Task 11(상태 기계)부터 재개한다.
+Task 1~11이 완료됐다. Task 12의 quality 재review부터 재개한다.
 실행 방식은 subagent-driven이다 — task마다 새 subagent, task 사이에 spec 준수 review와
-code quality review. 남은 것은 Task 11~15다.
+code quality review. 남은 것은 Task 12(quality r2) 그리고 Task 13~15다.
 ```
 
 ---
@@ -26,21 +26,22 @@ code quality review. 남은 것은 Task 11~15다.
 
 | Task | 상태 | 결과물 |
 |---|---|---|
-| 1 원자적 쓰기 | ✅ | `ks.dump_bytes`(+fsync), 세 경로 라우팅 고정 |
-| 2 `base_staging` 배선 | ✅ | 게이트 두 축 명문화 |
-| 3 테스트 위생 | ✅ | root skip 마커, `recognize` 완전성 소스 스캔 |
-| 4 어댑터 읽기·인식 | ✅ | `lib/plugin_config.py` 신규 |
-| 5 정규화·보류 | ✅ | H1~H4 두 축, `held_context` |
-| 6 복원 가능성 | ✅ | `restorable`·`reason`·`orphaned` |
-| 7 `collect_plugins.py` | ✅ | 첫 스크립트, `hooks_and_context`·`skipped_section` |
+| 1~7 | ✅ | 원자적 쓰기 · base_staging · 테스트 위생 · 어댑터 · 정규화·보류 · 복원 가능성 · `collect_plugins.py` |
 | 8 `compare_plugins.py` | ✅ | 읽기 전용 비교, `absent_locally`·`changed_detail` |
 | 9 `plan_plugins.py plan` | ✅ | 복원 계획, `value_command` |
 | 10 `apply-base` | ✅ | 선택 반영, `plugins-held.json` 소유 |
-| **10.5 설치 집합 읽기** | ✅ | `read_installed`, `not_installed`, 2단계/4단계 분리 |
-| **11 상태 기계** | **실행 중** | 보류의 다회차 커버리지 |
-| 12~15 | ⬜ | CLI 에뮬레이터, 교대 시나리오, **세 스킬 배선**, 문서 정정 |
+| 10.5 설치 집합 읽기 | ✅ | `read_installed`, `not_installed`, 2단계/4단계 분리 |
+| 11 상태 기계 | ✅ | 보류의 다회차 커버리지 7종 |
+| **12 CLI 에뮬레이터** | **quality r2만 남음** | `tests/plugin_cli.py`·`tests/test_plugin_cycle.py` |
+| 13~15 | ⬜ | 교대 시나리오, **세 스킬 배선**, 문서 정정 |
 
-**다음 행동:** Task 11의 구현이 끝나면 spec review → quality review 순으로 진행한다.
+**다음 행동:** Task 12의 **quality 재review**를 dispatch한다.
+- 범위: `git diff 33fabf4..898927f -- plugins/claude-sync`
+- REPORT_FILE: `~/.claude/suberpowers/reviews/2026-08-27-claude-sync-task-12-quality-r2.md`
+  — **끊기기 전에 이미 한 번 dispatch했으므로 그 파일이 부분적으로 채워져 있을 수 있다. 먼저 읽어라.**
+- 직전 quality 보고서: `~/.claude/suberpowers/reviews/2026-08-27-claude-sync-task-12-quality.md`
+- 확인할 것: SURVIVED였던 R1·R4·R5·R6이 CAUGHT인가 / I2의 "브리프·spec에 없다" 판정이 옳은가 /
+  프로덕션 무변경 / 새 문장이 코드와 맞는가 / Task 13 인계의 정정이 정확한가
 
 ## 작업 자산이 어디 있나
 
