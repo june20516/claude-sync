@@ -330,8 +330,12 @@ def test_read_hold_inputs_parses_the_installed_file_once(tmp_path, monkeypatch):
     """파서는 한 벌이다 — read_auto_ids가 read_installed에 **위임한다**.
 
     옆에 두 번째 파서를 두면 두 판의 예외 갈래가 갈리고, 갈리면 부분 skip이 조용히
-    전체 skip이 된다. **횟수 단정이 그 위임의 유일한 검출자다** — 옛 본문을 복사해
-    되돌려도 두 집합의 값은 그대로이기 때문이다.
+    전체 skip이 된다.
+
+    **이 단정이 지키는 것은 read_hold_inputs가 두 함수를 따로 부르는 형태다.** 위임
+    자체는 여기서 잡히지 않는다 — read_auto_ids에 옛 본문 사본을 남겨도 read_hold_inputs가
+    read_installed를 직접 부르므로 열림 횟수는 그대로 1이다(실측). 위임은
+    test_read_auto_ids_delegates_instead_of_keeping_a_second_parser가 스텁으로 잡는다.
     """
     installed = write_installed(tmp_path, {
         "dep@m": [{"scope": "user", "auto": True}],

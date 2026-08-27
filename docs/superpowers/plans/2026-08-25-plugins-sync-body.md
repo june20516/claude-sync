@@ -4919,8 +4919,12 @@ def test_read_hold_inputs_parses_the_installed_file_once(tmp_path, monkeypatch):
     """파서는 한 벌이다 — read_auto_ids가 read_installed에 **위임한다**.
 
     옆에 두 번째 파서를 두면 두 판의 예외 갈래가 갈리고, 갈리면 부분 skip이 조용히
-    전체 skip이 된다. **횟수 단정이 그 위임의 유일한 검출자다** — 옛 본문을 복사해
-    되돌려도 두 집합의 값은 그대로이기 때문이다.
+    전체 skip이 된다.
+
+    **이 단정이 지키는 것은 read_hold_inputs가 두 함수를 따로 부르는 형태다.** 위임
+    자체는 여기서 잡히지 않는다 — read_auto_ids에 옛 본문 사본을 남겨도 read_hold_inputs가
+    read_installed를 직접 부르므로 열림 횟수는 그대로 1이다(실측). 위임은
+    test_read_auto_ids_delegates_instead_of_keeping_a_second_parser가 스텁으로 잡는다.
     """
     installed = write_installed(tmp_path, {
         "dep@m": [{"scope": "user", "auto": True}],
@@ -5080,9 +5084,10 @@ def test_plan_keeps_the_value_and_dependency_steps_on_both_lists(tmp_path):
     disable_after_install — 이미 설치된 id도 값 맞추기(3단계) 대상이다. here@m은 설치돼
       있고 로컬 enabledPlugins에 값이 없으며(매니페스트 기본값에 위임 = 켜짐으로 가정)
       레포가 false다. 2단계 목록으로 좁히면 이 disable이 사라져 플러그인이 켜진 채 남는다.
-    depends_on — 9.3.2가 "같은 규칙이 3·4단계에도 적용된다"를 못 박는다. 두 단계 모두
-      `plugin install <id@marketplace>` 형태라 1단계 등록에 의존한다. 좁히면 등록에
-      실패한 마켓플레이스로 4단계 명령이 나가 거짓 실패를 양산한다.
+    depends_on — 근거는 명령의 형태다. 두 단계 모두 `plugin install <id@marketplace>`
+      형태라 1단계 등록에 의존한다(9.3.2의 단계 종속이 아니다 — 그쪽은 2단계 실패를
+      다루고 skipped_already_installed에는 2단계가 없다). 좁히면 등록에 실패한
+      마켓플레이스로 4단계 명령이 나가 거짓 실패를 양산한다.
     config_keys — 코어의 needs_secret 버킷에서 나오고 설치 여부와 무관하다. 어느 한쪽으로
       좁히면 다른 쪽 id의 설정이 어디에서도 채워지지 않는다.
 
@@ -5129,8 +5134,9 @@ def read_installed(installed_path=None):
     **파일을 두 번 파싱하지 않는다.** read_auto_ids가 이 함수에 위임한다 — 옆에 두 번째
     파서를 두면 두 판의 예외 갈래가 갈리고, 갈리면 부분 skip이 조용히 전체 skip이 된다.
 
-    실패 갈래는 read_auto_ids와 **같은 AutoFlagsUnavailable 하나**다. 전수 목록은
-    그쪽 docstring의 열 가지와 동일하다 — 같은 파싱에서 나오므로 나눌 근거가 없다.
+    실패 갈래는 **AutoFlagsUnavailable 하나**다 — 같은 파싱에서 나오므로 나눌 근거가
+    없다. **"알아볼 수 없다"의 전수 목록 열 가지를 이 docstring에 그대로 옮겨 온다** —
+    read_auto_ids가 2줄 위임으로 줄어들므로 거기 두면 목록이 어디에도 남지 않는다.
     """
     # 기존 read_auto_ids 본문. 순회에서 auto 집합과 함께 user 스코프 id를 모은다.
 

@@ -1195,9 +1195,12 @@ def test_plan_disables_nothing_outside_the_install_list(tmp_path):
 
 
 def test_plan_does_not_disable_a_plugin_that_is_already_off_locally(tmp_path):
-    """install의 절반은 "설치 직후"가 아니다 — pluginConfigs 기여로 들어온 키는 이미
-    로컬에 설치돼 있을 수 있다. 그 섹션의 route_new는 "그 섹션에" 레포 전용인 키를
-    훑을 뿐 플러그인 자체의 설치 여부와 무관하기 때문이다.
+    """install의 항목이 전부 "설치 직후 = true"인 것은 아니다.
+
+    Task 10.5 이후 install은 installed_plugins.json에 없는 id만 담는다. 그래도 이
+    fixture의 already@m은 그 파일에 없으면서 settings.json에는 값이 있는 **불일치
+    상태**라 install에 들고, 그 값이 false다. 상수 true를 쓰면 이미 꺼진 것에
+    disable이 나간다. (같은 취지의 넓은 문장은 candidates 쪽에 있다.)
 
     already@m은 로컬 enabledPlugins에 이미 false로 있고 레포도 false다(= in_sync).
     disable 판정이 로컬 값 자리에 상수 true를 넣으면 "true → false이니 disable"로 읽혀
@@ -1333,9 +1336,10 @@ def test_plan_keeps_the_value_and_dependency_steps_on_both_lists(tmp_path):
     disable_after_install — 이미 설치된 id도 값 맞추기(3단계) 대상이다. here@m은 설치돼
       있고 로컬 enabledPlugins에 값이 없으며(매니페스트 기본값에 위임 = 켜짐으로 가정)
       레포가 false다. 2단계 목록으로 좁히면 이 disable이 사라져 플러그인이 켜진 채 남는다.
-    depends_on — 9.3.2가 "같은 규칙이 3·4단계에도 적용된다"를 못 박는다. 두 단계 모두
-      `plugin install <id@marketplace>` 형태라 1단계 등록에 의존한다. 좁히면 등록에
-      실패한 마켓플레이스로 4단계 명령이 나가 거짓 실패를 양산한다.
+    depends_on — 근거는 명령의 형태다. 두 단계 모두 `plugin install <id@marketplace>`
+      형태라 1단계 등록에 의존한다(9.3.2의 단계 종속이 아니다 — 그쪽은 2단계 실패를
+      다루고 skipped_already_installed에는 2단계가 없다). 좁히면 등록에 실패한
+      마켓플레이스로 4단계 명령이 나가 거짓 실패를 양산한다.
     config_keys — 코어의 needs_secret 버킷에서 나오고 설치 여부와 무관하다. 어느 한쪽으로
       좁히면 다른 쪽 id의 설정이 어디에서도 채워지지 않는다.
 
