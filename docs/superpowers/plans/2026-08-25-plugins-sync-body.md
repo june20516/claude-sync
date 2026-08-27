@@ -5296,7 +5296,7 @@ git commit -m "feat(plugins): 설치 집합을 읽어 2단계와 4단계를 가�
 
 **왜 다회차여야 하는가.** 단발 테스트가 잡는 것은 1회차다. *"레포가 그 키를 잃은 채로 고정점에 든다"* 는 다회차 결과를 보는 것이 그 파일의 존재 이유이고, 그 결함 계열이 정확히 이 개정이 없애려던 "타 기기 항목의 전멸"이다. 게다가 7.3이 스스로 경고한 **H3 탈출구의 착지 지점**은 정의상 회차 사이에 상태가 변해야 표현되는데, 현재 `repeat_backup`은 회차마다 같은 `local`과 같은 `hold`를 넘기므로 **구조적으로 표현할 수 없다.**
 
-**`ADAPTERS`에 한 줄만 더하면 된다는 것은 사실이 아니다.** plan ① Task 9 리뷰가 실측으로 반증했다 — `pluginConfigs`·`extraKnownMarketplaces`는 그대로 돌지만(20 passed), `enabledPlugins`는 **불리언이든 배열이든 돌지 않는다**(각각 3 failed / 5 failed). 불리언은 값이 둘뿐이라 케이스 9를 표현할 수 없고, 배열이면 H3로 전부 보류된다.
+**`ADAPTERS`에 한 줄만 더하는 것으로는 부족하다 — 다만 "돌지 않아서"가 아니다.** plan ① Task 9 리뷰의 실측(`enabledPlugins`는 **불리언이든 배열이든 돌지 않는다**, 각각 3 failed / 5 failed)은 `hold` 인자도 `Adapter`의 정규화도 **없던 옛 하네스**의 것이다. 이 task가 그 둘을 들이면 장애물이 사라져 한 줄을 더해도 **돈다**(실측: 48 passed). 그러니 그 실측을 배제의 근거로 옮겨 적으면 안 된다. 진짜 근거는 이렇다 — 이 섹션 고유의 것은 정규화와 H3 둘인데, 정규화는 항등(`_identity`)이라 잴 것이 없고, 열 시나리오는 확장 값을 base와 로컬에만 두고 레포에는 한 번도 싣지 않아 **레포 값만 보는 H3가 한 번도 발화하지 않는다**(실측: 진짜 hold를 붙여도 48 passed 그대로고, hold 호출 33회 중 발화가 0회다). 그 H3는 보류 시나리오가 실제 hold로 맡는다.
 
 **`Adapter`가 픽스처 값을 한 번 정규화해 싣는다.** `pluginConfigs` 값을 원본 그대로 실으면 판정표 서른 중 **여덟이 FAIL**한다(실측) — `merge`·`next_base`는 마스킹된 값을 돌려주는데 기존 단정은 원본을 기대하기 때문이다. 픽스처 값은 그대로 두고 `Adapter`에서 통과시키는 것이 `normalize`의 멱등 계약(5.2) 위에서 성립한다. (plan ①의 "`pluginConfigs`는 그대로 돈다"는 이 픽스처에 대해 사실이 아니다.)
 
@@ -5351,8 +5351,15 @@ ADAPTERS = [
 def test_adapters_cover_every_section_that_can_run_the_decision_table():
     """어느 하나가 빠지면 그 섹션에서 판정표가 검증되지 않는다.
 
-    enabledPlugins가 없는 것은 의도다 — 값이 둘뿐이라 케이스 9를 표현할 수 없다.
-    그 섹션은 아래 보류 시나리오가 맡는다.
+    enabledPlugins가 없는 것은 의도다 — 다만 "돌지 않아서"가 아니다. 케이스 9는 세 값이
+    서로 달라야 하는데 이 섹션의 불리언은 둘뿐이라 세 번째는 확장 포맷일 수밖에 없고,
+    그 값 셋으로 여기 한 줄을 더하면 열 개가 그대로 **돈다**(실측: 48 passed).
+
+    빼는 근거는 그 열 개가 이 섹션 **고유의 것을 하나도 재지 못한다**는 것이다. 고유한
+    것은 정규화와 H3 둘인데, 정규화는 항등이라(_identity) 잴 것이 없고, H3는 레포 값만
+    보는데 열 시나리오는 확장 값을 base와 로컬에만 두고 레포에는 한 번도 싣지 않는다
+    (실측: 진짜 hold를 붙여도 48 passed 그대로다 — hold 호출 33회 중 H3 발화가 0회다).
+    그 H3는 아래 보류 시나리오가 실제 hold를 붙여 맡는다.
     """
     assert {adapter.name for adapter in ADAPTERS} == {
         "mcp", "plugins:extraKnownMarketplaces", "plugins:pluginConfigs"}
@@ -5390,7 +5397,9 @@ def live_hold(section, state):
     """**실제 어댑터의 hold**를 회차마다 현재 상태로 다시 만든다.
 
     테스트 더블을 쓰면 _make_hold의 회귀를 이 파일이 하나도 잡지 못한다.
-    state는 before_round가 바꾼다 — 그것이 보류의 진입·이탈이다.
+    state는 before_round가 바꾼다 — 이 파일에서 그 변경은 전부 보류의 **이탈**이다
+    (해제 셋, prune 하나, 해제 표식 정리 하나). 진입은 전이가 아니라 초기 base가
+    표현한다 — 아래 test_release_of_a_key_missing_from_the_local_lands_on_case2_not_case3.
 
     섹션 하나짜리 문서를 넘기므로 held_context의 directory_names가 비고, 따라서 이
     시나리오들에서 발화하는 것은 **H1과 H3뿐이다** — H2는 소스가 없어 항상 거짓이고
@@ -5404,7 +5413,13 @@ def live_hold(section, state):
 
 
 def enabled_adapter(state):
-    """enabledPlugins 전용 값 도메인 — 불리언 둘과 확장 포맷 하나."""
+    """enabledPlugins 어댑터 — 실제 hold를 다는 것이 요점이다.
+
+    값 튜플은 아래 어느 보류 시나리오도 읽지 않는다(전부 리터럴을 넘긴다).
+    Adapter.__init__의 케이스 9 불변식(A·B·ORIG가 정규화 후에도 서로 다를 것)을
+    통과시키기 위해서만 있고, 그 불변식이 지키는 판정표는 이 어댑터가 설계상 돌지
+    않는다(위 test_adapters_cover_every_section_that_can_run_the_decision_table).
+    """
     return plugin_adapter("enabledPlugins", (True, False, ["1.0.0"]),
                           hold=live_hold("enabledPlugins", state))
 
@@ -5425,6 +5440,8 @@ def test_h3_hold_preserves_the_repo_value_across_rounds():
     for report, repo, base in snapshots:
         assert repo["p@m"] == ["1.0.0"]
         assert report["held"] == ["p@m"]
+        # deleted는 여기서 채워질 수 없다(로컬이 p@m을 계속 쥔다) — 동반 기록이다.
+        # conflicts는 다르다: H3를 지우면 ["p@m"]으로 채워진다(케이스 9).
         assert report["deleted"] == [] and report["conflicts"] == []
         assert "p@m" not in base            # 값 보류 키는 base에서 제거된다 (5.3)
     assert_fixed_point_from_second_round(snapshots)
@@ -5497,8 +5514,7 @@ def test_held_key_missing_from_the_repo_does_not_become_a_deletion():
     test_release_of_a_key_missing_from_the_local_lands_on_case2_not_case3이 맡는다.)
     """
     state = {"auto_ids": frozenset({"z@m"}), "held": held_state()}
-    adapter = plugin_adapter("enabledPlugins", (True, False, ["1.0.0"]),
-                             hold=live_hold("enabledPlugins", state))
+    adapter = enabled_adapter(state)
 
     def before(index, local, repo, base):
         if index == 0:
@@ -5507,13 +5523,19 @@ def test_held_key_missing_from_the_repo_does_not_become_a_deletion():
             state["auto_ids"] = frozenset()             # prune 이후 — 보류 이탈
         return local, repo, base
 
+    # 가운데 인자(초기 레포)는 읽히지 않는다 — index 0의 before가 첫 backup_round
+    # **전에** {}로 덮기 때문이다(실측: 다른 값으로 바꿔도 38 passed).
     snapshots = repeat_backup(adapter, {"z@m": True}, {"z@m": True}, {"z@m": True},
                               rounds=4, before_round=before)
     for report, repo, base in snapshots[:2]:
+        # deleted는 여기서 채워질 수 없다(로컬이 z@m을 계속 쥔다) — 동반 기록이다.
+        # local_stale은 다르다: H1의 value.add를 지우면 채워진다(케이스 4).
         assert report["deleted"] == [] and report["local_stale"] == []
         assert "z@m" not in repo                        # 보류 중에는 조용하다
         assert "z@m" not in base
     assert snapshots[2][1]["z@m"] is True               # 이탈 → 케이스 1로 push
+    # 같은 이유로 공허하다 — 동반 기록이다. 채워지는 배치는 아래
+    # test_release_of_a_key_missing_from_the_local_lands_on_case2_not_case3이다.
     assert snapshots[2][0]["deleted"] == []
     assert snapshots[3][1]["z@m"] is True               # 이후 불변
 
