@@ -116,6 +116,54 @@ def test_install_config_merges_partially(tmp_path):
     assert cli.settings()["pluginConfigs"]["p@m"]["options"] == {"a": "1", "b": "3"}
 
 
+def test_marketplace_add_is_idempotent_and_writes_a_github_source(tmp_path):
+    """1-b #7 — 재실행도 exit 0. 그리고 **그 명령이 만드는 값의 모양**(추정 6번).
+
+    14.3 표의 `marketplace add` 행이 이 파일에 없었다(실측 — 이 명령을 비멱등으로
+    만드는 변조도, exit code를 언제나 1로 만드는 변조도 스위트 전체에서 살아남았다).
+    다른 테스트들이 이 명령을 **셋업으로 부르기만** 하고 반환값도 재실행도 재지 않았기
+    때문이다.
+
+    값의 모양은 **실측 없음 — 추정**(plugin_cli 모듈 docstring 6번)이고, 그 추정을
+    고정하는 자리가 여기다. 실제 CLI는 인자 하나에서 출처 종류를 판별하므로 url·git
+    출처의 시나리오를 쓰려면 이 자리를 먼저 고쳐야 한다 — **그때 이 테스트가 먼저
+    말한다.** 이전에는 이 모양이 교대 시나리오 하나(H2)에 묻혀 있어서, 자기 주제가
+    directory 보류인 그 시나리오를 손대는 순간 추정 둘이 함께 풀렸다.
+
+    1-b #10 — `autoUpdate`를 설정하는 옵션이 CLI에 **없으므로** 값에도 넣지 않는다.
+    그 필드의 부재를 dict 동등으로 함께 고정한다.
+    """
+    cli = PluginCLI(str(tmp_path))
+    assert cli.marketplace_add("m", "o/r") == 0
+    assert cli.settings()["extraKnownMarketplaces"] == {
+        "m": {"source": {"source": "github", "repo": "o/r"}}}
+    # 멱등 — 재실행도 exit 0이고 값이 그대로다(`Marketplace 'x' already on disk`).
+    # marketplace remove·uninstall·enable/disable의 "재실행은 exit 1"과 **반대편**이다.
+    assert cli.marketplace_add("m", "o/r") == 0
+    assert cli.settings()["extraKnownMarketplaces"] == {
+        "m": {"source": {"source": "github", "repo": "o/r"}}}
+
+
+def test_set_directory_marketplace_writes_a_directory_source(tmp_path):
+    """directory 출처 값의 모양 — **실측 없음 — 추정**(모듈 docstring 7번).
+
+    CLI 명령이 아니라 픽스처다(`marketplace add <경로>`의 결과이지만 복원 경로가 이
+    갈래에 도달하지 않는다 — H2로 보류된다). 그래도 계약 파일이 지는 것은, 이 모양이
+    `plugin_config._source_kind`가 읽는 형태와 어긋나면 H2가 통째로 죽고 로컬 디렉토리
+    마켓플레이스가 레포로 올라가기 때문이다. 그 결과는 기기 B의 restore가 등록할 소스도
+    없는 항목을 매번 요구하는 것이다.
+
+    이 모양 역시 교대 시나리오 하나(H2)에만 걸려 있었다 — 그 시나리오는 **결과**(레포에
+    올라가지 않는다)를 재고, 여기서는 **입력**(그 결과를 만드는 값의 모양)을 잰다.
+    """
+    cli = PluginCLI(str(tmp_path))
+    assert cli.set_directory_marketplace("mylocal", "/tmp/x") == 0
+    assert cli.settings()["extraKnownMarketplaces"] == {
+        "mylocal": {"source": {"source": "directory", "path": "/tmp/x"}}}
+    assert pc.directory_marketplaces(cli.settings()["extraKnownMarketplaces"],
+                                     {}) == frozenset({"mylocal"})
+
+
 def test_marketplace_remove_cascades_to_member_plugins(tmp_path):
     """실측 — 연쇄 삭제. restore가 이 명령을 실행하지 않는 이유다 (9.3.5)."""
     cli = PluginCLI(str(tmp_path))
@@ -137,8 +185,15 @@ def test_dependency_install_marks_auto_and_explicit_install_clears_it(tmp_path):
     cli = PluginCLI(str(tmp_path))
     cli.set_manifest("parent@m", ["child@m"])
     cli.install("parent@m")
+    # **N1의 핵심 축이다(실측 행).** 자식이 직접 설치와 **똑같은 모양**으로
+    # enabledPlugins에 들어가고, 구별 수단은 auto 플래그 하나뿐이다. 이것을 재지 않으면
+    # 자식을 아예 넣지 않는 에뮬레이터로 바뀌어도 저장소가 조용하고(실측), 그러면
+    # H1("직접 설치한 플러그인이 의존성으로 재편입됐다" — 조용히 사라지는 경로)의
+    # 커버리지가 무증상으로 사라진다.
+    assert cli.settings()["enabledPlugins"]["child@m"] is True
     assert pc.read_auto_ids(cli.installed_path) == frozenset({"child@m"})
     cli.install("child@m")
+    assert cli.settings()["enabledPlugins"]["child@m"] is True
     assert pc.read_auto_ids(cli.installed_path) == frozenset()
 
 
