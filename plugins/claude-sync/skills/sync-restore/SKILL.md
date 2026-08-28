@@ -201,7 +201,7 @@ python3 "$SYNC_SCRIPTS/reconcile_restore.py" "$SYNC_REPO" --apply
 
 모든 해소 방식(나중에 제외)은 base ← 레포 내용으로 갱신한다. `--set-base-from` 호출이 이를 담당한다.
 
-### 5. 플러그인 복원 (additive)
+### 5. 플러그인 복원
 
 **2.5단계에서 버전 경고가 있었다면 이 안내를 가장 먼저 보여준다.** 사용자에게 지금 필요한 것은 다른 플러그인 설치가 아니라 claude-sync 자신의 업데이트다.
 
@@ -212,22 +212,131 @@ claude plugin update claude-sync
 
 그다음 Claude Code를 재시작하거나 `/reload-plugins`를 실행해야 적용된다. 업데이트 후 `/sync-restore`를 다시 실행하면 보류됐던 항목이 복원된다.
 
-레포 `plugins.json`의 `enabledPlugins` 중 로컬 `settings.json`에 없는 것만 설치한다. 기존 플러그인은 제거하지 않는다.
+레포 `plugins.json`과 로컬 상태를 비교해 계획을 세운다. `claude plugin list`는 호출하지 않는다.
 
-#### 5-1. 마켓플레이스 추가
-
-`extraKnownMarketplaces`에 있지만 로컬에 없는 마켓플레이스를 추가한다:
 ```bash
-claude plugin marketplace add <owner/repo>
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+rm -rf "$BASE_STAGING"
+python3 "$SYNC_SCRIPTS/plan_plugins.py" plan "$SYNC_REPO/plugins.json" > /tmp/claude-sync-plugins-plan.json
+cat /tmp/claude-sync-plugins-plan.json
 ```
+
+`BASE_STAGING`은 여기서 딱 한 번 비운다. 6-6의 MCP `apply-base`가 같은 디렉토리를 쓰므로, 각 단계가 제 앞에서 `rm -rf`하면 앞 단계의 산출물이 지워지고 그 파일의 base가 전진하지 않는다.
+
+`status`가 `"skipped"`면 `reason`을 알리고 플러그인 단계 전체를 건너뛴다(파일 복원은 그대로 진행한다). `reason`이 형식 문제이면 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다.
+
+**최상위 `status`는 섹션 skip을 반영하지 않는다.** 그 값은 "계획 수립을 수행했는가"이므로, 섹션 둘이 접힌 실행에서도 `"ok"`이고 `install`·`config_keys`는 비어 있다. 최상위만 읽으면 "복원할 것이 없습니다"로 보고하고 **조용히 아무것도 복원하지 않는다.** 섹션 단위 사실은 `sections[<섹션>]["status"]`에만 있으니 **그것을 반드시 따로 읽고**, `"skipped"`인 섹션의 복원만 건너뛴다.
+
+#### 5-1. 마켓플레이스 등록
+
+`marketplace_add`의 각 항목을 등록한다. `skipped_always_known`은 **등록하지 않는다** — 내장이거나 의사 출처라 시도하면 반드시 실패한다.
+
+```bash
+claude plugin marketplace add <arg> --scope user
+```
+
+`arg`는 계획이 실어 준 문자열을 그대로 쓴다. `reserved`가 `true`인 항목은 실패할 수 있다. 실패하면 "이 이름은 공식 마켓플레이스용으로 예약되어 있습니다"로 갈래를 구별해 보고한다.
 
 #### 5-2. 플러그인 설치
 
+`install` 목록을 설치한다. `skipped_already_installed`는 **부르지 않는다** — 이미 설치된 id에 bare install을 내면 CLI가 exit 1로 죽어 거짓 실패가 된다.
+
+**`depends_on`이 가리키는 마켓플레이스의 등록이 실패했다면 그 항목은 시도하지 않는다** — 등록되지 않은 상태로 install하면 CLI가 "플러그인이 없다"와 **똑같은 문구**로 실패해 사용자가 원인을 알 수 없다. `blocked`로 모아 "마켓플레이스 등록이 실패해 건너뛰었습니다"로 보고한다. 같은 규칙이 5-3·5-4에도 적용된다 — 4단계도 `install <id@marketplace> --config k=v` 형태라 등록되지 않은 마켓플레이스로는 똑같이 죽는다.
+
 ```bash
-claude plugin install <plugin-name@marketplace>
+claude plugin install <id> --scope user
 ```
 
-`claude plugin` 명령어가 없거나 실패하면 `plugins.json` 내용을 보여주고 수동 설치를 안내한다.
+**`-y`를 붙이지 않는다.** 마켓플레이스가 명령으로 설치를 선언한 플러그인은 세션 안에서 설치할 수 없다 — 우회할 대상이 아니라 그대로 존중할 경계다. 실패하면 CLI가 출력한 문구를 **그대로** 전달한다. CLI가 이미 실행할 명령 전문과 승인 방법을 알려준다.
+
+#### 5-3. 값 맞추기
+
+`disable_after_install`의 항목만 끈다. 설치 직후 값은 `true`이므로 그 외에는 부를 것이 없다 — **`enable`/`disable`은 멱등이 아니라** 현재 상태와 같으면 exit 1로 거짓 실패를 낸다.
+
+```bash
+claude plugin disable <id> --scope user
+```
+
+#### 5-4. 설정 채우기
+
+**`config_keys`에 실린 키만** 사용자에게 묻는다. 계획이 지목하지 않은 id의 설정을 채우면 실제 흐름이 만들 수 없는 상태가 되고, 이어지는 백업이 그 값을 레포로 민다. **레포에는 마스킹된 값만 있으므로 그대로 등록하면 동작하지 않는 항목이 설치된다.**
+
+```bash
+claude plugin install <id> --config <key>=<value> --scope user
+```
+
+세 결과가 모두 1급 상태다.
+
+| 결과 | 처리 |
+|---|---|
+| 전부 입력 | 그대로 실행. 다음 status에서 in_sync |
+| **일부 입력** | 입력한 키만 채운다. 입력하지 않은 키 때문에 항목이 계속 `changed`가 되므로 그 항목을 **보류**로 만든다(`declined`) |
+| 전부 건너뜀 | 플러그인은 설치하고 설정만 비운다. 항목을 **보류**로 만든다(`declined`) |
+
+값을 입력하지 않아도 **플러그인 자체는 설치한다.** 나중에 채우는 방법을 보고서에 안내한다.
+
+#### 5-5. 세 선택지 — 케이스 4·5·8·9
+
+| 버킷 | 상황 | 문구 |
+|---|---|---|
+| `local_stale`(케이스 4) | 다른 기기가 지웠고 이 기기는 base와 같다 | "다른 기기가 지웠습니다" |
+| `local_stale`(케이스 5) | 다른 기기가 지웠는데 이 기기에서 바꿨다 | "다른 기기가 지웠는데 이 기기에서 바꿨습니다" |
+| `repo_ahead`(케이스 8) | 다른 기기가 바꿨고 이 기기는 옛 값이다 | "다른 기기가 변경했습니다" |
+| `both_changed`(케이스 9) | 양쪽이 다르게 바꿨다 | "양쪽이 모두 바뀌었습니다. 채택하면 이 기기의 변경이 사라집니다" |
+
+세 선택지: **레포 따르기 / 로컬 유지(다음 백업에 올리기) / 이번엔 넘어가기.** 넷 다 **안정 상태**이므로 사용자가 고르지 않으면 영원히 유지된다.
+
+- 레포 따르기 — `repo_values`의 값에 맞춰 `enable`/`disable`을 실행한다(값이 같으면 부르지 않는다. 현재 값은 `local_values`에 있다). base override는 없다.
+- 로컬 유지 — 케이스 4·5는 `keep_stale`, 케이스 8·9는 `keep_local`에 넣는다. **한 조작이 아니다**(5-7).
+- 이번엔 넘어가기 — 아무것도 하지 않는다.
+
+**삭제 전파.** 레포에 키가 있고 값이 `false`면 다른 기기가 **껐다**는 뜻이므로 `disable`을 제안한다. 레포에 키가 **없고** base에 있었으면 다른 기기가 **지웠다**는 뜻이므로 `uninstall --scope user`를 제안한다. 둘 다 사용자 확인을 받고 실행한다. **부재는 `false`가 아니다** — 레포에 키가 아예 없는 항목을 `disable` 대상으로 삼지 않는다.
+
+**마켓플레이스의 `local_stale`은 삭제를 자동 실행하지 않는다.** `claude plugin marketplace remove`가 **소속 플러그인 키를 연쇄 삭제**하기 때문이다. 선택지는 **유지**(`keep_stale` — 다음 백업이 레포로 되돌린다)와 **이번엔 넘어가기** 둘이다. 제거를 원하면 명령만 안내하고, 함께 적는다: `--scope`를 생략하면 **모든 스코프**에서 제거되고, 그 마켓플레이스 소속 플러그인 키가 **전부 사라지며**, 손으로 실행하면 다음 백업이 그 삭제를 레포로 전파한다.
+
+#### 5-6. 확장 포맷 값 — `value_held`
+
+`value_held`에 있는 항목은 **설치돼 있고 값만 레포를 따르는 상태**다. "양쪽이 모두 바뀌었습니다"라고 말하지 않는다 — 사실이 아니고, 배열 값을 쓸 CLI도 없다.
+
+> "설치했습니다. 다만 이 기기는 버전 제약을 표현할 수 없어 레포의 값을 보존합니다."
+
+`absent_locally`에 있는 항목에는 "보존합니다"만 말하지 않는다 — 보존할 로컬 값이 없으면 거짓이 된다.
+
+**탈출구**: "버전 제약을 포기하고 이 기기 값으로 통일한다"를 고르면 그 id를 `release`에 넣는다. 다음 백업이 이 기기의 값을 push해 레포 값이 불리언이 되고 보류가 자연 해제된다.
+
+**지우고 싶을 때도 이 탈출구를 먼저 써야 한다.** H3의 조건은 **레포 값**이므로 로컬에서 `uninstall`해도 보류가 유지되어 삭제가 전파되지 않고, 다음 restore가 **다시 설치한다.** 순서는 ① 탈출구로 값을 불리언화 → ② 백업 → ③ `uninstall` → ④ 백업이다.
+
+`action_held`에 있는 항목에는 **어떤 명령도 실행하지 않는다.** 종류별로 한 번만 안내한다.
+
+#### 5-7. base 갱신
+
+**사용자가 아무 선택도 하지 않았어도 실행한다.** 무선택은 "이전 base 유지"로 계산되므로 결과가 달라지지 않는다.
+
+```bash
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+
+# 5-5에서 "로컬 유지"를, 5-4에서 "건너뜀"을, 5-6에서 "이 기기 값으로 통일"을 고른
+# 항목만 적는다. 나머지 선택(레포 따르기·이번엔 넘어가기)에는 override가 필요 없다.
+# **섹션 키를 정확히 쓴다** — 모르는 섹션 이름은 조용히 무시되어, 선택을 하나도
+# 적용하지 않은 복원이 성공한 것처럼 보인다.
+# **이 파일에는 이름과 선택만 들어간다 — 비밀 값은 절대 담지 않는다.**
+cat > /tmp/claude-sync-plugins-choices.json << 'EOF'
+{"enabledPlugins": {"keep_stale": [], "keep_local": [], "release": []},
+ "extraKnownMarketplaces": {"keep_stale": [], "keep_local": []},
+ "pluginConfigs": {"keep_stale": [], "keep_local": [], "declined": [], "configured": []}}
+EOF
+
+python3 "$SYNC_SCRIPTS/plan_plugins.py" apply-base "$SYNC_REPO/plugins.json" "$BASE_STAGING" /tmp/claude-sync-plugins-choices.json
+rm -f /tmp/claude-sync-plugins-choices.json
+```
+
+`configured`에는 **5-4에서 값을 입력한** 항목을 적는다 — 적지 않으면 이전에 건너뛴 항목의 보류가 풀리지 않아 영영 조용한 상태로 남는다.
+
+`apply-base`는 `settings.json`을 **다시 읽어** 계산하므로 5-1~5-6의 CLI 실행이 **모두 끝난 뒤**에 호출해야 한다. 실패했거나 건너뛴 항목은 로컬에 없으므로 base가 자동으로 전진하지 않는다.
+
+스테이징에서 base로 옮기는 것은 6-6이 두 파일을 함께 처리한다.
 
 ### 6. MCP 서버 복원
 
@@ -235,7 +344,6 @@ claude plugin install <plugin-name@marketplace>
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-MCP_STAGING="${TMPDIR:-/tmp}/claude-sync-mcp-base"
 python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json" > /tmp/claude-sync-mcp-plan.json
 cat /tmp/claude-sync-mcp-plan.json
 ```
@@ -357,7 +465,7 @@ rm -f /tmp/claude-sync-mcp-one.json
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-MCP_STAGING="${TMPDIR:-/tmp}/claude-sync-mcp-base"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
 
 # 6-4에서 "로컬 유지"를, 6-5에서 "유지"를 고른 이름만 적는다.
 # 나머지 선택(제거·채택·나중에)에는 base override가 필요 없다.
@@ -366,16 +474,23 @@ cat > /tmp/claude-sync-mcp-choices.json << 'EOF'
 {"keep_stale": [], "keep_local": []}
 EOF
 
-rm -rf "$MCP_STAGING"
-python3 "$SYNC_SCRIPTS/plan_mcp.py" apply-base "$SYNC_REPO/mcp-servers.json" "$MCP_STAGING" /tmp/claude-sync-mcp-choices.json
-if [ -f "$MCP_STAGING/mcp-servers.json" ]; then
-  python3 "$SYNC_BACKUP_SCRIPTS/update_base.py" "$MCP_STAGING" mcp-servers.json
-  echo "MCP base 갱신됨"
-fi
+python3 "$SYNC_SCRIPTS/plan_mcp.py" apply-base "$SYNC_REPO/mcp-servers.json" "$BASE_STAGING" /tmp/claude-sync-mcp-choices.json
 rm -f /tmp/claude-sync-mcp-choices.json
+
+# 두 apply-base가 같은 디렉토리에 썼다. **두 relpath를 함께 훑는다** — 한 파일에만
+# 걸면 다른 파일의 base가 전진하지 않아 그 파일의 삭제 전파가 조용히 죽는다.
+# apply-base에는 레포 쓰기가 없으므로 여기서는 **파일 존재가 곧 "계산 성공"**이다.
+RELS=()
+for rel in plugins.json mcp-servers.json; do
+  [ -f "$BASE_STAGING/$rel" ] && RELS+=("$rel")
+done
+if [ ${#RELS[@]} -gt 0 ]; then
+  python3 "$SYNC_BACKUP_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"
+  echo "base 갱신됨: ${RELS[*]}"
+fi
 ```
 
-`apply-base`는 `~/.claude.json`을 **다시 읽어** 계산하므로, 위 6-1~6-5의 CLI 실행이 **모두 끝난 뒤**에 호출해야 한다. `update_base.py`에 `"$SYNC_REPO"`를 넘기면 안 된다 — `base ← 레포 파일 바이트`가 되어 타 기기의 서버를 다음 백업이 삭제한다.
+`apply-base`는 `~/.claude.json`을 **다시 읽어** 계산하므로, 위 6-1~6-5의 CLI 실행이 **모두 끝난 뒤**에 호출해야 한다. `update_base.py`에 `"$SYNC_REPO"`를 넘기면 안 된다 — `base ← 레포 파일 바이트`가 되어 타 기기의 서버와 플러그인을 다음 백업이 삭제한다.
 
 ### 7. 결과 보고
 
@@ -384,10 +499,30 @@ rm -f /tmp/claude-sync-mcp-choices.json
 - **적용 건수**: add / overwrite / auto_merge / skip 각각의 파일 수
 - **해소한 충돌**: 파일명과 선택 방식 (나중에는 미해소로 표시)
 - **local_ahead 파일** → "올리려면 /sync-backup을 실행하세요" 안내 (restore는 push하지 않음)
-- **설치한 플러그인** (있으면)
+- **설치한 플러그인**: 5-2에서 설치한 것, 5-3에서 값을 맞춘 것
+- **건너뛴 플러그인 설정**: 5-4에서 값을 입력하지 않아 보류(`declined`)로 만든 항목. 나중에 채우는 방법을 함께 적는다
+- **보류한 항목**: `held`의 종류별(의존성 설치 / 로컬 디렉토리 마켓플레이스 / 버전 제약 / 설정 보류)로 나눠 적는다. **"버전 때문에 보류한 항목"(이 기기의 플러그인이 낮아 알아보지 못한 것)과 섞지 않는다** — 앞의 것은 이 릴리즈의 정상 동작이고 뒤의 것은 업데이트로 풀린다
+- **`orphaned`**: 마켓플레이스가 등록되지 않은 채 레포에 남은 플러그인. 해당 마켓플레이스를 가진 기기에서 `/sync-backup`을 실행하면 해소된다고 안내한다
+- **복원하지 못한 플러그인**: `blocked`(마켓플레이스 등록 실패로 시도하지 않음)와 `unrestorable`(계획의 `unrestorable_reasons`를 그대로 쓴다). **둘 다 실패 건수로 세지 않는다** — 시도하지 않았기 때문이다
 - **등록한 MCP 서버** (`add` / `needs_secret`에서 값을 받아 등록한 것)
 - **건너뛴 MCP 서버**: 비밀 값 입력을 건너뛴 것, `unrestorable`(옛 형식·이름 규칙 위반 — 실패로 세지 않는다)
 - **버전 때문에 보류한 항목**: 이 기기의 플러그인이 낮아 알아보지 못한 것. **"실패"가 아니라 "보류"로 보고한다** — 데이터는 레포에 그대로 있고 업데이트 후 다시 실행하면 복원된다
 - **해소한 MCP 충돌**: 서버명과 선택(채택 / 로컬 유지 / 유지 / 제거 / 나중에)
 - **`local_ahead` MCP 서버** → "올리려면 `/sync-backup`을 실행하세요"
 - **등록 실패한 MCP 서버**: `add-json`이 실패한 것. "레포 값 채택"의 `remove` **이후** 실패는 서버가 로컬에서 사라진 상태이므로 넣으려던 JSON과 함께 크게 경고한다
+
+플러그인 복원의 실패는 항목마다 아래 형태로 모아 보고한다. **`stderr`를 요약하지 않는다** — CLI의 문구가 가장 유용한 안내인 경우가 많다(명령 기반 설치가 그렇다).
+
+```json
+{ "id": "...", "step": "marketplace_add|install|enable|disable|config",
+  "command": "실행한 명령 전문", "exit": 1, "stderr": "CLI가 낸 문구 전문" }
+```
+
+실행되지 않은 항목(5-2의 `blocked`, `unrestorable`)은 `command`도 `exit`도 없다. 별도 형태를 쓴다.
+
+```json
+{ "id": "...", "step": "install", "blocked_by": "marketplace_add:<name>",
+  "reason": "마켓플레이스 등록이 실패해 건너뛰었습니다" }
+```
+
+**실패는 항목 단위로 독립이고 종료 코드는 0이다.** 하나가 실패해도 나머지는 계속 진행한다 — 그래야 안내가 보인다.

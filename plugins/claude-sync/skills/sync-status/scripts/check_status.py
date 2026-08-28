@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""로컬 ~/.claude 와 레포 백업의 차이를 3-way(내용 해시)로 분석해 출력한다. mtime 미사용."""
-import json
+"""로컬 ~/.claude 와 레포 백업의 차이를 3-way(내용 해시)로 분석해 출력한다. mtime 미사용.
+
+**플러그인은 여기서 비교하지 않는다.** 옛 판은 플러그인 섹션의 **키 집합만** 비교해
+켬/끔 변경을 통째로 놓쳤고(결함 B), 그 자리에 두 번째 파서가 있었다. 판정의 단일
+진입점은 sync-status/scripts/compare_plugins.py 하나다 — SKILL.md 2단계가 부른다.
+"""
 import os
 import sys
 
@@ -55,23 +59,5 @@ for key, label in labels:
 
 if not any(buckets[k] for k in buckets if k != "in_sync"):
     print("\n모든 파일이 동기화 상태입니다.")
-
-# 플러그인 비교 (enabledPlugins 키 집합)
-repo_plugins = os.path.join(repo_path, "plugins.json")
-settings = os.path.join(HOME_CLAUDE, "settings.json")
-if os.path.exists(repo_plugins) and os.path.exists(settings):
-    with open(repo_plugins) as f:
-        rp = set(json.load(f).get("enabledPlugins", {}).keys())
-    with open(settings) as f:
-        lp = set(json.load(f).get("enabledPlugins", {}).keys())
-    only_repo, only_local = rp - lp, lp - rp
-    if only_repo or only_local:
-        print("\n플러그인 차이:")
-        for p in sorted(only_repo):
-            print("  + 레포에만(restore 시 설치): " + p)
-        for p in sorted(only_local):
-            print("  - 로컬에만(backup 시 추가): " + p)
-    else:
-        print("\n플러그인: 동일")
 
 print()

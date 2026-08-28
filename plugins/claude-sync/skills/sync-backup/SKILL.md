@@ -238,17 +238,9 @@ if [ -f ~/.claude/.syncignore ]; then
 fi
 ```
 
-### 5. plugins.json 생성
+### 4.5 다운그레이드 사고 탐지
 
-settings.json에서 플러그인 관련 필드만 추출한다:
-
-```bash
-python3 $SYNC_SCRIPTS/extract_plugins.py plugins.json
-```
-
-### 5.5 다운그레이드 사고 탐지
-
-**MCP 수집보다 먼저 한다.** 6단계가 `mcp-servers.json`을 v2로 덮어쓰면 "레포가 v1 배열"이라는 증거가 사라져 탐지 자체가 불가능해진다.
+**수집 단계들보다 먼저 한다.** 6단계가 `mcp-servers.json`을 v2로 덮어쓰면 "레포가 v1 배열"이라는 증거가 사라져 탐지 자체가 불가능해진다.
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
@@ -275,15 +267,58 @@ python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 **자동으로 복구하지 않는다.** 옛 기기가 *의도적으로* 지운 서버까지 되살리기 때문이다.
 
+### 5. plugins.json 생성 (키 단위 3-way 병합)
+
+`~/.claude/settings.json`의 세 필드(`enabledPlugins`·`extraKnownMarketplaces`/`additionalMarketplaces`·`pluginConfigs`)와 `~/.claude/plugins/installed_plugins.json`의 `auto` 플래그를 읽어 레포의 `plugins.json`과 **섹션별 키 단위로 병합**한다. `claude plugin list`는 호출하지 않는다.
+
+**`BASE_STAGING`은 수집 단계들보다 앞에서 딱 한 번 비운다.** 6단계의 MCP 수집이 같은 디렉토리를 쓰므로, 각 단계가 제 앞에서 `rm -rf`하면 앞 단계의 산출물이 지워지고 그 파일의 base가 영영 전진하지 않는다.
+
+```bash
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+rm -rf "$BASE_STAGING"
+python3 "$SYNC_SCRIPTS/collect_plugins.py" "$SYNC_REPO" "$BASE_STAGING" > /tmp/claude-sync-plugins.json
+cat /tmp/claude-sync-plugins.json
+```
+
+출력 JSON의 `status`로 분기한다.
+
+- `"skipped"`: `settings.json`을 읽지 못했거나, **레포 파일의 형식을 알아볼 수 없다**(상위 버전이 쓴 백업일 수 있다). 어느 쪽이든 **레포의 `plugins.json`은 손대지 않았고 base도 전진시키지 않는다.** `reason`을 알리고 플러그인 단계만 건너뛴다. **파일 동기화는 그대로 진행한다.**
+
+  `reason`이 "형식을 알아볼 수 없다"이면 이 기기의 플러그인이 낡은 것이므로 **업데이트를 안내한다**: `claude plugin marketplace update claude-sync && claude plugin update claude-sync`.
+- `"ok"`: `sections`의 세 섹션을 각각 보고한다.
+
+**최상위 `status`는 섹션 skip을 반영하지 않는다.** 그 값은 "이 스크립트가 레포를 갱신했는가"이므로, 섹션 하나가 접혀도 `"ok"`다. 섹션 단위 사실은 `sections[<섹션>]["status"]`에만 있으니 **그것을 반드시 따로 읽는다.** 섹션 하나가 `"skipped"`여도 **나머지는 정상 처리된 것이다** — 그 섹션의 레포 내용과 base만 이전 상태 그대로 보존된다.
+
+| 섹션의 키 | 의미 | 안내 |
+|---|---|---|
+| `conflicts.repo_kept` | 케이스 9 — 양쪽이 바뀜 | "양쪽이 바뀌었습니다. 레포 값을 그대로 두었습니다. `/sync-restore`에서 해소하세요" |
+| `conflicts.repo_absent` | 케이스 5 — 타 기기 삭제 + 로컬 수정 | "다른 기기가 삭제했는데 이 기기에서 바꿨습니다. `/sync-restore` 먼저 실행하세요" |
+| `local_stale` | 케이스 4 — 타 기기가 삭제, 로컬 잔존 | "`/sync-restore`에서 정리하세요" |
+| `repo_ahead.absent` | 케이스 2 — 타 기기가 추가 | "다른 기기가 추가했습니다. `/sync-restore`가 이 기기에 설치합니다" |
+| `repo_ahead.present` | 케이스 8 — 타 기기가 **변경** | "다른 기기가 **변경**했습니다. `/sync-restore`에서 채택할지 선택이 필요합니다" |
+| `deleted` | 이 기기에서 지운 항목 | 레포에서도 제거되었음을 알린다 |
+| `held.auto` | 의존성으로 설치된 플러그인 | **백업하지 않는다.** 부모를 복원하면 따라옵니다 |
+| `held.local_marketplace` | 로컬 디렉토리 마켓플레이스와 그 소속 플러그인 | **동기화되지 않습니다** — 다른 기기에는 등록할 소스가 없습니다 |
+| `held.extended_value` | 버전 제약(배열·객체)이 있는 플러그인 | "레포의 값을 보존했습니다. 이 기기 값으로 통일하려면 `/sync-restore`에서 고르세요" |
+| `held.declined` | 설정 입력을 건너뛴 항목 | 조용히 둔다. 레포 값이 바뀌면 다시 보고된다 |
+
+`repo_ahead.present`(케이스 8)에 케이스 2와 같은 문구를 쓰면 안 된다 — restore는 케이스 8을 자동 반영하지 않으므로 그 안내는 사실이 아니고, 사용자가 빠져나갈 수 없는 루프에 갇힌다.
+
+최상위 `orphaned`가 비어 있지 않으면 **마켓플레이스가 등록되지 않은 플러그인**이 레포에 있다는 뜻이다. 차단하지 않는다. 그 목록을 보여주고, 해당 마켓플레이스를 가진 기기에서 `/sync-backup`을 실행하면 해소된다고 안내한다.
+
+`base_staging`이 `"failed"`이면 **레포는 갱신됐지만 base 스테이징이 실패한 것이다.** `base_staging_reason`을 그대로 보여준다. 다음 백업이 복구한다.
+
+충돌이 있어도 백업 전체를 막지 않는다. 해당 항목만 건너뛴다.
+
 ### 6. mcp-servers.json 생성 (키 단위 3-way 병합)
 
 `~/.claude.json`의 user 스코프 `mcpServers`를 읽어 레포의 `mcp-servers.json`과 서버 이름 키 단위로 병합한다. `claude mcp list`는 호출하지 않는다.
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-MCP_STAGING="${TMPDIR:-/tmp}/claude-sync-mcp-base"
-rm -rf "$MCP_STAGING"
-python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$MCP_STAGING" > /tmp/claude-sync-mcp.json
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$BASE_STAGING" > /tmp/claude-sync-mcp.json
 cat /tmp/claude-sync-mcp.json
 ```
 
@@ -369,11 +404,11 @@ git add -A
 git diff --cached --stat
 ```
 
-변경 내용을 간단히 요약한 뒤, 아래 블록을 그대로 실행한다. **MCP base 갱신 호출이 "푸시 성공"과 "커밋할 변경 없음" 두 경로 모두에 있어야 한다** — 하나라도 빠지면 그 경로의 기기에서 base가 전진하지 않는다.
+변경 내용을 간단히 요약한 뒤, 아래 블록을 그대로 실행한다. **base 갱신 호출이 "푸시 성공"과 "커밋할 변경 없음" 두 경로 모두에 있어야 한다** — 하나라도 빠지면 그 경로의 기기에서 base가 전진하지 않는다.
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-MCP_STAGING="${TMPDIR:-/tmp}/claude-sync-mcp-base"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
 cd "$SYNC_REPO"
 REPO_HAS_CONTENT=0
 
@@ -395,12 +430,18 @@ else
   echo "푸시에 실패했습니다. base를 갱신하지 않습니다."
 fi
 
-# MCP base: 레포가 실제로 그 내용을 갖게 된 뒤에만 기록한다.
-# 스테이징 최종 파일은 collect_mcp.py가 레포 쓰기에 성공한 뒤 rename으로 만든다.
+# base: 레포가 실제로 그 내용을 갖게 된 뒤에만 기록한다.
+# 스테이징 최종 파일은 수집 스크립트가 **레포 쓰기에 성공한 뒤** rename으로 만든다.
 # 따라서 파일 존재가 곧 "레포까지 반영됨"이다 — status 값을 다시 읽을 필요가 없다.
-if [ "$REPO_HAS_CONTENT" = "1" ] && [ -f "$MCP_STAGING/mcp-servers.json" ]; then
-  python3 "$SYNC_SCRIPTS/update_base.py" "$MCP_STAGING" mcp-servers.json
-  echo "MCP base 갱신됨"
+# **두 relpath를 함께 훑는다.** 한 파일에만 걸면 MCP가 skipped이고 플러그인이 ok인
+# 실행에서 블록 자체가 돌지 않아 base/plugins.json이 영영 만들어지지 않는다.
+RELS=()
+for rel in plugins.json mcp-servers.json; do
+  [ -f "$BASE_STAGING/$rel" ] && RELS+=("$rel")
+done
+if [ "$REPO_HAS_CONTENT" = "1" ] && [ ${#RELS[@]} -gt 0 ]; then
+  python3 "$SYNC_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"
+  echo "base 갱신됨: ${RELS[*]}"
 fi
 ```
 
@@ -408,11 +449,11 @@ fi
 
 **파일**: 커밋 & 푸시에 성공한 경우에만 push된 각 파일의 base를 방금 올린 로컬 내용으로 갱신한다. **핵심 계약: push 성공 파일의 base ← 로컬 내용.**
 
-**MCP 서버**: base는 레포 파일의 사본이 아니라 **"이 기기의 로컬이 동의한 부분"만 담는 파생 문서**다. `collect_mcp.py`가 계산한 `next_base`를 스테이징 디렉토리에 써 두었다가 여기서 옮긴다.
+**플러그인과 MCP 서버**: base는 레포 파일의 사본이 아니라 **"이 기기의 로컬이 동의한 부분"만 담는 파생 문서**다. 두 수집 스크립트가 계산한 `next_base`를 **같은 스테이징 디렉토리**에 써 두었다가 여기서 함께 옮긴다.
 
-- `update_base.py "$MCP_STAGING" mcp-servers.json` — 올바른 호출.
-- `update_base.py "$SYNC_REPO" mcp-servers.json` — **금지.** `base ← 레포 파일 바이트`가 되어, 타 기기가 추가·변경한 서버(케이스 2·8)의 값이 base에 실린다. 그러면 다음 백업이 그것을 "이 기기가 삭제했다"로 오독해 **다른 기기의 서버를 경고 없이 지운다.**
-- 기록을 건너뛰는 경우는 **푸시 실패**, **MCP 단계 skip**, **`base_staging` 실패** 셋이다. 뒤의 둘은 스테이징 최종 파일이 만들어지지 않아 `[ -f "$MCP_STAGING/mcp-servers.json" ]`이 막고, **푸시 실패는 `REPO_HAS_CONTENT=0`이 막는다** — 그 시점에 스테이징 파일은 이미 존재한다. **게이트의 두 축은 각각 다른 경우를 담당하므로 어느 쪽도 중복이 아니다.** 충돌(`conflicts`)이나 `local_stale`이 있다고 해서 전역으로 막지 않는다 — `next_base`가 이름 단위로 이미 그 서버의 base를 고정하고 있고, 전역 게이트는 나머지 서버의 base까지 얼려 정확도를 떨어뜨린다.
+- `update_base.py "$BASE_STAGING" "${RELS[@]}"` — 올바른 호출.
+- `update_base.py "$SYNC_REPO" ...` — **금지.** `base ← 레포 파일 바이트`가 되어, 타 기기가 추가·변경한 항목(케이스 2·8)의 값이 base에 실린다. 그러면 다음 백업이 그것을 "이 기기가 삭제했다"로 오독해 **다른 기기의 서버와 플러그인을 경고 없이 지운다.**
+- 기록을 건너뛰는 경우는 **푸시 실패**, **그 파일의 수집 단계 skip**, **`base_staging` 실패** 셋이다. 뒤의 둘은 스테이징 최종 파일이 만들어지지 않아 `RELS`를 채우는 `-f` 검사가 막고, **푸시 실패는 `REPO_HAS_CONTENT=0`이 막는다** — 그 시점에 스테이징 파일은 이미 존재한다. **게이트의 두 축은 각각 다른 경우를 담당하므로 어느 쪽도 중복이 아니다.** 두 파일이 **독립적으로** 판정되는 것도 같은 이유다 — 한쪽이 skip이라고 다른 쪽의 base까지 얼리면 그 파일의 삭제 전파가 죽는다. 충돌(`conflicts`)이나 `local_stale`이 있다고 해서 전역으로 막지 않는다 — `next_base`가 키 단위로 이미 그 항목의 base를 고정하고 있고, 전역 게이트는 나머지 항목의 base까지 얼려 정확도를 떨어뜨린다.
 
 ### 12. 결과 보고
 
