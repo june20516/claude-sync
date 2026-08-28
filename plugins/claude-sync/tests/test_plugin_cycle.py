@@ -360,8 +360,13 @@ def test_a_blocked_marketplace_stops_the_disable_step(tmp_path):
       ② `pluginConfigs`로 candidates에 들어온다 — `enabledPlugins` 경로의 키는 정의상
          로컬에 없으므로 이미 설치된 id는 이 경로로만 candidates에 온다
          (`plan_plugins.py:208-212`).
-      ③ **이미 설치돼 있다** — 로컬 `enabledPlugins`에 값이 있어야 `disable`이 exit 0으로
-         실제로 쓴다. 없으면 추정 4번의 갈래(exit 1, 아무것도 쓰지 않음)로 떨어진다.
+      ③ **이미 설치돼 있다** — 빼면 그 id가 `skipped_already_installed`가 아니라
+         `install`(2단계) 목록으로 가서 이 픽스처가 **3단계 판이기를 그만둔다**(실측:
+         `skipped_already_installed == []`, `install == ["p@m"]`). 로컬 `enabledPlugins`에
+         값이 생기는 것도 여기서다 — 없으면 아래 "3단계가 막혔다" 단정이 읽을 키가
+         아예 없다. (*초판은 사유를 "없으면 `disable`이 exit 1로 아무것도 쓰지 않는다"로
+         적었다. **2026-08-29 스모크 2장이 그것을 뒤집었다** — 미설치 id에 `disable`은
+         exit 0이고 `false` 키를 만든다. 결론은 같고 사유가 틀렸다.*)
       ④ **그 마켓플레이스의 1단계 등록이 실패한다** — `_blocked`는 `depends_on`이 blocked에
          있을 때만 참이므로 이것 없이는 필터가 애초에 동작하지 않는다.
 

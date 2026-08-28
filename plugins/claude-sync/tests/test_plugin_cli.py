@@ -5,7 +5,8 @@
 그 하네스가 딛고 선 에뮬레이터만 잰다 — 여기서는 `PluginCLI`만 쓰고 스크립트를
 서브프로세스로 부르지 않는다.
 
-근거는 plugin_cli.py 모듈 docstring이 가리키는 브리프 1-b·1-c의 실측표다.
+근거는 plugin_cli.py 모듈 docstring이 가리키는 두 출처다 — 브리프 1-b·1-c의 실측표와
+`docs/superpowers/2026-08-29-plugin-cli-smoke.md`(spec 14.5 실환경 스모크).
 """
 import json
 import os
@@ -26,14 +27,14 @@ def test_install_writes_true_but_preserves_an_existing_array(tmp_path):
 
 
 def test_install_flattens_an_existing_object_value(tmp_path):
-    """**실측 없음 — 추정**(plugin_cli 모듈 docstring 9번).
+    """**실측**(plugin_cli 모듈 docstring 9번 — 2026-08-29 스모크 2장).
 
-    1.2와 브리프 C1이 재는 것은 **객체/미설치** 행이다. `set_enabled`가 설치 기록을 함께
+    1.2와 브리프 C1이 재는 것은 **객체/미설치** 행이었다. `set_enabled`가 설치 기록을 함께
     남기므로(그 자리 docstring 참조) 여기서 만드는 상태는 **객체/이미 설치 → 재실행**이고,
-    그 행은 두 표 어디에도 없다. 이 에뮬레이터는 설치 여부로 분기하지 않으므로 측정된
-    행과 같은 결과를 낸다 — **결론이 아니라 근거가 추정이다.**
+    그 행은 두 표 어디에도 없었다 — 결론은 맞고 **근거만 추정이던 자리**였다. 스모크가
+    그 행을 직접 재어 `true`로 평탄화됨을 확인했고, 그래서 여기 표식이 승격됐다.
 
-    평탄화가 객체 한 갈래뿐이라는 것(배열은 살아남는다)은 실측이고, 그쪽은
+    평탄화가 객체 한 갈래뿐이라는 것(배열은 살아남는다)은 브리프 C1의 실측이고, 그쪽은
     test_install_writes_true_but_preserves_an_existing_array가 잰다.
     """
     cli = PluginCLI(str(tmp_path))
@@ -63,24 +64,68 @@ def test_enable_and_disable_are_not_idempotent(tmp_path):
     assert cli.settings()["enabledPlugins"]["p@m"] is True
 
 
-def test_enable_and_disable_reject_an_unknown_plugin(tmp_path):
-    """**에뮬레이터의 규약이지 실측이 아니다** (plugin_cli 모듈 docstring 4번).
+def test_enable_and_disable_on_an_unknown_plugin_create_a_ghost_key(tmp_path):
+    """**실측**(2026-08-29 스모크 2장 — 옛 추정 4번을 뒤집은 자리).
 
-    브리프 1-b는 설치되지 않은 id에 enable/disable을 낸 갈래를 재지 않았다. 여기서
-    고정하는 것은 둘이다 — exit 1이라는 것, 그리고 **값을 만들어 내지 않는다**는 것.
-    후자가 실질이다: 설치에 실패한 플러그인에 3단계(disable_after_install)가 로컬 값을
-    심으면 다음 백업의 next_base가 그 키를 전진시켜 **복원 실패가 성공처럼 보인다**
-    (10.4가 "실패한 항목은 로컬에 없으니 자동으로 빠진다"로 막으려는 것이 그것이다).
+    초판은 *"exit 1이고 값을 만들어 내지 않는다"*를 에뮬레이터의 규약으로 고정했다.
+    실제 CLI는 **exit 0이고 키를 만든다**(`{"ghost@smoke-mkt": false}`). 그래서 이
+    테스트가 재는 것은 안전 성질이 아니라 **위험**이다 — 이름이 `reject`에서
+    `create_a_ghost_key`로 바뀐 것이 그 뜻이다.
+
+    **왜 위험인가.** 복원 2단계(`install`)가 실패한 id에도 3단계(`disable_after_install`)는
+    그대로 `disable`을 낸다(sync-restore/SKILL.md 5-2·5-3 — 5-2의 `blocked` 필터는
+    **마켓플레이스 등록 실패**만 걸러 낸다). 그러면 설치되지 않은 플러그인에 로컬 값
+    `false`가 생기고, 레포도 `false`이므로 다음 백업이 그 키를 in_sync로 읽어
+    **next_base를 전진시킨다** — 복원 실패가 성공처럼 보이고, 그 뒤로는 그 id가
+    add 버킷에 오지 않아 **영영 설치되지 않는다.** spec 10.4의 *"실패한 항목은
+    로컬에 없으니 자동으로 빠진다"*가 이 갈래에서는 참이 아니다.
+
+    이 테스트는 그 갈래를 고치지 않는다(범위 밖). 고정하는 것은 **CLI가 무엇을
+    하는가**이고, 하네스가 그 위험을 무해한 no-op으로 흉내 내지 못하게 막는 것이다.
     """
     cli = PluginCLI(str(tmp_path))
-    assert cli.enable("ghost@m") == 1
+    assert cli.disable("ghost@m") == 0
+    # 값이 생긴다. **부재는 「꺼짐」과 같지 않다** — 같았다면 exit 1이었을 것이다.
+    assert cli.settings()["enabledPlugins"] == {"ghost@m": False}
+    # 재실행은 이제 「이미 그 상태」라 exit 1이다.
     assert cli.disable("ghost@m") == 1
-    assert cli.settings()["enabledPlugins"] == {}
-    # **두 파일 중 다른 쪽도 함께 잰다.** settings.json만 보면 실패 갈래가
-    # installed_plugins.json에 항목을 남겨도 조용하다 — 그러면 read_installed의
-    # installed_ids에 유령 id가 들어가 restore의 2단계가 그것을
-    # skipped_already_installed로 접는다.
+    # **두 파일 중 다른 쪽도 함께 잰다.** 설치 기록은 만들지 않는다 — 그래서 이 키는
+    # `read_installed`의 installed_ids에 없는 **유령**이고, 다음 복원의 2단계는
+    # 그것을 `install` 목록에 넣으려 하지만 로컬 값이 레포와 같아져 add 버킷 자체에
+    # 오지 않는다. 설치 기록이 함께 생기면 위험의 모양이 달라지므로 여기서 고정한다.
     assert cli.installed()["plugins"] == {}
+    # enable 방향은 스모크가 재지 않았다 — 한 메서드(`_set_value`)의 대칭으로 둔다.
+    assert cli.enable("other@m") == 0
+    assert cli.settings()["enabledPlugins"]["other@m"] is True
+
+
+def test_a_non_boolean_value_reads_as_off(tmp_path):
+    """**실측**(2026-08-29 스모크 3장). CLI는 비불리언 값을 「꺼짐」으로 읽는다.
+
+    이 표가 spec 7.3의 H3(값 보류)와 `plugin_config.value_command`가 **비불리언 레포
+    값에 언제나 `None`**을 돌려주는 것의 근거다 — 확장 값에 낼 수 있는 명령은
+    `enable` 하나뿐이고 그것은 값을 `true`로 **파괴한다.** `disable`은 exit 1로 죽고
+    값이 보존된다. 즉 어느 쪽도 "레포의 확장 값을 이 기기에 재현"하지 못한다.
+
+    초판 에뮬레이터는 `현재값 == 요청값`으로 판정해 배열·객체에 `disable`을 내면
+    **exit 0으로 값을 `false`로 갈아엎었다** — 실측과 반대다.
+
+    **두 값을 한 기기에 함께 심고 dict 동등으로 잰다.** 루프로 한 키를 돌려 쓰면 행
+    하나를 빼는 변조가 살아남는다(실측: `for value in (배열, 객체)`에서 객체 행을 뺀
+    변조가 SURVIVED). 스모크가 잰 것은 **두 행**이므로 둘 다 실려 있어야 한다.
+    """
+    cli = PluginCLI(str(tmp_path))
+    cli.set_enabled("arr@m", ["1.0.0"])
+    cli.set_enabled("obj@m", {"version": "1.0.0"})
+    # 「이미 꺼짐」 — 명령이 죽고 확장 값이 그대로 남는다.
+    assert cli.disable("arr@m") == 1
+    assert cli.disable("obj@m") == 1
+    assert cli.settings()["enabledPlugins"] == {
+        "arr@m": ["1.0.0"], "obj@m": {"version": "1.0.0"}}
+    # 반대 방향은 통과하고 **값을 파괴한다.**
+    assert cli.enable("arr@m") == 0
+    assert cli.enable("obj@m") == 0
+    assert cli.settings()["enabledPlugins"] == {"arr@m": True, "obj@m": True}
 
 
 def test_uninstall_removes_the_config_too_and_fails_when_absent(tmp_path):
@@ -129,18 +174,19 @@ def test_install_config_merges_partially(tmp_path):
 
 
 def test_marketplace_add_is_idempotent_and_writes_a_github_source(tmp_path):
-    """1-b #7 — 재실행도 exit 0. 그리고 **그 명령이 만드는 값의 모양**(추정 6번).
+    """1-b #7 — 재실행도 exit 0. 그리고 **그 명령이 만드는 값의 모양**(6번).
 
     14.3 표의 `marketplace add` 행이 이 파일에 없었다(실측 — 이 명령을 비멱등으로
     만드는 변조도, exit code를 언제나 1로 만드는 변조도 스위트 전체에서 살아남았다).
     다른 테스트들이 이 명령을 **셋업으로 부르기만** 하고 반환값도 재실행도 재지 않았기
     때문이다.
 
-    값의 모양은 **실측 없음 — 추정**(plugin_cli 모듈 docstring 6번)이고, 그 추정을
-    고정하는 자리가 여기다. 실제 CLI는 인자 하나에서 출처 종류를 판별하므로 url·git
-    출처의 시나리오를 쓰려면 이 자리를 먼저 고쳐야 한다 — **그때 이 테스트가 먼저
-    말한다.** 이전에는 이 모양이 교대 시나리오 하나(H2)에 묻혀 있어서, 자기 주제가
-    directory 보류인 그 시나리오를 손대는 순간 추정 둘이 함께 풀렸다.
+    **언제나 github 모양인 것은 에뮬레이터의 단순화이지 CLI의 동작이 아니다** — 실제
+    CLI는 인자 하나에서 출처 종류를 판별한다(**실측**, plugin_cli 모듈 docstring 6번:
+    디렉토리 경로를 주니 `directory` 출처로 썼다). 그 단순화를 고정하는 자리가 여기다.
+    url·git 출처의 시나리오를 쓰려면 이 자리를 먼저 고쳐야 한다 — **그때 이 테스트가
+    먼저 말한다.** 이전에는 이 모양이 교대 시나리오 하나(H2)에 묻혀 있어서, 자기 주제가
+    directory 보류인 그 시나리오를 손대는 순간 두 자리가 함께 풀렸다.
 
     1-b #10 — `autoUpdate`를 설정하는 옵션이 CLI에 **없으므로** 값에도 넣지 않는다.
     그 필드의 부재를 dict 동등으로 함께 고정한다.
@@ -157,7 +203,7 @@ def test_marketplace_add_is_idempotent_and_writes_a_github_source(tmp_path):
 
 
 def test_set_directory_marketplace_writes_a_directory_source(tmp_path):
-    """directory 출처 값의 모양 — **실측 없음 — 추정**(모듈 docstring 7번).
+    """directory 출처 값의 모양 — **실측**(모듈 docstring 7번 — 2026-08-29 스모크 2장).
 
     CLI 명령이 아니라 픽스처다(`marketplace add <경로>`의 결과이지만 복원 경로가 이
     갈래에 도달하지 않는다 — H2로 보류된다). 그래도 계약 파일이 지는 것은, 이 모양이
@@ -167,6 +213,9 @@ def test_set_directory_marketplace_writes_a_directory_source(tmp_path):
 
     이 모양 역시 교대 시나리오 하나(H2)에만 걸려 있었다 — 그 시나리오는 **결과**(레포에
     올라가지 않는다)를 재고, 여기서는 **입력**(그 결과를 만드는 값의 모양)을 잰다.
+
+    초판에는 이 모양이 추정이었다. 스모크가 실제 CLI에 디렉토리 경로를 주고 읽은 값이
+    **가정과 정확히 같아서** 표식만 승격됐고 값은 그대로다.
     """
     cli = PluginCLI(str(tmp_path))
     assert cli.set_directory_marketplace("mylocal", "/tmp/x") == 0
@@ -230,6 +279,7 @@ def test_installing_at_user_scope_keeps_other_scope_entries(tmp_path):
     read_installed의 스코프 필터가 필터로 동작하는 입력 자체를 만들 수 없게 된다.
     **실측 없음 — 추정**(plugin_cli 모듈 docstring 8번): N4가 배열의 존재와 항목의 필드를
     쟀을 뿐, `install --scope user`가 다른 스코프 항목을 건드리지 않는다는 것은 재지 않았다.
+    2026-08-29 스모크도 **스코프 하나만** 세워 이 자리를 닫지 못했다.
     """
     cli = PluginCLI(str(tmp_path))
     with open(cli.installed_path, "w", encoding="utf-8") as f:
