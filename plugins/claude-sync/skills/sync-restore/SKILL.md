@@ -336,7 +336,7 @@ rm -f /tmp/claude-sync-plugins-choices.json
 
 `apply-base`는 `settings.json`을 **다시 읽어** 계산하므로 5-1~5-6의 CLI 실행이 **모두 끝난 뒤**에 호출해야 한다. 실패했거나 건너뛴 항목은 로컬에 없으므로 base가 자동으로 전진하지 않는다.
 
-스테이징에서 base로 옮기는 것은 6-6이 두 파일을 함께 처리한다.
+스테이징에서 `base/`로 옮기는 것은 **6절 밖의 6.5절**이 두 파일을 함께 처리한다. 6절 안에 두면 MCP 계획이 `skipped`인 실행에서 이 절이 계산해 둔 플러그인 base가 영영 옮겨지지 않는다.
 
 ### 6. MCP 서버 복원
 
@@ -459,7 +459,7 @@ rm -f /tmp/claude-sync-mcp-one.json
 
 다운그레이드가 의심될 때 "유지"가 권장인 이유가 하나 더 있다. 이 기기를 3.0.0 이상으로 올린 뒤 `/sync-backup`을 실행하면 **"유지"한 서버가 레포로 되돌아간다** — 유실된 것을 되살리는 경로다. "제거"를 고르면 그 경로가 닫힌다.
 
-#### 6-6. base 갱신
+#### 6-6. MCP base 계산
 
 **사용자가 아무 선택도 하지 않았어도 실행한다.** 무선택은 "이전 base 유지"로 계산되므로 결과가 달라지지 않는다.
 
@@ -476,9 +476,20 @@ EOF
 
 python3 "$SYNC_SCRIPTS/plan_mcp.py" apply-base "$SYNC_REPO/mcp-servers.json" "$BASE_STAGING" /tmp/claude-sync-mcp-choices.json
 rm -f /tmp/claude-sync-mcp-choices.json
+```
 
-# 두 apply-base가 같은 디렉토리에 썼다. **두 relpath를 함께 훑는다** — 한 파일에만
-# 걸면 다른 파일의 base가 전진하지 않아 그 파일의 삭제 전파가 조용히 죽는다.
+`apply-base`는 `~/.claude.json`을 **다시 읽어** 계산하므로, 위 6-1~6-5의 CLI 실행이 **모두 끝난 뒤**에 호출해야 한다. 이 단계는 스테이징까지만 쓴다 — `base/`로 옮기는 것은 6.5절이다.
+
+### 6.5 base 갱신 (스테이징 → base)
+
+**5절과 6절 중 어느 쪽이 건너뛰어졌더라도 이 절은 실행한다.** 두 apply-base가 같은 스테이징 디렉토리에 쓰고 여기가 그것을 `base/`로 옮기는 **유일한 경로**이므로, 이 절이 어느 한쪽 단계 **안에** 있으면 그 단계가 `skipped`인 실행에서 다른 파일의 base까지 함께 영영 전진하지 않는다. 그러면 `keep_stale`·`keep_local`·`release` 선택이 조용히 무효가 되고, 사용자는 같은 질문을 매번 다시 받는다(9.3.7).
+
+```bash
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+
+# **두 relpath를 함께 훑는다** — 한 파일에만 걸면 다른 파일의 base가 전진하지 않아
+# 그 파일의 삭제 전파가 조용히 죽는다. 계산되지 않은 파일은 스테이징에 없으므로
+# 자동으로 빠진다.
 # apply-base에는 레포 쓰기가 없으므로 여기서는 **파일 존재가 곧 "계산 성공"**이다.
 RELS=()
 for rel in plugins.json mcp-servers.json; do
@@ -490,7 +501,7 @@ if [ ${#RELS[@]} -gt 0 ]; then
 fi
 ```
 
-`apply-base`는 `~/.claude.json`을 **다시 읽어** 계산하므로, 위 6-1~6-5의 CLI 실행이 **모두 끝난 뒤**에 호출해야 한다. `update_base.py`에 `"$SYNC_REPO"`를 넘기면 안 된다 — `base ← 레포 파일 바이트`가 되어 타 기기의 서버와 플러그인을 다음 백업이 삭제한다.
+`update_base.py`에 `"$SYNC_REPO"`를 넘기면 안 된다 — `base ← 레포 파일 바이트`가 되어 타 기기의 서버와 플러그인을 다음 백업이 삭제한다.
 
 ### 7. 결과 보고
 
