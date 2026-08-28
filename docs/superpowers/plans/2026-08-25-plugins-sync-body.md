@@ -114,6 +114,11 @@ plan ①의 실행에서 Task 2~7 **매번** SURVIVE가 나왔고 대부분 plan
 | **축 분리** | `value` ↔ `action` 맞바꾸기, `merge`에 `action`을 흘리기, `restore_plan`에서 `value_held`를 판정표에 태우기 |
 | **`{}` vs `None`** | 부재 섹션을 `None`으로, 인식 실패를 `{}`로, `base=None` degrade를 `{}`로 |
 | **I/O 층** | `open` 모드(`"rb"`→`"r"`), `except FileNotFoundError`→`except OSError`, 파일 부재를 예외로/예외를 부재로, `os.replace` 제거 |
+| **입력 축** | **테스트가 준 입력을 뺀다** — 선택 인자(`choices`의 한 항목·`secrets`), 픽스처 값(레포 값을 확장 포맷→불리언, options를 비움), 회차(backup 2회→1회), 에뮬레이터가 만드는 상태(의존성 자식을 넣지 않음) |
+
+**다섯째 축은 Task 13 품질 리뷰의 발견이다(실측).** 앞의 넷은 전부 **프로덕션 가드**를 뒤집는데, 그 축에서는 *"테스트가 준 입력이 단정을 좌우하지 않는다"*는 결함이 **원리적으로 나오지 않는다.** Task 13에서 SURVIVE한 다섯은 전부 이 축에서만 드러났다 — 그중 둘은 시나리오가 자기 주제(spec 6.3의 부분 입력)를 하나도 재지 않는데도 초록이었고, 하나는 에뮬레이터가 인용한 **실측 행**(N1)이 저장소 어디에도 고정되지 않은 자리였다.
+
+**한 줄로 줄이면 이렇다: 시나리오를 적을 때 "이 입력을 빼면 단정이 죽는가"를 물어야 하고, 그 물음은 Step 1의 코드를 적는 단계에서 한 번, Step 4b에서 다시 한 번 물어야 한다.** 죽지 않는다면 그 시나리오는 자기 이름이 약속한 것을 재지 않는다.
 
 **SURVIVE하면 구현이 아니라 테스트를 보강한다.** 보강한 줄 옆에 어떤 변조를 잡는지 주석으로 남긴다.
 
@@ -6342,19 +6347,23 @@ def test_marketplace_keep_returns_it_without_running_remove(tmp_path):
 
 # --- 14.2 #3 보류 후 침묵 ---
 
-def test_declined_config_silences_status_until_the_repo_value_changes(tmp_path):
-    """6.4 — 보류를 고른 뒤 status가 조용해야 하고, 레포 값이 바뀌면 다시 보고해야 한다."""
-    repo_init = {"enabledPlugins": {"delta@m": True},
+# 아래 두 시나리오가 **문자 그대로 같은** 픽스처를 쓴다. 같은 파일의 BLOCKED_REPO와 같은
+# 규율이다 — 한 쌍이 공유하는 리터럴은 상수로 올린다(P3).
+DECLINED_REPO = {"enabledPlugins": {"delta@m": True},
                  "extraKnownMarketplaces": {"m": GH},
                  "pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}}
-    dev = make_device(tmp_path, repo_init=repo_init)
+
+
+def test_declined_config_silences_status_until_the_repo_value_changes(tmp_path):
+    """6.4 — 보류를 고른 뒤 status가 조용해야 하고, 레포 값이 바뀌면 다시 보고해야 한다."""
+    dev = make_device(tmp_path, repo_init=DECLINED_REPO)
     dev.restore(choices={"pluginConfigs": {"declined": ["delta@m"]}})
     assert dev.held()["pluginConfigs"]["delta@m"]
     section = dev.status()["sections"]["pluginConfigs"]
     assert section["only_repo"] == [] and section["changed"] == []
     assert section["held"]["declined"] == ["delta@m"]
 
-    changed = json.loads(json.dumps(repo_init))
+    changed = json.loads(json.dumps(DECLINED_REPO))
     changed["pluginConfigs"]["delta@m"]["options"]["extra"] = pc.SENTINEL
     set_repo(dev.repo, changed)
     assert dev.status()["sections"]["pluginConfigs"]["only_repo"] == ["delta@m"]
@@ -6365,12 +6374,14 @@ def test_declined_config_keeps_the_repo_entry_across_two_backups(tmp_path):
 
     기기 B가 "이 기기에서는 안 쓴다"고 말했을 뿐인데 기기 A가 백업해 둔 설정 키 목록이
     레포에서 사라지면 안 된다.
+
+    **base 단정은 오늘 두 겹으로 참이라 단일 변조로는 잡히지 않는다** — 값 보류 skip과
+    next_base의 "로컬이 동의한 키만 전진". 그런데도 거는 이유는 6.4가 지목하는 초판의
+    형태(apply-base가 레포 값을 base에 기록)가 그 두 겹을 **함께** 우회하기 때문이다.
     """
-    repo_init = {"enabledPlugins": {"delta@m": True},
-                 "extraKnownMarketplaces": {"m": GH},
-                 "pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}}
-    dev = make_device(tmp_path, repo_init=repo_init)
+    dev = make_device(tmp_path, repo_init=DECLINED_REPO)
     dev.restore(choices={"pluginConfigs": {"declined": ["delta@m"]}})
+    assert "delta@m" not in dev.base()["pluginConfigs"]
     dev.backup()
     dev.backup()
     assert repo_doc(dev.repo)["pluginConfigs"]["delta@m"]["options"] == {
@@ -6378,7 +6389,20 @@ def test_declined_config_keeps_the_repo_entry_across_two_backups(tmp_path):
 
 
 def test_partially_entered_config_does_not_drop_the_other_keys(tmp_path):
-    """14.1 — 세 키 중 두 개만 입력해도 레포의 세 번째 키가 사라지지 않는다 (6.3)."""
+    """14.1 — 세 키 중 두 개만 입력해도 레포의 세 번째 키가 사라지지 않는다 (6.3).
+
+    **"사라지지 않음"만 재면 두 입력 중 어느 것도 단정을 좌우하지 않는다**(실측 — 초판이
+    그랬다: `declined`만 빼도, `secrets`만 빼도 스위트가 통과했다). 보류가 없으면 그
+    항목은 `conflicts.repo_kept`로 떨어지는데 **그때도 레포 값은 보존되기** 때문이다.
+    두 경로가 갈리는 곳은 다음 실행의 침묵이다 —
+
+      [declined 있음] status: changed == []
+      [declined 없음] status: changed == ["p@m"]  ← 영원히 다시 묻는다
+
+    spec 6.3이 부분 입력에 보류를 요구하는 **이유 자체**가 그것이고, 이 plan이 14.2 #5에서
+    경고한 형태("사라지지 않음만 보므로 영원히 다시 묻는 실패를 통과시킨다")의
+    pluginConfigs 판이다. enabledPlugins와 달리 대신 잡는 형제 시나리오가 없다.
+    """
     repo_init = {"enabledPlugins": {"p@m": True},
                  "extraKnownMarketplaces": {"m": GH},
                  "pluginConfigs": {"p@m": {"options": {k: pc.SENTINEL
@@ -6386,9 +6410,14 @@ def test_partially_entered_config_does_not_drop_the_other_keys(tmp_path):
     dev = make_device(tmp_path, repo_init=repo_init)
     dev.restore(secrets={"p@m": {"a": "1", "b": "2"}},
                 choices={"pluginConfigs": {"declined": ["p@m"]}})
+    # 입력한 두 키만 로컬에 들어간다 (N2). secrets를 단정에 싣는 유일한 자리다.
+    assert dev.local()["pluginConfigs"]["p@m"]["options"] == {"a": "1", "b": "2"}
+    assert dev.held()["pluginConfigs"]["p@m"]                       # 6.3 → 보류로 기록된다
     dev.backup()
     dev.backup()
     assert sorted(repo_doc(dev.repo)["pluginConfigs"]["p@m"]["options"]) == ["a", "b", "c"]
+    # **위 줄만으로는 두 경로가 갈리지 않는다.** 갈리는 곳이 여기다.
+    assert dev.status()["sections"]["pluginConfigs"]["changed"] == []
 
 
 # --- 14.2 #4 보류 진입 → 이탈 ---
@@ -6483,15 +6512,19 @@ def test_blocked_install_is_recovered_by_the_next_restore(tmp_path):
 
 # --- 14.2 #8 H3 탈출구 왕복 ---
 
+# 아래 두 시나리오도 **문자 그대로 같은** 픽스처를 쓴다(P3). 레포 값이 확장 포맷이라는
+# 것이 H3의 술어이므로, 이 값이 불리언으로 미끄러지면 둘이 **동시에** 주제를 잃는다.
+EXTENDED_REPO = {"enabledPlugins": {"p@m": ["1.0.0"]},
+                 "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}}
+
+
 def test_extended_value_escape_hatch_round_trip(tmp_path):
     """7.3 — 탈출구 실행 → backup 2회 → 레포 값이 true → 그 뒤 uninstall이 케이스 3으로 전파.
 
     #4·#5 어느 것도 이 경로를 덮지 않는다. "지우려면 먼저 불리언화"가 실제로 성립하는지가
     여기서 판정된다.
     """
-    dev = make_device(tmp_path, repo_init={
-        "enabledPlugins": {"p@m": ["1.0.0"]},
-        "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}})
+    dev = make_device(tmp_path, repo_init=EXTENDED_REPO)
     plan = dev.restore()
     assert plan["sections"]["enabledPlugins"]["add"] == ["p@m"]     # 설치는 한다
     assert dev.local()["enabledPlugins"]["p@m"] is True
@@ -6503,6 +6536,11 @@ def test_extended_value_escape_hatch_round_trip(tmp_path):
     assert repo_doc(dev.repo)["enabledPlugins"]["p@m"] is True
     dev.backup()
     assert repo_doc(dev.repo)["enabledPlugins"]["p@m"] is True
+    # **정리하는 것은 backup이 아니라 apply-base다**(실측 — 초판은 여기서 곧바로 []를
+    # 기대했으나 ['p@m']이었다). plugins-held.json의 소유자는 apply-base 하나뿐이고
+    # (write_held_state), collect_plugins는 읽기만 한다.
+    assert dev.held()["release"]["enabledPlugins"] == ["p@m"]        # backup은 손대지 않는다
+    dev.restore()
     assert dev.held()["release"]["enabledPlugins"] == []             # 조건이 사라져 정리됨
 
     dev.cli.uninstall("p@m")
@@ -6517,9 +6555,7 @@ def test_uninstall_before_the_escape_hatch_does_not_propagate(tmp_path):
     삭제가 전파되지 않고 다음 restore가 다시 설치한다. 안내 문구가 "먼저 불리언화"를
     적어야 하는 이유이고, 이 성질이 깨지면 그 안내가 거짓이 된다.
     """
-    dev = make_device(tmp_path, repo_init={
-        "enabledPlugins": {"p@m": ["1.0.0"]},
-        "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}})
+    dev = make_device(tmp_path, repo_init=EXTENDED_REPO)
     dev.restore()
     dev.backup()
     dev.cli.uninstall("p@m")
@@ -6574,11 +6610,21 @@ def test_two_cycles_reach_a_fixed_point(tmp_path):
 
 - [ ] **Step 4b: 변조 확인 (필수)**
 
+**프로덕션 가드 축.**
+
 - `plan_plugins.apply_base`의 release + `keep_local` 동시 적용을 지우기 → H3 왕복이 잡아야 한다
-- `pc.next_held_state`의 release 정리를 지우기 → 왕복의 `release == []` 단정이 잡아야 한다
+- `pc.next_held_state`의 release 정리를 지우기 → 왕복의 `release` 단정이 잡아야 한다
 - `collect_plugins`의 H2 보류를 마켓플레이스 섹션에만 적용하기 → directory 시나리오가 잡아야 한다
-- `Device.restore`의 `blocked` 검사를 지우기 → 부분 실패 시나리오가 **통과해 버린다**(에뮬레이터는 실패하지 않으므로). 이것은 하네스의 한계다 — `depends_on`이 비면 잡히도록 단정을 하나 더 건다
+- `Device.restore`의 `blocked` 검사를 지우기 → **CAUGHT다(실측).** 초판은 여기에 *"부분 실패 시나리오가 통과해 버린다 — 에뮬레이터는 실패하지 않으므로"*라고 적었으나 반증됐다: 실패를 흉내낼 수단이 없다는 것과 **잘못된 성공**을 잴 수 없다는 것은 다른 말이고, 등록이 실패했는데도 플러그인이 설치돼 버리는 것이 단정에 걸린다. 그래도 `depends_on`이 비면 잡히는 단정을 함께 걸 것 — 실패 메시지가 증상이 아니라 원인을 가리킨다
 - `keyed_sync.next_base`의 "로컬이 동의한 키만 전진"을 지우기 → 부분 실패의 base 단정(10.4)이 잡아야 한다
+
+**입력 축(위 표의 다섯째 축).** 이 축을 돌리지 않으면 아래 다섯이 전부 살아남는다 — 초판에서 실제로 그랬다.
+
+- **선택 인자를 하나씩 뺀다** — 각 시나리오의 `choices`(`keep_stale`·`release`·`declined`)와 `secrets`. **각각이 자기 시나리오 하나를 죽여야 한다.** 죽지 않으면 그 시나리오는 사용자의 선택이 결과를 가른다는 것을 재지 않는 것이다
+- **픽스처 값을 미끄러뜨린다** — 레포의 확장 포맷 값을 불리언으로, `pluginConfigs`의 options를 비움 → 그 픽스처를 쓰는 시나리오가 **전부** 잡아야 한다(상수로 올린 픽스처는 한 변조가 두 시나리오를 함께 친다)
+- **회차를 줄인다** — backup 2회를 1회로. 여기서 SURVIVE는 정당할 수 있다(전방 카나리아). **단 그 사실을 docstring에 적을 것** — 적지 않으면 다음 사람이 그것을 관측되는 회차로 읽는다
+- **에뮬레이터가 만드는 상태를 지운다** — `install`이 매니페스트의 의존성 자식을 `enabledPlugins`에 넣지 않게 → auto 왕복 시나리오와 **계약 파일**이 함께 잡아야 한다(N1의 실측 행)
+- **에뮬레이터 명령의 규약을 뒤집는다** — `marketplace add`를 비멱등으로, exit code를 1로, 값의 모양을 github→url로 → **계약 파일이** 잡아야 한다. 시나리오가 잡으면 그것은 계약이 잘못된 파일에 있다는 뜻이다(spec 14.3 표의 여섯 행이 전부 계약 파일에 있어야 한다)
 
 - [ ] **Step 5: Commit**
 
