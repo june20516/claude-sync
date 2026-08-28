@@ -11,20 +11,18 @@
 문장으로 되돌리면 두 절반이 함께 죽고, 바늘만 무의미한 값으로 바뀌면 정정 문안 쪽 절반이
 남는다(실측 — 정정 문안 쪽을 무의미한 값으로 바꾸면 CAUGHT다).
 
-**바늘의 값은 저장소 안의 원천에 묶는다.** 초판은 *"정정 후에는 옛 문구를 담은 원천이
-남지 않는다"* 라고 적었는데 **거짓이었다** — 열한 바늘 중 **열이** `2026-08-20-mcp-integration.md`
-(커밋 하나뿐인 완결 문서, 정정 전 문서를 축자로 인용한다)와 spec 13장에 그대로 남아 있다.
-`test_every_stale_needle_is_quoted_by_a_source_document`가 그 대응을 건다.
+**바늘의 값은 저장소 안의 원천에 묶는다.** *"정정 후에는 옛 문구를 담은 원천이 남지
+않는다"* 는 서술을 두 번 적었고 두 번 다 **거짓이었다.** 바늘 전부가
+`plans/2026-08-20-mcp-integration.md`(커밋 하나뿐인 완결 문서) · spec 13장 ·
+이 plan 본문의 Task 15 기록 중 어딘가에 축자로 남아 있다.
+`test_every_stale_needle_is_quoted_by_a_source_document`가 그 대응을 건다 —
+**면제 목록이 없다.** 예외를 인정하기 전에 원천을 전수로 훑는다.
 
-**묶지 못한 바늘은 하나다** — `민감 정보 미포함`. spec 13장 5행이 한국어판을
-*"위와 같은 이유"* 로만 적어 그 문구가 어느 원천에도 축자로 없다. 그 하나는
-`UNSOURCED_NEEDLES`가 값을 한 벌 더 들고 있어 **한 곳만 고치는 변조는 잡히지만**,
-두 곳을 함께 고치면 빠져나간다. 나머지 열에는 그 구멍이 없다.
-
-목록이 스스로 줄어드는 것은 셋으로 막는다.
-- USER_DOCS는 디스크에서 뽑은 파일 목록과 대조한다(손으로 고른 목록이 아니다)
-- CORRECTIONS는 개수를 함께 건다(외부 진실 원천이 없는 표의 관행)
-- 새 한계의 항목 수는 **spec 13장의 불릿 수**에서 뽑는다
+목록이 스스로 줄어드는 것은 넷으로 막는다.
+- USER_DOCS는 디스크의 README 계열 파일 목록과 대조한다(손으로 고른 목록이 아니다)
+- CORRECTIONS는 개수를 함께 걸고, 바늘의 값은 원천 문서에 묶는다
+- 새 한계의 **항목 수**는 spec 13장의 불릿 수에서 뽑는다
+- 새 한계의 **내용**은 같은 언어의 두 문서끼리, 백틱 토큰은 한↔영끼리 대조한다
 """
 import inspect
 import os
@@ -91,18 +89,25 @@ CORRECTIONS = {
          "세 필드만 추출하며, `pluginConfigs`의 값은 `<REDACTED>`로 마스킹합니다"),
     ),
     "backup-readme.md": (
+        # 13장 표에 **없는** 자리. generate_metadata.py:1이 "mtime 미사용"이라 적고
+        # README.md:87도 같은 말을 하는데 백업 레포에 복사되는 이 파일만 반대를
+        # 말하고 있었다 — 사용자가 클론했을 때 처음 읽는 문서다(quality review I3).
+        ("Per-file modification timestamps",
+         "Per-file content hashes (for 3-way conflict detection)"),
         # 5행
         ("(no sensitive data)",
          "plugin config key names (extracted from settings.json; config values masked)"),
         # 6행
         ("`plugins.json`, in contrast, is regenerated and overwritten on every backup.",
-         "`plugins.json` is merged the same way, key by key, across its three sections."),
+         "`plugins.json` is merged the same way, key by key, across its three sections"),
     ),
     "backup-readme.ko.md": (
+        ("파일별 수정 시각",
+         "파일별 내용 해시 (3-way 충돌 감지용)"),
         ("민감 정보 미포함",
          "설정 키 이름 (settings.json에서 추출, 설정 값은 마스킹)"),
         ("반면 `plugins.json`은 매 백업마다 새로 생성되어 덮어쓰입니다.",
-         "`plugins.json`도 세 섹션 각각에 대해 같은 방식으로 키 단위 병합됩니다."),
+         "`plugins.json`도 세 섹션 각각에 대해 같은 방식으로 키 단위 병합됩니다"),
     ),
 }
 
@@ -116,9 +121,17 @@ def test_user_doc_list_covers_every_doc_on_disk():
     손으로 고른 목록이면 항목 하나(예: 영어 README)를 지우는 것만으로 그 파일이 아래
     가드 전부에서 조용히 빠진다 — 이 저장소가 반복해서 만난 다섯째 축이다.
     """
-    found = {n for n in os.listdir(ROOT) if n.endswith(".md")}
+    # **루트의 모든 .md를 징집하면 안 된다.** CHANGELOG·CONTRIBUTING이 생기는 순간
+    # "새 한계 일곱을 적어야 하는 사용자 문서"로 규정돼, 다음 사람이 그것을 풀려고
+    # USER_DOCS에 아무거나 넣는다 — 이 가드가 막으려던 바로 그 결함이다.
+    found = {n for n in os.listdir(ROOT)
+             if n.startswith("README") and n.endswith(".md")}
     found |= {n for n in os.listdir(BACKUP_SCRIPTS) if n.startswith("backup-readme")}
-    assert found == set(USER_DOCS), sorted(found.symmetric_difference(USER_DOCS))
+    assert found == set(USER_DOCS), (
+        "사용자 문서 목록이 디스크와 어긋난다: %s\n"
+        "문서를 더했다면 USER_DOCS·LIMITS_ANCHOR·CORRECTIONS 셋에 모두 더하고 "
+        "test_the_corrections_table_did_not_shrink의 개수도 함께 고친다."
+        % sorted(found.symmetric_difference(USER_DOCS)))
     assert set(CORRECTIONS) == set(USER_DOCS), sorted(
         set(CORRECTIONS).symmetric_difference(USER_DOCS))
     assert set(LIMITS_ANCHOR) == set(USER_DOCS), sorted(
@@ -135,8 +148,8 @@ def test_the_corrections_table_did_not_shrink():
     assert {name: len(pairs) for name, pairs in CORRECTIONS.items()} == {
         "README.md": 3,
         "README.ko.md": 4,
-        "backup-readme.md": 2,
-        "backup-readme.ko.md": 2,
+        "backup-readme.md": 3,
+        "backup-readme.ko.md": 3,
     }
 
 
@@ -170,46 +183,58 @@ def test_user_doc_says_plugins_json_merges_key_by_key(name):
     assert hits, "%s: `plugins.json`이 %s로 병합된다는 문장이 없다" % (name, phrase)
 
 
-# 정정 **전** 문서를 축자로 인용하는 저장소 내 문서 둘. 바늘의 값을 여기에 묶는다.
-# 둘 다 실어야 한다 — 넷은 plan 쪽에만, 셋은 spec 쪽에만 있어 하나를 빼면 대조가 깨진다.
+# 정정 **전** 문서를 축자로 인용하는 저장소 내 문서 셋. 바늘의 값을 여기에 묶는다.
+# **셋 다 실어야 한다** — 어느 하나만 빼도 묶이지 않는 바늘이 생긴다(실측).
+# `2026-08-20-mcp-integration.md`는 커밋 하나뿐인 완결 문서이고, spec은 plan ③이 13장을
+# 고친다. 이 plan 본문은 여전히 편집되지만 인용을 담은 Task 15의 Step 1 초안과 규정 결함
+# 기록은 이력이라 바뀌지 않는다.
 NEEDLE_SOURCES = (
     os.path.join(ROOT, "docs", "superpowers", "plans", "2026-08-20-mcp-integration.md"),
+    os.path.join(ROOT, "docs", "superpowers", "plans", "2026-08-25-plugins-sync-body.md"),
     SPEC,
 )
-
-# 원천이 축자로 인용하지 않는 바늘. spec 13장 5행이 한국어판을 "위와 같은 이유"로만
-# 적어 그 문구는 어디에도 남지 않았다.
-UNSOURCED_NEEDLES = frozenset({"민감 정보 미포함"})
 
 
 def test_every_stale_needle_is_quoted_by_a_source_document():
     """바늘의 **값**을 잠근다 — `not in` 가드는 바늘이 틀리면 초록이기 때문이다.
 
-    바늘 하나를 무의미한 값으로 바꾸면 그것이 `unsourced`로 옮겨 가 대조가 깨진다.
-    `UNSOURCED_NEEDLES`를 비우거나 늘리는 것도, `NEEDLE_SOURCES`에서 문서 하나를
-    빼는 것도 같은 대조에서 죽는다(다섯째 축).
+    바늘 하나를 무의미한 값으로 바꾸면 원천이 그것을 인용하지 않아 여기서 죽는다.
+    `NEEDLE_SOURCES`에서 문서 하나를 빼는 것도 같은 대조에서 죽는다(다섯째 축).
+
+    **면제 목록이 없다.** 초판은 `민감 정보 미포함` 하나를 예외로 뒀는데, 그 문구는
+    이 plan 본문의 Step 1 초안에 축자로 있었다 — 원천을 전수로 훑지 않고 예외를
+    인정했던 것이다.
     """
     text = ""
     for path in NEEDLE_SOURCES:
+        assert os.path.isfile(path), "원천 문서가 없다 — 옮겼거나 이름이 바뀌었다: %s" % path
         with open(path, encoding="utf-8") as f:
             text += f.read() + "\n"
-    unsourced = {stale for _, stale, _ in PAIRS if stale not in text}
-    assert unsourced == UNSOURCED_NEEDLES, sorted(
-        unsourced.symmetric_difference(UNSOURCED_NEEDLES))
+    unsourced = sorted(stale for _, stale, _ in PAIRS if stale not in text)
+    assert unsourced == [], (
+        "원천이 인용하지 않는 바늘이 있다: %s\n"
+        "사용자 문서가 아니라 **원천 문서**가 바뀌었을 수 있다 — 그때는 CORRECTIONS의 "
+        "바늘이 아니라 NEEDLE_SOURCES 쪽을 확인한다." % unsourced)
 
 
 def spec_limit_bullets():
     """spec 13장 "새로 적어야 할 한계" 절의 불릿. 새 한계 목록의 진실 원천이다."""
     with open(SPEC, encoding="utf-8") as f:
         text = f.read()
-    i = text.index("### 새로 적어야 할 한계")
+    head = "### 새로 적어야 할 한계"
+    assert head in text, "spec에서 %r 절을 찾지 못했다 — 제목이 바뀌었다" % head
+    i = text.index(head)
     m = re.compile(r"\n(?:#{2,3}) |\n---\n").search(text, i + 1)
     sec = text[i:m.start() if m else len(text)]
     return [line for line in sec.splitlines() if line.startswith("- ")]
 
 
 def doc_limit_bullets(name):
-    """문서의 새 한계 목록. 머리말 바로 뒤에 붙은 연속된 불릿만 센다."""
+    """문서의 새 한계 목록. 머리말 뒤부터 불릿이 아닌 산문·헤딩을 만날 때까지.
+
+    **빈 줄로 끊지 않는다.** 불릿 사이에 빈 줄이 들어간 loose list는 렌더링 결과가
+    같은데, 빈 줄에서 멈추면 내용이 하나도 안 바뀐 편집이 개수 단정을 깨뜨린다(실측).
+    """
     text = read_doc(name)
     anchor = LIMITS_ANCHOR[name]
     assert anchor in text, "%s: 새 한계 목록의 머리말(%r)이 없다" % (name, anchor)
@@ -217,8 +242,6 @@ def doc_limit_bullets(name):
     for line in text[text.index(anchor) + len(anchor):].splitlines():
         stripped = line.strip()
         if not stripped:
-            if out:
-                break
             continue
         if not stripped.startswith("- "):
             break
@@ -242,11 +265,48 @@ def test_user_doc_lists_every_new_limit(name):
 
 
 # 새 한계 중 **코드가 이름을 소유한** 둘. 문서가 그 이름을 부르지 않으면 사용자는 무엇을
-# 찾아야 하는지 모른다. 바늘을 손으로 적지 않고 어댑터에서 뽑는다 — 이름이 코드에서
-# 바뀌면 가드가 따라가고, 뽑지 못하면 그 자리에서 실패한다.
-AUTO_UPDATE_FIELD = re.search(
-    r'\.pop\("([A-Za-z]+)", None\)', inspect.getsource(pc._drop_auto_update)).group(1)
+# 찾아야 하는지 모른다. 어댑터에서 **뽑고 값을 핀한다** — 코드가 그 필드를 더 이상
+# pop하지 않으면 추출이 죽고, 이름이 바뀌면 핀이 죽어 문서와 함께 고치도록 강제한다.
+# ("가드가 따라간다"가 아니다 — 따라가면 문서가 낡은 채로 초록이 된다.)
+_AUTO_UPDATE_MATCH = re.search(
+    r'\.pop\("([A-Za-z]+)", None\)', inspect.getsource(pc._drop_auto_update))
+assert _AUTO_UPDATE_MATCH, "_drop_auto_update에서 pop하는 필드 이름을 뽑지 못했다"
+AUTO_UPDATE_FIELD = _AUTO_UPDATE_MATCH.group(1)
 HELD_FILE = os.path.basename(pc.DEFAULT_HELD)
+
+
+def limit_tokens(name):
+    """새 한계 목록의 백틱 토큰. 언어를 가로질러 비교할 수 있는 유일한 서명이다."""
+    return [tok for bullet in doc_limit_bullets(name)
+            for tok in re.findall(r"`([^`]+)`", bullet)]
+
+
+def test_the_two_language_pairs_carry_the_same_limits():
+    """같은 언어의 두 문서는 **같은 일곱 항목**을 적어야 한다.
+
+    개수만 잠그면 항목의 **내용**이 어떤 값으로도 바뀔 수 있다 — 실측으로, 한 불릿을
+    다른 불릿의 복제로 바꾸거나 *"평문으로 동기화되므로 복원 시 다시 입력할 필요가
+    없다"* 는 **정반대의 보안 서술**로 바꿔도 스위트 전체가 통과했다. 이 task의 명제가
+    "한 곳만 고치면 나머지가 옛 서술을 계속 말한다"이므로, 정정 여덟 곳에 세운 것과 같은
+    잠금을 새로 쓴 일곱 곳에도 세운다.
+    """
+    assert doc_limit_bullets("README.md") == doc_limit_bullets("backup-readme.md")
+    assert doc_limit_bullets("README.ko.md") == doc_limit_bullets("backup-readme.ko.md")
+
+
+def test_the_limits_carry_the_same_tokens_across_languages():
+    """한↔영을 가로지르는 서명. 위 짝 비교는 **한 언어의 두 문서를 함께** 고치면 죽는다.
+
+    산문은 언어가 달라 비교할 수 없지만 백틱 토큰은 같아야 한다 — 항목을 더하거나
+    빼거나 복제하면 여기서 드러난다.
+
+    **서명이 비어 있으면 이 단정은 공허하다.** 코드가 이름을 소유한 둘을 함께 요구해
+    `limit_tokens`가 아무것도 뽑지 못하는 상태를 막는다.
+    """
+    tokens = limit_tokens("README.md")
+    assert AUTO_UPDATE_FIELD in tokens, tokens
+    assert any(HELD_FILE in tok for tok in tokens), tokens
+    assert tokens == limit_tokens("README.ko.md")
 
 
 @pytest.mark.parametrize("name", sorted(USER_DOCS))

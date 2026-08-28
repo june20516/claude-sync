@@ -234,7 +234,7 @@ def sync_target_lines(table):
     `test_user_docs.py`가 "key by key"에서 쓴 것과 같은 처방 — **같은 줄에서 지목한다.**
     """
     lines = [line for line in sync_target_section().splitlines()
-             if "settings.json" in line and line.startswith("|") is table]
+             if "settings.json" in line and line.startswith("|") == table]
     assert len(lines) == 1, "settings.json 줄을 하나로 특정하지 못했다: %d개" % len(lines)
     return lines[0]
 
@@ -271,6 +271,9 @@ def test_backup_skill_lists_all_three_fields_and_the_auto_source():
     # "두 필드만"의 **positive 대응**. 부재만 걸면 조사 하나("두 필드를 추출")로 옛
     # 서술이 되살아나도 통과한다(실측). 수사를 어댑터의 섹션 수에서 뽑아 짝짓는다.
     assert sorted(KOREAN_COUNT) == [1, 2, 3, 4, 5], sorted(KOREAN_COUNT)
+    # **값도 건다.** 키만 잠그면 `2: "둘"`로 바꾸는 것만으로 negative 루프가
+    # "둘 필드"를 찾게 되어 "두 필드를 추출" 회귀 방어가 조용히 사라진다(실측).
+    assert set(KOREAN_COUNT.values()) == {"한", "두", "세", "네", "다섯"}
     want = len(pc.SECTIONS)
     assert want in KOREAN_COUNT, want
     assert "%s 필드" % KOREAN_COUNT[want] in para, KOREAN_COUNT[want]
