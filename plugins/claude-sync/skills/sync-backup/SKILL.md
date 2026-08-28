@@ -48,15 +48,15 @@ MCP 서버는 `~/.claude.json`의 top-level `mcpServers`(user 스코프)만 대�
 백업 레포에는 CLAUDE.md나 에이전트 파일에 사내 URL, 내부 규칙 등 민감 정보가 포함될 수 있다. 따라서:
 
 - **백업 레포는 private 권장**. 최초 실행 시 사용자에게 이 점을 안내한다.
-- **`.syncignore`** 파일로 특정 파일을 백업에서 제외할 수 있다. `~/.claude/.syncignore`에 gitignore 형식으로 패턴을 작성한다.
+- **`.syncignore`** 파일로 특정 파일을 백업에서 제외할 수 있다. `~/.claude/.syncignore`에 **한 줄에 하나씩 glob 패턴**을 적는다 — 아래 4단계의 `find -path`가 레포 루트 기준 상대 경로와 대조한다. **gitignore 형식이 아니다**: 부정(`!`)이 없고, `find -path`가 디렉토리를 후행 슬래시 없이 출력하므로 **슬래시로 끝나는 패턴은 아무것도 걸리지 않는다**(실측). 디렉토리는 슬래시 없이 적는다.
 
 `.syncignore` 예시:
 ```
 # 사내 전용 에이전트 제외
 agents/internal-*.md
 
-# 특정 스킬 제외
-skills/secret-tool/
+# 특정 스킬 제외 (후행 슬래시를 붙이지 않는다 — 붙이면 매치 0건)
+skills/secret-tool
 ```
 
 ## 실행 절차

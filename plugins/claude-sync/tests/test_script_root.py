@@ -931,6 +931,76 @@ def test_plugin_step_reports_the_degraded_reason_of_a_section_it_kept(skill):
         assert wording in sec, (skill, wording)
 
 
+def syncignore_patterns(text):
+    """`.syncignore` 예시 fence의 패턴 줄. 주석과 빈 줄은 뺀다.
+
+    **손으로 적지 않는다.** 이 검사의 주제가 "문서가 드는 예시가 실제로 무언가를
+    제외하는가"이므로, 바늘을 상수로 두면 문서를 고치지 않고 상수만 고쳐도 초록이 된다.
+    """
+    i = text.index("`.syncignore` 예시:")
+    m = re.compile(r"```\n(.*?)```", re.S).search(text, i)
+    assert m, ".syncignore 예시 블록을 찾지 못했다"
+    return [line.strip() for line in m.group(1).splitlines()
+            if line.strip() and not line.strip().startswith("#")]
+
+
+def syncignore_block():
+    """4단계에서 `.syncignore`를 적용하는 bash 블록. 산문이 아니라 실행줄이다."""
+    blocks = [b for b in bash_blocks(read_skill("sync-backup"))
+              if ".syncignore" in b and "find " in b]
+    assert len(blocks) == 1, "적용 블록이 하나가 아니다: %d개" % len(blocks)
+    return blocks[0]
+
+
+def test_syncignore_examples_actually_exclude_something(tmp_path):
+    """**문서가 드는 패턴을 그대로 실행해 본다.**
+
+    이 기능에는 저장소 전체에 테스트가 하나도 없었고, 그동안 문서는 *"gitignore 형식"*
+    이라 말하며 `skills/secret-tool/`(후행 슬래시)을 예시로 들었다. 구현은
+    `find -path`이고 find는 디렉토리를 후행 슬래시 없이 출력하므로 **그 패턴은 매치 0건**
+    이었다(실측). 문서를 그대로 따른 사용자는 제외했다고 믿은 디렉토리를 경고 한 줄 없이
+    push한다 — 조용한 fail-open이다.
+
+    **예시를 파일에서 뽑고, 트리를 그 예시에서 만든다.** 패턴이 다시 슬래시로 끝나면
+    `rstrip("/")`으로 만든 대상이 매치되지 않아 그대로 남고 이 테스트가 죽는다.
+    남겨 두는 대조 파일(`agents/public.md`)이 없으면 "전부 지운다"로도 단정이 참이 된다.
+    """
+    patterns = syncignore_patterns(read_skill("sync-backup"))
+    assert len(patterns) >= 2, patterns
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    targets = []
+    for pattern in patterns:
+        rel = pattern.replace("*", "x").rstrip("/")
+        target = repo / rel
+        if "." in os.path.basename(rel):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("secret", encoding="utf-8")
+        else:
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "SKILL.md").write_text("secret", encoding="utf-8")
+        targets.append((pattern, target))
+    keep = repo / "agents" / "public.md"
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    keep.write_text("keep", encoding="utf-8")
+
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / ".syncignore").write_text(
+        "# 주석은 무시된다\n\n" + "\n".join(patterns) + "\n", encoding="utf-8")
+
+    proc = subprocess.run(["bash", "-c", syncignore_block()],
+                          capture_output=True, text=True,
+                          env=dict(os.environ, HOME=str(home), SYNC_REPO=str(repo)))
+    assert proc.returncode == 0, proc.stderr
+    for pattern, target in targets:
+        assert not target.exists(), (
+            "문서가 드는 패턴이 아무것도 제외하지 않는다: %r" % pattern)
+    assert keep.exists(), "패턴에 없는 파일까지 지웠다"
+    assert (repo / ".git").exists(), ".git이 prune되지 않았다"
+
+
 def test_status_reports_plugin_sections_through_the_new_script():
     """결함 B — check_status.py의 키 집합 비교를 지우고 새 스크립트를 부른다."""
     sec = PLUGIN_STEP["sync-status"]()

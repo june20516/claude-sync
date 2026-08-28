@@ -38,6 +38,11 @@ BACKUP_SCRIPTS = os.path.join(
     ROOT, "plugins", "claude-sync", "skills", "sync-backup", "scripts")
 SPEC = os.path.join(ROOT, "docs", "superpowers", "specs",
                     "2026-08-24-plugins-sync-design.md")
+# `.syncignore`의 진실 원천은 **실행되는 쪽**이다 — test_script_root.py가 이 SKILL.md의
+# bash 블록을 예시 패턴과 함께 실제로 돌린다. 여기서는 README 두 벌이 그 검사를 받은
+# 예시와 같은 것을 드는지만 잰다(세 벌이 갈리면 한 곳만 고친 정정이 나머지를 남긴다).
+SYNCIGNORE_SOURCE = os.path.join(
+    ROOT, "plugins", "claude-sync", "skills", "sync-backup", "SKILL.md")
 
 USER_DOCS = {
     "README.md": os.path.join(ROOT, "README.md"),
@@ -316,3 +321,88 @@ def test_limits_name_the_tokens_the_code_owns(name):
     bullets = "\n".join(doc_limit_bullets(name))
     for token in (AUTO_UPDATE_FIELD, HELD_FILE):
         assert token in bullets, "%s: 새 한계가 `%s`를 부르지 않는다" % (name, token)
+
+
+# --- `.syncignore`: 문서가 드는 예시가 실제로 무언가를 제외하는가 ---
+
+def syncignore_patterns(text):
+    """`.syncignore` 예시 fence의 패턴 줄. 주석과 빈 줄은 뺀다."""
+    i = text.index(".syncignore")
+    m = re.compile(r"```\n(.*?)```", re.S).search(text, i)
+    assert m, ".syncignore 예시 블록을 찾지 못했다"
+    return [line.strip() for line in m.group(1).splitlines()
+            if line.strip() and not line.strip().startswith("#")]
+
+
+def test_the_syncignore_example_is_the_same_in_every_document():
+    """세 문서가 **같은** 예시를 싣는다.
+
+    갈리면 한 곳만 고친 정정이 나머지 두 곳에 동작하지 않는 예시를 남긴다. 실행해서
+    재는 것은 test_script_root.py의 test_syncignore_examples_actually_exclude_something
+    하나이므로, 그 검사를 받지 않는 사본이 생기는 것이 정확히 이 결함의 형태다.
+    """
+    with open(SYNCIGNORE_SOURCE, encoding="utf-8") as f:
+        expected = syncignore_patterns(f.read())
+    assert expected, "SKILL.md의 예시가 비었다"
+    for name in ("README.md", "README.ko.md"):
+        assert syncignore_patterns(read_doc(name)) == expected, name
+
+
+# (문서, 옛 문구, 정정 문안). CORRECTIONS와 같은 짝 형태이지만 그 표에 넣지 않는다 —
+# 그쪽 바늘은 저장소 안의 **원천 문서가 인용한 것**이어야 하고, 이 두 문구는 정정 전
+# README에만 있었을 뿐 어느 원천도 인용하지 않는다. 개수는 아래에서 함께 건다.
+SYNCIGNORE_WORDING = [
+    ("README.md", "(gitignore format)", "**glob patterns, one per line**"),
+    ("README.ko.md", "(gitignore 형식)", "**한 줄에 하나씩 glob 패턴**"),
+]
+
+
+@pytest.mark.parametrize("name,stale,fixed", SYNCIGNORE_WORDING,
+                         ids=[n for n, _, _ in SYNCIGNORE_WORDING])
+def test_readme_does_not_call_syncignore_a_gitignore(name, stale, fixed):
+    """*"gitignore 형식"* 은 코드와 어긋난다 — 부정(`!`)도, 디렉토리 의미도 없다.
+
+    `not in` 가드는 바늘이 틀려도 초록이므로 정정 문안과 **짝지어** 건다(CORRECTIONS와
+    같은 처방). 사용자가 이 말을 믿고 gitignore 습관대로 후행 슬래시를 붙이면 그 줄은
+    아무것도 제외하지 않고, `.syncignore`로 민감 파일을 걸렀다고 믿은 채 push한다.
+    """
+    assert len(SYNCIGNORE_WORDING) == 2
+    text = read_doc(name)
+    assert fixed in text, "%s: 정정 문안이 없다 — %r" % (name, fixed)
+    assert stale not in text, "%s: 옛 서술이 남아 있다 — %r" % (name, stale)
+
+
+# --- 스킬 표의 `/sync-restore` 행 ---
+
+# 표는 README의 **첫 화면**이다. 여기서 "충돌 시 중단"이라고 말하면 사용자는 "충돌이
+# 있으면 아무것도 안 일어난다"로 읽고 restore를 돌린다. 실제로는 reconcile_restore.py
+# --apply가 add/overwrite/keep/auto_merge를 **전부 적용하고** 겹친 것만 남기며, 같은
+# 파일의 충돌 문단이 이미 그렇게 적고 있다 — 한 문서가 같은 사실을 반대로 말했다.
+RESTORE_ROW_HEAD = "| `/sync-restore` |"
+RESTORE_ROW_WORDING = {"README.md": "left untouched", "README.ko.md": "그대로 보존"}
+RESTORE_ROW_BANNED = {"README.md": "aborts safely on conflicts",
+                      "README.ko.md": "충돌 시 안전 중단"}
+
+
+def test_the_skill_table_documents_are_derived_from_disk():
+    """표를 가진 문서 목록이 손으로 고른 것이면 한 줄을 지워 검사에서 빼낼 수 있다."""
+    found = {name for name in USER_DOCS if RESTORE_ROW_HEAD in read_doc(name)}
+    assert found == set(RESTORE_ROW_WORDING) == set(RESTORE_ROW_BANNED), sorted(found)
+
+
+@pytest.mark.parametrize("name", sorted(RESTORE_ROW_WORDING))
+def test_skill_table_matches_the_conflict_behavior_the_same_file_describes(name):
+    """표의 restore 설명이 **같은 파일의 충돌 문단**과 같은 말을 해야 한다.
+
+    바늘의 값을 같은 문서에 묶는 것이 요점이다 — 표 한 줄만 보는 검사는 어떤 문구로
+    바꿔도 통과시킬 수 있다(실측: 이 줄을 다른 거짓으로 바꾸는 변조가 SURVIVED였다).
+    """
+    text = read_doc(name)
+    rows = [line for line in text.splitlines() if line.startswith(RESTORE_ROW_HEAD)]
+    assert len(rows) == 1, rows
+    assert RESTORE_ROW_BANNED[name] not in rows[0], rows[0]
+    phrase = RESTORE_ROW_WORDING[name]
+    assert phrase in rows[0], (name, phrase)
+    bullets = [line for line in text.splitlines()
+               if line.startswith("- ") and phrase in line]
+    assert bullets, "%s: 충돌 문단이 %r를 말하지 않는다 — 바늘이 낡았다" % (name, phrase)

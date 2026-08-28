@@ -14,7 +14,7 @@ claude plugin install claude-sync@claude-sync
 | Command | Description |
 |---------|-------------|
 | `/sync-backup` | Back up local settings to a Git repo and push |
-| `/sync-restore` | Restore settings from a Git repo (aborts safely on conflicts) |
+| `/sync-restore` | Restore settings from a Git repo (conflicting files are left untouched and resolved interactively) |
 | `/sync-status` | Show differences between local and repo (dry-run) |
 
 ## What Gets Synced
@@ -52,7 +52,7 @@ Then in Claude Code:
 /sync-restore
 ```
 
-If a server was deleted or changed on another machine, `/sync-restore` asks about it one server at a time (remove / keep / later, or adopt repo value / keep local / later).
+If an entry was deleted or changed on another machine, `/sync-restore` asks about it one at a time (remove / keep / later, or adopt repo value / keep local / later). The same three choices apply to MCP servers, plugins, marketplaces, and plugin config keys.
 
 **Option 2: bootstrap.sh (works without Claude Code)**
 
@@ -80,14 +80,14 @@ claude plugin marketplace update claude-sync
 claude plugin update claude-sync    # restart required to apply
 ```
 
-From v3.0.0 on, a machine that meets a backup it cannot recognize skips the MCP step, leaves the repo file untouched, and tells you to update the plugin — so this class of damage cannot repeat in later upgrades.
+From v3.0.0 on, a machine that meets a backup it cannot recognize skips that step — the MCP step and the plugin step both follow this rule — leaves the repo file untouched, and tells you to update the plugin, so this class of damage cannot repeat in later upgrades.
 
 ## Sync Behavior Model (v3.0.0+)
 
 claude-sync uses a **content-hash, git-like 3-way reconcile** — modification timestamps are never used.
 
 - **Restore is pull-only.** `/sync-restore` never auto-pushes local changes to the repo.
-- **New files are always added.** Files that exist only in the repo (new agents, skills, plugins, MCP entries) are always applied to the local machine, independent of any conflicts in other files.
+- **New files are always added.** Files that exist only in the repo (new agents, skills) are always applied to the local machine, independent of any conflicts in other files. Plugins and MCP entries follow the same intent but are not unconditional: a plugin whose marketplace fails to register is reported as blocked, an entry this machine cannot reproduce is reported as unrestorable, and an MCP server whose secret you skip is not registered.
 - **Conflicts arise only when both sides diverged from the last shared base.** In that case the tool attempts a `git merge-file` 3-way merge. If the changes do not overlap, the result is committed automatically (`auto_merge`). If the same lines were changed on both sides, the file is listed as a `conflict` and the local copy is left untouched. You then choose one of: keep local / adopt backup / merge manually / defer.
 - **`pull_only` machines never back up.** Machines designated as read-only consumers will never push their state to the repo.
 - **MCP servers merge per server name.** `mcp-servers.json` is reconciled key by key, so a backup from one machine never drops servers that only exist on another. Deletions do propagate, and `/sync-restore` asks per server before removing anything locally.
@@ -113,14 +113,14 @@ Not synced:
 
 Your `CLAUDE.md` or agent files may contain sensitive information such as internal URLs or company-specific rules. **It is strongly recommended to keep your backup repo private.**
 
-To exclude specific files from backup, create `~/.claude/.syncignore` (gitignore format):
+To exclude specific files from backup, create `~/.claude/.syncignore` — **glob patterns, one per line**, matched against the path relative to the repo root (`#` starts a comment). This is not gitignore syntax: there is no negation (`!`) and a trailing slash matches nothing, so name a directory without one.
 
 ```
 # Exclude internal agents
 agents/internal-*.md
 
-# Exclude specific skills
-skills/secret-tool/
+# Exclude specific skills (no trailing slash)
+skills/secret-tool
 ```
 
 When sharing your settings with others, use `.syncignore` to filter out sensitive files before backing up.
