@@ -7353,17 +7353,34 @@ settings.json에는 API 키 등 민감 정보가 포함될 수 있으므로 원�
 깨지고** 그 파일을 대상으로 한 변조는 아예 적용되지 않는다. `.git`·캐시를 제외하고
 레포 전체를 복사하도록 고쳤다(저장소 밖 파일이라 이 plan의 커밋에는 들어가지 않는다).
 
-**실측 결과 — 19종 중 18 CAUGHT, 1 SURVIVED. 대조군 CONTROL_OK(844 passed).**
+**1라운드 — 19종 중 18 CAUGHT, 1 SURVIVED. 대조군 CONTROL_OK(844 passed).**
 다섯째 축(테스트가 준 목록을 뺀다)을 다섯 자리에 돌렸다 — `CORRECTIONS`의 쌍 하나,
 `CORRECTIONS`의 문서 하나, `USER_DOCS`의 문서 하나, `LIMITS_ANCHOR`의 문서 하나,
 spec 불릿 추출기가 빈 목록을 내는 경우. 전부 CAUGHT다.
 
-**닫지 못한 SURVIVE 하나:** `CORRECTIONS`의 **옛 문구 쪽 바늘**을 아무 데도 없는 값으로
-바꾸면 아무도 잡지 못한다. 그러면 "정정 문안과 옛 문장을 **함께** 적는" 편집만 검출을
-빠져나간다(정정 문안이 사라지는 편집은 여전히 CAUGHT다 — 실측). 옛 문구를 담은 저장소 내
-원천이 정정 후에는 남지 않고, spec 13장 표의 인용문은 축약(`…`)이 섞여 있으며 2행은
-**남는** 문장을 인용하므로 진실 원천으로 쓸 수 없다. 거짓 CAUGHT보다 정직한 SURVIVED로
-남긴다 — `test_user_docs.py`의 모듈 docstring이 같은 내용을 적는다.
+**2라운드(spec 준수 review 뒤) — 14종 중 13 CAUGHT, 1 SURVIVED. CONTROL_OK(845 passed).**
+review가 **1라운드가 놓친 SURVIVE 둘**을 찾았고 둘 다 닫았다.
+
+- `pc.SENTINEL in sec`가 **공허했다.** 같은 절의 MCP 문단이 `<REDACTED>`를 이미 갖고 있어
+  플러그인 쪽이 `<MASKED>`로 거짓이 돼도 초록이었다(실측). **같은 줄 지목**으로 좁혔다 —
+  `key by key`에 적용한 것과 같은 처방인데 여기에만 적용하지 않았던 것이다.
+- `"두 필드만" not in sec`에 **positive 대응이 없었다.** *"세 필드를 추출"* → *"두 필드를
+  추출"* 이 SURVIVED였다 — 조사 하나로 13장 7행이 지운 거짓이 되살아난다. 수사를
+  `len(pc.SECTIONS)`에서 뽑아 짝지었다(`KOREAN_COUNT`). 겸사겸사 `:33` 표 행도 걸었다.
+
+**"바늘의 값을 잠글 원천이 없다"는 1라운드의 결론은 과장이었다.** 열한 바늘 중 **열이**
+`plans/2026-08-20-mcp-integration.md`(커밋 하나뿐인 완결 문서)와 spec 13장에 축자로 남아
+있다. 그 둘을 `NEEDLE_SOURCES`로 삼아
+`test_every_stale_needle_is_quoted_by_a_source_document`가 대응을 건다 — 바늘을 무의미한
+값으로 바꾸면 CAUGHT다(1라운드에 SURVIVED였던 그 변조를 축자로 재현해 확인했다).
+두 원천은 **둘 다 실어야 한다**: 넷은 plan 쪽에만, 셋은 spec 쪽에만 있어 하나를 빼면
+대조가 깨진다(실측 — 둘 다 CAUGHT).
+
+**닫지 못한 SURVIVE 하나(범위가 좁다):** 원천이 인용하지 않는 바늘 **하나**
+(`민감 정보 미포함` — 13장 5행이 한국어판을 *"위와 같은 이유"* 로만 적었다)를
+`CORRECTIONS`와 `UNSOURCED_NEEDLES` **두 곳에서 동시에** 바꾸면 빠져나간다. 한 곳만
+바꾸는 변조는 CAUGHT다(실측). 거짓 CAUGHT보다 정직한 SURVIVED로 남긴다 —
+`test_user_docs.py`의 모듈 docstring이 같은 내용을 적는다.
 
 - [ ] **Step 5: Commit**
 
