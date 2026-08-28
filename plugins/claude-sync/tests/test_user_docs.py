@@ -11,11 +11,15 @@
 문장으로 되돌리면 두 절반이 함께 죽고, 바늘만 무의미한 값으로 바뀌면 정정 문안 쪽 절반이
 남는다(실측 — 정정 문안 쪽을 무의미한 값으로 바꾸면 CAUGHT다).
 
-**남은 구멍은 하나다.** 옛 문구 쪽 바늘을 아무 데도 없는 값으로 바꾸면 아무도 잡지
-못한다(실측 — 스위트 전체가 통과했다). 그러면 "정정 문안과 옛 문장을 **함께** 적는"
-편집만 검출을 빠져나간다. 옛 문구를 담은 저장소 내 원천이 없어(정정하고 나면 어디에도
-남지 않는다) 그 값을 잠글 방법을 찾지 못했다 — spec 13장 표의 인용문은 축약(`…`)이
-섞여 있고 2행은 **남는** 문장을 인용하므로 진실 원천으로 쓸 수 없다.
+**바늘의 값은 저장소 안의 원천에 묶는다.** 초판은 *"정정 후에는 옛 문구를 담은 원천이
+남지 않는다"* 라고 적었는데 **거짓이었다** — 열한 바늘 중 **열이** `2026-08-20-mcp-integration.md`
+(커밋 하나뿐인 완결 문서, 정정 전 문서를 축자로 인용한다)와 spec 13장에 그대로 남아 있다.
+`test_every_stale_needle_is_quoted_by_a_source_document`가 그 대응을 건다.
+
+**묶지 못한 바늘은 하나다** — `민감 정보 미포함`. spec 13장 5행이 한국어판을
+*"위와 같은 이유"* 로만 적어 그 문구가 어느 원천에도 축자로 없다. 그 하나는
+`UNSOURCED_NEEDLES`가 값을 한 벌 더 들고 있어 **한 곳만 고치는 변조는 잡히지만**,
+두 곳을 함께 고치면 빠져나간다. 나머지 열에는 그 구멍이 없다.
 
 목록이 스스로 줄어드는 것은 셋으로 막는다.
 - USER_DOCS는 디스크에서 뽑은 파일 목록과 대조한다(손으로 고른 목록이 아니다)
@@ -75,7 +79,7 @@ CORRECTIONS = {
          "three fields are extracted and `pluginConfigs` values are masked"),
     ),
     "README.ko.md": (
-        ("플러그인/마켓플레이스 목록 (민감 정보 제외)",
+        ("(민감 정보 제외)",
          "플러그인 설정 **키 이름** (설정 값은 마스킹)"),
         ("여전히 매 백업마다 통째로 덮어쓰입니다",
          "**`plugins.json`은 키 단위로 병합됩니다.**"),
@@ -88,14 +92,14 @@ CORRECTIONS = {
     ),
     "backup-readme.md": (
         # 5행
-        ("Plugin/marketplace list (extracted from settings.json, no sensitive data)",
+        ("(no sensitive data)",
          "plugin config key names (extracted from settings.json; config values masked)"),
         # 6행
         ("`plugins.json`, in contrast, is regenerated and overwritten on every backup.",
          "`plugins.json` is merged the same way, key by key, across its three sections."),
     ),
     "backup-readme.ko.md": (
-        ("플러그인/마켓플레이스 목록 (settings.json에서 추출, 민감 정보 미포함)",
+        ("민감 정보 미포함",
          "설정 키 이름 (settings.json에서 추출, 설정 값은 마스킹)"),
         ("반면 `plugins.json`은 매 백업마다 새로 생성되어 덮어쓰입니다.",
          "`plugins.json`도 세 섹션 각각에 대해 같은 방식으로 키 단위 병합됩니다."),
@@ -164,6 +168,34 @@ def test_user_doc_says_plugins_json_merges_key_by_key(name):
     hits = [line for line in text.splitlines()
             if "plugins.json" in line and phrase in line]
     assert hits, "%s: `plugins.json`이 %s로 병합된다는 문장이 없다" % (name, phrase)
+
+
+# 정정 **전** 문서를 축자로 인용하는 저장소 내 문서 둘. 바늘의 값을 여기에 묶는다.
+# 둘 다 실어야 한다 — 넷은 plan 쪽에만, 셋은 spec 쪽에만 있어 하나를 빼면 대조가 깨진다.
+NEEDLE_SOURCES = (
+    os.path.join(ROOT, "docs", "superpowers", "plans", "2026-08-20-mcp-integration.md"),
+    SPEC,
+)
+
+# 원천이 축자로 인용하지 않는 바늘. spec 13장 5행이 한국어판을 "위와 같은 이유"로만
+# 적어 그 문구는 어디에도 남지 않았다.
+UNSOURCED_NEEDLES = frozenset({"민감 정보 미포함"})
+
+
+def test_every_stale_needle_is_quoted_by_a_source_document():
+    """바늘의 **값**을 잠근다 — `not in` 가드는 바늘이 틀리면 초록이기 때문이다.
+
+    바늘 하나를 무의미한 값으로 바꾸면 그것이 `unsourced`로 옮겨 가 대조가 깨진다.
+    `UNSOURCED_NEEDLES`를 비우거나 늘리는 것도, `NEEDLE_SOURCES`에서 문서 하나를
+    빼는 것도 같은 대조에서 죽는다(다섯째 축).
+    """
+    text = ""
+    for path in NEEDLE_SOURCES:
+        with open(path, encoding="utf-8") as f:
+            text += f.read() + "\n"
+    unsourced = {stale for _, stale, _ in PAIRS if stale not in text}
+    assert unsourced == UNSOURCED_NEEDLES, sorted(
+        unsourced.symmetric_difference(UNSOURCED_NEEDLES))
 
 
 def spec_limit_bullets():

@@ -226,6 +226,23 @@ def sync_target_section():
     return text[i:m.start() if m else len(text)]
 
 
+def sync_target_lines(table):
+    """`## 동기화 대상` 절에서 settings.json을 말하는 줄. 표 행과 산문 문단을 가른다.
+
+    **절 전체를 보면 안 된다.** 바로 아래 MCP 문단이 `<REDACTED>`를 이미 갖고 있어서,
+    플러그인 쪽 문장이 `<MASKED>`로 **거짓이 되어도 절 단위 검사는 통과한다**(실측).
+    `test_user_docs.py`가 "key by key"에서 쓴 것과 같은 처방 — **같은 줄에서 지목한다.**
+    """
+    lines = [line for line in sync_target_section().splitlines()
+             if "settings.json" in line and line.startswith("|") is table]
+    assert len(lines) == 1, "settings.json 줄을 하나로 특정하지 못했다: %d개" % len(lines)
+    return lines[0]
+
+
+# 추출 필드 수의 한국어 수사. `len(pc.SECTIONS)`가 바뀌면 문서가 따라와야 한다.
+KOREAN_COUNT = {1: "한", 2: "두", 3: "세", 4: "네", 5: "다섯"}
+
+
 def test_backup_skill_lists_all_three_fields_and_the_auto_source():
     """`## 동기화 대상` 절 — "두 필드만 추출"·"통째로 덮어쓰인다"는 이제 거짓이다 (13장).
 
@@ -238,17 +255,35 @@ def test_backup_skill_lists_all_three_fields_and_the_auto_source():
     성질이고, `not in` 가드는 애초에 바늘이 틀리면 초록이다.
     """
     sec = sync_target_section()
+    para = sync_target_lines(table=False)
     for field in pc.SECTIONS:                    # 추출하는 세 필드 = 세 섹션
-        assert "`%s`" % field in sec, field
+        assert "`%s`" % field in para, field
     for alias in pc.MARKETPLACE_ALIASES:         # 별칭 키도 읽는다는 사실
-        assert "`%s`" % alias in sec, alias
+        assert "`%s`" % alias in para, alias
     # auto 플래그의 출처. 경로도 어댑터에서 뽑는다 — expanduser를 되돌려 문서 표기와 맞춘다.
     auto_source = pc.DEFAULT_INSTALLED.replace(os.path.expanduser("~"), "~", 1)
     assert auto_source.startswith("~/"), auto_source
-    assert "`%s`" % auto_source in sec, auto_source
-    assert "`auto`" in sec
-    assert pc.SENTINEL in sec, pc.SENTINEL
+    assert "`%s`" % auto_source in para, auto_source
+    assert "`auto`" in para
+    # 마스킹 값도 **같은 문단에서** 요구한다. 절 단위로 물으면 MCP 문단이 대신 충족시킨다.
+    assert pc.SENTINEL in para, pc.SENTINEL
+
+    # "두 필드만"의 **positive 대응**. 부재만 걸면 조사 하나("두 필드를 추출")로 옛
+    # 서술이 되살아나도 통과한다(실측). 수사를 어댑터의 섹션 수에서 뽑아 짝짓는다.
+    assert sorted(KOREAN_COUNT) == [1, 2, 3, 4, 5], sorted(KOREAN_COUNT)
+    want = len(pc.SECTIONS)
+    assert want in KOREAN_COUNT, want
+    assert "%s 필드" % KOREAN_COUNT[want] in para, KOREAN_COUNT[want]
+    for n, word in KOREAN_COUNT.items():
+        if n != want:
+            assert "%s 필드" % word not in para, word
     assert "두 필드만" not in sec
+
+    # 표 행(:33)도 같은 사실을 말해야 한다. 산문만 고치고 표를 두면 요약이 거짓으로 남는다.
+    row = sync_target_lines(table=True)
+    assert "설정 값은 마스킹" in row, row
+    assert "목록만" not in row, row
+
     assert "통째로 새로 생성되어 덮어쓰" not in sec
     # 정정 문안 쪽도 함께 건다 — 부재만 보는 검사는 문단이 통째로 지워져도 초록이다.
     assert "`plugins.json`도 **섹션별 키 단위 3-way 병합** 대상이다" in sec
