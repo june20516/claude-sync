@@ -49,6 +49,8 @@ MCP 서버는 `~/.claude.json`의 top-level `mcpServers`(user 스코프)만 대�
 
 - **백업 레포는 private 권장**. 최초 실행 시 사용자에게 이 점을 안내한다.
 - **`.syncignore`** 파일로 특정 파일을 백업에서 제외할 수 있다. `~/.claude/.syncignore`에 **한 줄에 하나씩 glob 패턴**을 적는다 — 아래 4단계의 `find -path`가 레포 루트 기준 상대 경로와 대조한다. **gitignore 형식이 아니다**: 부정(`!`)이 없고, `find -path`가 디렉토리를 후행 슬래시 없이 출력하므로 **슬래시로 끝나는 패턴은 아무것도 걸리지 않는다**(실측). 디렉토리는 슬래시 없이 적는다.
+- **제외는 7단계의 `sync-metadata.json`에도 적용된다.** 그 표식은 레포가 아니라 `~/.claude`를 직접 걷기 때문에 필터가 없으면 제외한 파일의 **이름과 sha256이 그대로 푸시된다.** 두 곳이 같은 규칙을 쓰도록 매칭은 `lib/syncignore.py` 한 벌에 있다.
+- **`.syncignore`는 `plugins.json`·`mcp-servers.json`을 제외하지 못한다.** 그 둘은 4단계보다 **뒤인** 5·6단계가 다시 생성하므로 4단계가 지워도 되살아난다. 그 두 파일의 민감 값은 제외가 아니라 **마스킹**(`<REDACTED>`)이 담당한다.
 
 `.syncignore` 예시:
 ```
@@ -348,7 +350,7 @@ cat /tmp/claude-sync-mcp.json
 
 ### 7. sync-metadata.json 생성
 
-백업 시점의 파일 해시와 **버전 표식**을 기록한다.
+백업 시점의 파일 해시와 **버전 표식**을 기록한다. 이 스크립트는 레포가 아니라 `~/.claude`를 직접 걷는다 — 그래서 `~/.claude/.syncignore`에 걸린 파일을 **4단계와 같은 규칙**(`lib/syncignore.py`)으로 표식에서도 뺀다. 빼지 않으면 제외한 파일의 이름과 sha256이 그대로 푸시된다. 제외된 개수는 stderr에 알린다.
 
 ```bash
 python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"

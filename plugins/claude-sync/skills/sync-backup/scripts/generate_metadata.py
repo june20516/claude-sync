@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """백업 시점의 파일별 내용 해시(sha256)와 버전 표식을 기록한다. mtime 미사용.
 
+**`.syncignore`를 존중한다.** 이 스크립트는 레포가 아니라 `~/.claude`를 직접 걷기
+때문에, 4단계가 레포 작업 트리에서 지운 파일도 여기서는 그대로 보인다. 필터가 없으면
+사용자가 제외한 파일의 **이름과 sha256이 푸시되는 표식 파일에 남는다.** 매칭 규칙은
+lib/syncignore.py 한 곳에 있다 — 4단계의 `find -path`와 같은 규칙이다.
+
 표식 세 필드의 성격이 다르다:
 - written_by_version: 정보. 판정에 쓰지 않는다.
 - min_reader_version: **판정 근거.** 이것 하나가 backup 게이트다.
@@ -17,6 +22,7 @@ sys.path.insert(
 )
 import compat  # noqa: E402
 import mcp_config as mc  # noqa: E402
+import syncignore  # noqa: E402
 
 
 def file_sha256(path):
@@ -61,11 +67,20 @@ def build_metadata(claude_dir, plugin_json_path):
     plugin.json을 못 읽으면 written_by_version을 생략한다 — 자기 버전을 모르는 것이
     파일 해시를 못 쓸 이유는 아니다. min_reader_version은 상수이므로 이 경우에도
     정상 기록된다.
+
+    `.syncignore`는 `claude_dir` 안에서 찾는다 — 이 함수가 걷는 트리와 제외 목록이
+    같은 곳에서 와야 테스트가 실제 `~/.claude` 없이 이 경로를 잴 수 있다.
     """
-    metadata = {"files": {}}
-    metadata["files"].update(collect(os.path.join(claude_dir, "agents"), "agents"))
-    metadata["files"].update(collect(os.path.join(claude_dir, "skills"), "skills"))
-    metadata["files"].update(collect(os.path.join(claude_dir, "CLAUDE.md"), "CLAUDE.md"))
+    files = {}
+    files.update(collect(os.path.join(claude_dir, "agents"), "agents"))
+    files.update(collect(os.path.join(claude_dir, "skills"), "skills"))
+    files.update(collect(os.path.join(claude_dir, "CLAUDE.md"), "CLAUDE.md"))
+    patterns = syncignore.load_patterns(syncignore.default_path(claude_dir))
+    kept = syncignore.filter_relpaths(sorted(files), patterns)
+    excluded = len(files) - len(kept)
+    if excluded:
+        print(".syncignore로 표식에서 제외: %d개" % excluded, file=sys.stderr)
+    metadata = {"files": {rel: files[rel] for rel in kept}}
     written_by = compat.read_plugin_version(plugin_json_path)
     if written_by is not None:
         metadata["written_by_version"] = written_by

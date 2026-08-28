@@ -42,6 +42,7 @@ import subprocess
 import pytest
 
 import plugin_config as pc   # conftest.py가 lib를 sys.path에 넣는다
+import syncignore   # 4단계 bash와 대조할 매칭 규칙 한 벌
 
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills")
 SKILLS = ["sync-backup", "sync-status", "sync-restore"]
@@ -999,6 +1000,104 @@ def test_syncignore_examples_actually_exclude_something(tmp_path):
             "문서가 드는 패턴이 아무것도 제외하지 않는다: %r" % pattern)
     assert keep.exists(), "패턴에 없는 파일까지 지웠다"
     assert (repo / ".git").exists(), ".git이 prune되지 않았다"
+
+
+# --- 4단계 bash와 lib/syncignore.py가 같은 규칙인가 ---
+#
+# 제외 판정이 **두 곳**에 있다. 4단계는 레포 작업 트리를 `find … | rm -rf`로 지우고,
+# 7단계의 generate_metadata.py는 `~/.claude`를 직접 걷는다. bash는 파이썬 함수를 부를
+# 수 없으므로 규칙을 물리적으로 한 벌로 만들 수 없다 — 대신 **두 구현을 같은 픽스처에
+# 돌려 결과가 같은지** 여기서 잰다. 갈리면 제외한 파일의 이름과 sha256이 표식에만 남아
+# 푸시되는데, 레포 트리에서는 사라졌으므로 사용자가 눈으로 확인할 방법이 없다.
+#
+# 픽스처는 두 구현이 **갈릴 수 있는 자리**를 담는다. 성질 하나가 빠지면 그 자리가
+# 어긋나도 단정이 초록이다.
+SYNCIGNORE_TREE = (
+    "CLAUDE.md",
+    "agents/public.md",
+    "agents/internal-a.md",
+    "agents/internal-b.txt",            # 확장자가 달라 첫 패턴에 걸리지 않는다
+    "skills/secret-tool/SKILL.md",
+    "skills/secret-tool/nested/deep.md",
+    "skills/keep/SKILL.md",
+    "skills/keep/internal-c.md",
+)
+SYNCIGNORE_RULES = (
+    "agents/internal-*.md",    # 파일 glob
+    "skills/secret-tool",      # 디렉토리 — find가 매치하고 rm -rf가 그 아래를 다 지운다
+    "skills/*/internal-*.md",  # `*`가 `/`를 넘는가 (find -path에는 FNM_PATHNAME이 없다)
+    "skills/keep/",            # 후행 슬래시 — find는 디렉토리를 슬래시 없이 출력한다
+    "",                        # 빈 줄
+    "# 주석",
+)
+# **기대 생존자를 손으로 적는다.** 두 구현을 서로 대조하기만 하면 그것은 일관성 가드일
+# 뿐이라, 둘이 **함께** 틀리는 편집(예: 조상 디렉토리 매치를 양쪽에서 빼는 것)에 눈이
+# 없다. 이 저장소가 사용자 문서에서 이미 만난 형태다.
+SYNCIGNORE_SURVIVORS = {
+    "CLAUDE.md",
+    "agents/public.md",
+    "agents/internal-b.txt",
+    "skills/keep/SKILL.md",
+}
+
+
+def build_syncignore_fixture(tmp_path):
+    """레포 역할 트리와 `.syncignore`를 가진 HOME을 만들고 (repo, home)."""
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    for rel in SYNCIGNORE_TREE:
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rel, encoding="utf-8")
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / ".syncignore").write_text(
+        "\n".join(SYNCIGNORE_RULES) + "\n", encoding="utf-8")
+    return repo, home
+
+
+def test_python_syncignore_matches_the_skill_bash(tmp_path):
+    """SKILL.md의 bash와 `syncignore.is_excluded`가 같은 집합을 남겨야 한다.
+
+    한쪽만 고치면 여기서 죽는다. 기대 생존자를 함께 박아 **둘이 함께 틀리는** 편집도
+    잡는다. 픽스처가 아무것도 제외하지 않는 상태로 흘러가면 단정이 공허해지므로
+    "무언가는 지워졌다"도 함께 건다.
+    """
+    repo, home = build_syncignore_fixture(tmp_path)
+    proc = subprocess.run(["bash", "-c", syncignore_block()],
+                          capture_output=True, text=True,
+                          env=dict(os.environ, HOME=str(home), SYNC_REPO=str(repo)))
+    assert proc.returncode == 0, proc.stderr
+
+    bash_survivors = {rel for rel in SYNCIGNORE_TREE if (repo / rel).exists()}
+    patterns = syncignore.load_patterns(str(home / ".claude" / ".syncignore"))
+    python_survivors = set(syncignore.filter_relpaths(SYNCIGNORE_TREE, patterns))
+
+    assert bash_survivors == python_survivors, (
+        "4단계 bash와 lib/syncignore.py의 판정이 갈린다: bash만 %s / python만 %s"
+        % (sorted(bash_survivors - python_survivors),
+           sorted(python_survivors - bash_survivors)))
+    assert bash_survivors == SYNCIGNORE_SURVIVORS, sorted(bash_survivors)
+    assert bash_survivors != set(SYNCIGNORE_TREE), "픽스처가 아무것도 제외하지 않는다"
+
+
+def test_the_syncignore_fixture_still_exercises_every_matching_property(tmp_path):
+    """픽스처가 성질 하나를 잃으면 위 대조가 그만큼 공허해진다 — 그것을 여기서 잰다.
+
+    네 성질을 각각 **혼자** 걸어 그 패턴이 실제로 무언가를 가르는지 확인한다.
+    (`skills/keep/`은 반대 방향이다 — 아무것도 걸리지 않아야 한다.)
+    """
+    checks = {
+        "agents/internal-*.md": ("agents/internal-a.md", True),
+        "skills/secret-tool": ("skills/secret-tool/nested/deep.md", True),
+        "skills/*/internal-*.md": ("skills/keep/internal-c.md", True),
+        "skills/keep/": ("skills/keep/SKILL.md", False),
+    }
+    assert set(checks) <= set(SYNCIGNORE_RULES), sorted(
+        set(checks) - set(SYNCIGNORE_RULES))
+    for pattern, (rel, expected) in checks.items():
+        assert rel in SYNCIGNORE_TREE, rel
+        assert syncignore.is_excluded(rel, [pattern]) is expected, (pattern, rel)
 
 
 def test_status_reports_plugin_sections_through_the_new_script():

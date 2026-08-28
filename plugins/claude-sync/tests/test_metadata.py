@@ -183,3 +183,106 @@ def test_dangling_symlink_is_skipped_not_fatal(tmp_path):
     assert "agents/dangling.md" not in meta["files"]
     assert "agents/a.md" in meta["files"]
     assert meta["min_reader_version"] == compat.MIN_READER_VERSION
+
+
+# --- `.syncignore`: 제외한 파일이 표식에 남는가 ---
+#
+# **표식은 레포가 아니라 `~/.claude`를 직접 걷는다.** 4단계의 `find | rm -rf`는 레포
+# 작업 트리만 손대므로, 필터가 없으면 사용자가 제외한 파일의 **이름과 sha256이 푸시되는
+# `sync-metadata.json`에 그대로 남는다** — README가 "민감 파일을 `.syncignore`로 걸러내고
+# 백업하라"고 말하는 바로 그 자리의 조용한 fail-open이다.
+# 매칭 규칙이 4단계의 `find -path`와 같은지는 test_script_root.py의
+# test_python_syncignore_matches_the_skill_bash가 두 구현을 함께 돌려 잰다.
+
+def write_syncignore(claude_dir, text):
+    with open(os.path.join(claude_dir, ".syncignore"), "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def secret_agent(claude_dir, rel="agents/internal-secret.md"):
+    """제외 대상 파일 하나를 만들고 (상대경로, 내용의 sha256)을 돌려준다."""
+    path = os.path.join(claude_dir, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("사내 URL과 내부 규칙")
+    return rel, gm.file_sha256(path)
+
+
+def test_syncignore_keeps_the_name_and_the_hash_out_of_metadata(tmp_path):
+    """이름도 해시도 남으면 안 된다.
+
+    **키만 확인하면 부족하다** — 해시는 그 자체로 내용의 지문이라, 값만 남아도
+    같은 파일을 가진 사람이 대조할 수 있다. 직렬화한 바이트 전체에서 찾는다.
+    남겨 두는 대조 파일이 없으면 "전부 뺀다"로도 단정이 참이 된다.
+    """
+    claude_dir = fake_claude_dir(tmp_path)
+    rel, digest = secret_agent(claude_dir)
+    write_syncignore(claude_dir, "agents/internal-*.md\n")
+    meta = gm.build_metadata(
+        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    assert rel not in meta["files"]
+    assert digest not in json.dumps(meta), "제외한 파일의 sha256이 표식에 남았다"
+    assert "agents/a.md" in meta["files"], "패턴에 없는 파일까지 뺐다"
+
+
+def test_without_syncignore_the_same_file_is_recorded(tmp_path):
+    """대조군 — 위 단정이 "표식이 원래 비어 있다"로 참이 되는 것을 막는다."""
+    claude_dir = fake_claude_dir(tmp_path)
+    rel, digest = secret_agent(claude_dir)
+    meta = gm.build_metadata(
+        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    assert meta["files"][rel] == digest
+
+
+def test_syncignore_directory_pattern_excludes_the_whole_subtree(tmp_path):
+    """디렉토리 패턴은 4단계에서 `rm -rf`로 통째로 지워진다.
+
+    파일 경로만 대조하면 `skills/demo`는 `skills/demo/SKILL.md`와 매치되지 않아,
+    디렉토리를 제외한 사용자만 표식으로 새어 나간다.
+    """
+    claude_dir = fake_claude_dir(tmp_path)
+    write_syncignore(claude_dir, "skills/demo\n")
+    meta = gm.build_metadata(
+        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    assert "skills/demo/SKILL.md" not in meta["files"]
+    assert "CLAUDE.md" in meta["files"]
+
+
+def test_syncignore_of_only_comments_and_blank_lines_excludes_nothing(tmp_path):
+    """주석·빈 줄을 패턴으로 읽으면 아무 관계 없는 파일이 조용히 빠진다."""
+    claude_dir = fake_claude_dir(tmp_path)
+    write_syncignore(claude_dir, "# agents\n\n   \n")
+    meta = gm.build_metadata(
+        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    assert len(meta["files"]) == 3
+
+
+def test_metadata_is_byte_stable_with_syncignore(tmp_path):
+    """필터를 거쳐도 정렬이 유지돼야 한다 — 표식 파일이 소음이 되면 안 된다."""
+    claude_dir = fake_claude_dir(tmp_path)
+    secret_agent(claude_dir)
+    write_syncignore(claude_dir, "agents/internal-*.md\n")
+    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
+    out1, out2 = str(tmp_path / "s1.json"), str(tmp_path / "s2.json")
+    gm.write_metadata(out1, gm.build_metadata(claude_dir, plugin_json))
+    gm.write_metadata(out2, gm.build_metadata(claude_dir, plugin_json))
+    with open(out1, "rb") as f1, open(out2, "rb") as f2:
+        assert f1.read() == f2.read()
+
+
+def test_syncignore_with_a_utf8_bom_still_excludes(tmp_path):
+    """BOM이 붙어도 첫 패턴이 살아야 한다 — lib/의 바이너리 읽기 계약이 여기 걸린다.
+
+    텍스트 모드로 읽으면 BOM이 첫 패턴의 첫 글자로 남아 매치 0건이 되고, 사용자는
+    걸렀다고 믿은 파일을 그대로 푸시한다. Windows 계열 편집기가 실제로 BOM을 붙인다.
+    (4단계 bash의 `read -r`은 이 경우 아무것도 제외하지 못한다 — 갈리는 방향이
+    "파이썬이 더 많이 제외한다"이므로 누수가 아니다. lib/syncignore.py에 적혀 있다.)
+    """
+    claude_dir = fake_claude_dir(tmp_path)
+    rel, _ = secret_agent(claude_dir)
+    with open(os.path.join(claude_dir, ".syncignore"), "wb") as f:
+        f.write(b"\xef\xbb\xbfagents/internal-*.md\n")
+    meta = gm.build_metadata(
+        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    assert rel not in meta["files"]
+    assert "agents/a.md" in meta["files"]
