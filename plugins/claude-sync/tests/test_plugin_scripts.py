@@ -1423,9 +1423,11 @@ def test_plan_carries_both_values_for_every_decided_key(tmp_path):
 def test_plan_splits_bare_install_from_the_config_step_by_the_installed_set(tmp_path):
     """9.3.1 — 2단계(`plugin install <id>`)와 4단계(`install --config k=v`)는 다른 단계다.
 
-    Task 9 quality review가 실측한 재현이 이것이다: 이미 설치된 플러그인에 bare install이
-    나가면 CLI가 exit 1로 죽어 **거짓 실패**가 된다. old@m은 이 기기에 **설치돼 있고**
-    레포에만 pluginConfigs가 있으므로 2단계가 아니라 4단계다.
+    이미 설치된 플러그인에 bare install이 나가면 그 값이 `true`로 덮인다 — **exit 0이라
+    실패로 보이지도 않는다**(브리프 1-b #2 · 2026-08-29 스모크 2장 — 실측). old@m은 이
+    기기에 **설치돼 있고** 레포에만 pluginConfigs가 있으므로 2단계가 아니라 4단계다.
+    (*초판은 "exit 1로 죽어 거짓 실패"라고 적었다 — 같은 저장소의 1-b #2가 이미 반증하고
+    있던 문장이다. 분리의 필요는 그대로이고 사유만 바뀐다.*)
 
     두 목록이 **서로 다른 비지 않은 값**을 갖는다 — 한쪽이 비면 분리 자체가 측정되지 않고
     "합쳐도 같은 결과"와 구별할 수 없다.
@@ -1450,7 +1452,8 @@ def test_plan_does_not_reinstall_what_only_the_manifest_default_enables(tmp_path
 
     default@m은 settings.json의 enabledPlugins에 **없지만** 설치돼 있다. 2단계/4단계
     판정을 설치 집합 대신 **로컬 섹션 문서**로 하면 이 키가 2단계로 가서 bare install이
-    나가고, 이미 설치된 플러그인이라 exit 1로 실패한다.
+    나가고, 그 명령이 매니페스트 기본값에 위임하던 상태를 **명시적 `true` 키로 굳힌다**
+    (exit 0이라 조용하다).
 
     miss@m은 어디에도 없다 — 2단계가 비지 않아야 위 단정이 "install이 늘 빈다"로 저절로
     참이 되지 않는다.
@@ -1474,8 +1477,9 @@ def test_a_broken_held_file_does_not_empty_the_installed_set(tmp_path):
     접힘이 fail-open이 아닌 유일한 근거다. 보류 파일 갈래(HeldStateUnavailable)는
     pluginConfigs 하나만 skip하므로, 여기서도 설치 집합을 접으면 enabledPlugins가 살아
     있는 채로 그 집합만 비어 정확히 근거가 경고한 재앙이 일어난다 — compare는 설치된
-    플러그인 전부를 "미설치"로 보고하고, build_plan은 그 전부를 2단계에 실어
-    bare install → exit 1의 거짓 실패를 양산한다(9.3.1).
+    플러그인 전부를 "미설치"로 보고하고, build_plan은 그 전부를 2단계에 실어 bare install을
+    낸다. **exit 0이라 죽지도 않고**(실측) 값이 전부 `true`로 덮여 꺼 둔 플러그인이 전부
+    켜진다(9.3.1).
 
     **한 fixture를 두 스크립트에 함께 건다.** 설치 집합의 소비자가 그 둘뿐이라, 한쪽만
     재면 다른 쪽에서 조용히 갈릴 수 있다.

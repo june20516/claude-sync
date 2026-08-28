@@ -38,11 +38,14 @@
 | 10 | `marketplace remove`의 소속 판정 규칙(`endswith`) | 소속 플러그인이 하나뿐이라 **규칙 자체는 미측정** | 미확인 |
 | 11 | 삭제 명령의 실패 갈래가 두 파일 어느 쪽도 안 건드린다 | `uninstall ghost`(미설치) → exit 1, **상태 불변** | **맞음** |
 
-**추가로 목록에 없던 것 하나가 틀렸다:**
+**추가로 목록에 없던 것 하나 — 틀린 것은 에뮬레이터가 아니라 산문이었다:**
 
-| | 에뮬레이터 | 실측 |
+| | 실측 | 저장소는 뭐라고 적고 있었나 |
 |---|---|---|
-| `install` 재실행(이미 설치) | **exit 1** | **exit 0** — `✔ Plugin "…" is already installed` |
+| `install` 재실행(이미 설치) | **exit 0** — `✔ Plugin "…" is already installed` | 에뮬레이터의 `PluginCLI.install`은 **처음부터 exit 0**이었다(브리프 1-b #2가 2026-08-24에 이미 그렇게 쟀다). **exit 1이라고 적고 있던 것은 프로덕션 산문 다섯 곳**이다 — `plan_plugins.py`(3), `plugin_config.py`, `sync-restore/SKILL.md`. spec 8.6 표(1004행)도 그렇다 |
+
+*(이 표의 초판은 "에뮬레이터가 exit 1"이라고 적었다. 반영 작업에서 코드를 직접 돌려
+확인한 결과 그렇지 않았고, 그 오기는 정정된 산문에서 옮겨온 것이었다.)*
 
 ---
 
@@ -106,7 +109,7 @@ after : enabledPlugins={"demo@smoke-mkt": true}
 
 | 자리 | 왜 |
 |---|---|
-| `tests/plugin_cli.py`의 `install` 재실행 exit code | **exit 1 → 0.** 추정 목록에도 없던 자리다 |
+| ~~`tests/plugin_cli.py`의 `install` 재실행 exit code~~ | **고칠 것이 없었다** — 에뮬레이터는 이미 exit 0이다. 고쳐야 했던 것은 아래 산문 행이다 |
 | 같은 파일의 추정 4번(미설치 id에 `enable`/`disable`) | 실제로는 **exit 0이고 키를 만든다.** 복원 3단계가 미설치 id에 `disable`을 내면 **유령 키가 생긴다** |
 | 추정 6번(marketplace add의 값 모양) | 인자로 출처를 판별한다 — url·git 시나리오 전에 고쳐야 한다는 인계가 **옳았고**, 형태도 확인됐다 |
 | Task 14 인계의 *"bare install은 이미 설치된 id에 exit 1이라 애초에 대안이 아니다"* | **거짓.** exit 0이다. 2단계/4단계를 가른 결정 자체는 여전히 옳지만(중복 명령을 줄인다) **그 근거는 다시 써야 한다** |

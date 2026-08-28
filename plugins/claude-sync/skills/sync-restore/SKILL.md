@@ -242,7 +242,7 @@ claude plugin marketplace add <arg> --scope user
 
 #### 5-2. 플러그인 설치
 
-`install` 목록을 설치한다. `skipped_already_installed`는 **부르지 않는다** — 이미 설치된 id에 bare install을 내면 CLI가 exit 1로 죽어 거짓 실패가 된다.
+`install` 목록을 설치한다. `skipped_already_installed`는 **부르지 않는다** — 이미 설치된 id에 bare install은 exit 0이지만(실측) **무해한 재실행이 아니다.** 그 명령은 값을 `true`로 덮어쓰므로 로컬이 `false`인 id를 말없이 켜고 객체 값을 평탄화하며, 3단계는 그것을 되돌리지 않는다(3단계 목록은 계획 시점의 로컬 값으로 정해진다).
 
 **`depends_on`이 가리키는 마켓플레이스의 등록이 실패했다면 그 항목은 시도하지 않는다** — 등록되지 않은 상태로 install하면 CLI가 "플러그인이 없다"와 **똑같은 문구**로 실패해 사용자가 원인을 알 수 없다. `blocked`로 모아 "마켓플레이스 등록이 실패해 건너뛰었습니다"로 보고한다. 같은 규칙이 5-3·5-4에도 적용된다 — 4단계도 `install <id@marketplace> --config k=v` 형태라 등록되지 않은 마켓플레이스로는 똑같이 죽는다.
 
@@ -301,7 +301,7 @@ claude plugin install <id> --config <key>=<value> --scope user
 
 #### 5-6. 확장 포맷 값 — `value_held`
 
-`sections[<섹션>]["value_held"]`에 있는 항목은 **설치돼 있고 값만 레포를 따르는 상태**다(5-5의 버킷과 같은 층이다). "양쪽이 모두 바뀌었습니다"라고 말하지 않는다 — 사실이 아니고, 배열 값을 쓸 CLI도 없다.
+`sections[<섹션>]["value_held"]`에 있는 항목은 **설치돼 있고 값만 레포를 따르는 상태**다(5-5의 버킷과 같은 층이다). "양쪽이 모두 바뀌었습니다"라고 말하지 않는다 — 사실이 아니고, 배열 값을 쓸 CLI도 없다. **실측**(2026-08-29): CLI는 확장 값을 「꺼짐」으로 읽어 `disable`은 `already disabled`로 죽고 `enable`은 그 값을 `true`로 **지운다.** 그래서 이 항목에는 어느 쪽도 내지 않는다.
 
 > "설치했습니다. 다만 이 기기는 버전 제약을 표현할 수 없어 레포의 값을 보존합니다."
 

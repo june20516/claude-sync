@@ -128,8 +128,13 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
 
     **2단계와 4단계가 갈리는 자리가 여기다**(9.3.1). 두 단계는 다른 명령이고 대상도
     다르다 — 2단계는 `plugin install <id>`, 4단계는 `install --config k=v`다. 이미 설치된
-    플러그인에 2단계를 내면 CLI가 exit 1로 죽어 **거짓 실패**가 된다(Task 9 quality
-    review 실측). 가르는 기준은 **설치 집합 하나**이고 로컬 섹션 문서가 아니다 —
+    플러그인에 2단계를 내면 **exit 0이지만**(브리프 1-b #2 · 2026-08-29 스모크 2장 —
+    실측) **그 id의 값이 `true`로 덮인다.** 로컬이 `false`인 id를 말없이 켜고, 객체 값이면
+    평탄화해 없앤다. 3단계가 되돌려 주지도 않는다 — 그 목록은 **계획 시점의** 로컬 값으로
+    정해지는데, 그때 이미 레포와 같았던 id는 애초에 거기 실리지 않기 때문이다.
+    (*초판은 이 자리에 "exit 1로 죽어 거짓 실패가 된다"라고 적었다. 결론은 같고 사유가
+    틀렸다 — 그 문장은 브리프 1-b #2가 저장소 안에서 이미 반증하고 있었다.*)
+    가르는 기준은 **설치 집합 하나**이고 로컬 섹션 문서가 아니다 —
     enabledPlugins의 키 부재는 미설치가 아니라 매니페스트 defaultEnabled에 위임하는
     상태이므로(value_command가 같은 사실을 반대편에서 쓴다) 그것으로 가르면 이미 설치된
     플러그인이 2단계로 간다.
@@ -176,7 +181,7 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     candidates = sorted(candidates)
     # 2단계 — `plugin install <id>`. 4단계 — `install --config k=v`(설정 값은 config_keys).
     # **가르는 기준은 설치 집합 하나다**(위 docstring). 이미 설치된 id에 2단계를 내면
-    # CLI가 exit 1로 죽어 거짓 실패가 된다.
+    # exit 0으로 조용히 그 id의 값이 `true`로 덮인다.
     install = [k for k in candidates if k not in installed_ids]
     # 1단계의 skipped_always_known과 같은 결의 **제외 목록**이다 — 어느 단계에서 왜
     # 빠졌는지를 보고에 남겨야 SKILL.md가 "아무 일도 일어나지 않았다"와 구별할 수 있다.
@@ -202,8 +207,9 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 기여하지 않고 pluginConfigs만 기여하는 id는 불리언으로 실려 (a)로 보인다. 그래도
     # 문구는 갈리지 않는다: _config_secret_keys가 option 키 전부를 되물을 목록으로
     # 돌려주므로, add 버킷에 남는 pluginConfigs 항목은 정의상 options가 비어 실질이 없다.
-    # 세 갈래 모두 **이미 설치된 플러그인에 bare install을 내는 것은 exit 1로 죽으므로
-    # 대안이 아니다.**
+    # 세 갈래 모두 **bare install은 대안이 아니다.** exit 0이라 죽지는 않지만(실측) 값을
+    # `true`로 덮어써 (a)에서 방금 "현재 상태와 같다"고 판정한 그 상태를 깨고 (b)의 확장
+    # 값을 평탄화한다 — 조용한 상태 파괴다.
     skipped_already_installed = [k for k in candidates if k in installed_ids]
     # **3단계의 기준은 두 목록 전부(candidates)다.** 이미 설치된 id도 값 맞추기 대상이다 —
     # 로컬 enabledPlugins에 값이 없고(매니페스트 기본값에 위임) 레포가 false이면 그

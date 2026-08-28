@@ -166,25 +166,43 @@ Task 14 품질 리뷰의 I4가 그대로 재발한다.** 파일이 이미 **1,23
 
 ---
 
-## 아직 미확인 — 실제 CLI를 재야 판정된다
+## 미확인 둘 — 2026-08-29 실환경 스모크가 하나를 닫았다
 
-이 plan 전체에서 **실제 `claude plugin` CLI로는 아무것도 재지 않았다.** 검증은 에뮬레이터·
-하네스·테스트뿐이다. 갈래가 둘 열려 있다.
+이 plan 전체에서 **실제 `claude plugin` CLI로는 아무것도 재지 않았다**(검증은 에뮬레이터·
+하네스·테스트뿐이었다). 그 유예를 `docs/superpowers/2026-08-29-plugin-cli-smoke.md`가
+`claude 2.1.250`으로 메웠다. 아래 둘 중 ⑴이 닫혔다.
 
-**⑴ 4단계가 3단계를 되돌리는가.** 한 id가 `disable_after_install`과 `config_keys`에 **함께**
-실릴 수 있다(spec 9.3.1이 두 단계 모두 *"설치 여부로 좁히지 않는다"*로 못 박는다). 그때 사용자가
-값을 입력하면 에뮬레이터에서는 복원 후 로컬 값이 **`true`**가 된다 — 레포가 `false`인데도(실측).
-- **(ㄱ) 실제 CLI도 그렇다면** spec 9.3.1의 순서 규정에서 나오는 **설계상의 귀결**이다.
-  레포의 `false`가 그 기기에 영영 복원되지 않고 다음 백업이 로컬 `true`를 도로 민다 — **수렴이
-  깨진다.** spec 결정이 필요하다 → **plan ③ 후보.**
-- **(ㄴ) 실제 CLI가 `--config`만 쓴다면** 틀린 것은 에뮬레이터의 **추정 3번**이고 `PluginCLI.install`을
-  고쳐야 한다.
+**⑴ 4단계가 3단계를 되돌리는가 — 닫혔다. 갈래 (ㄱ)이다.** 한 id가 `disable_after_install`과
+`config_keys`에 **함께** 실릴 수 있다(spec 9.3.1이 두 단계 모두 *"설치 여부로 좁히지 않는다"*로
+못 박는다). 그때 사용자가 값을 입력하면 에뮬레이터에서는 복원 후 로컬 값이 **`true`**가 된다 —
+레포가 `false`인데도. **실제 CLI도 그렇다**(스모크 4장 실측):
 
-**⑵ url·git 출처의 왕복.** 에뮬레이터의 `marketplace add`는 언제나 github 모양을 쓴다(추정 6번).
-`marketplace_arg`는 url·git에 대해 URL 문자열을 내는데 에뮬레이터가 그것을 **github 값의 `repo`
-필드**에 담는다. 복원 직후 로컬 값이 레포 값과 달라 `_next_base_sections`의 "로컬과 merged가 같은
-키만 전진"에 걸리고 다음 백업이 같은 차이를 다시 보고한다 — **수렴 자체가 깨진다**(코드를 따라간
-귀결, 실측 없음). 시나리오를 쓰려면 `plugin_cli.marketplace_add`를 **먼저 고쳐야 한다.**
+```
+before: enabledPlugins={"demo@smoke-mkt": false}  pluginConfigs=null
+$ claude plugin install demo@smoke-mkt --config token=s3cr3t     → exit 0
+after : enabledPlugins={"demo@smoke-mkt": true}
+        pluginConfigs={"demo@smoke-mkt":{"options":{"token":"s3cr3t"}}}
+```
+
+따라서 **에뮬레이터의 추정 3번이 옳았고**(갈래 (ㄴ)이 아니다), 이것은 하네스의 결함이 아니라
+spec 9.3.1의 순서 규정에서 나오는 **설계상의 귀결**이다. 레포의 `false`가 그 기기에 영영
+복원되지 않고 다음 백업이 로컬 `true`를 도로 민다 — **수렴이 깨진다.** spec부터 고쳐야 한다
+(순서를 바꾸거나 4단계를 값 보존형으로) → **plan ③.** `pluginConfigs`의 모양
+`{id: {"options": {k: v}}}`도 구현과 일치함이 함께 확인됐다.
+
+**⑵ url·git 출처의 왕복 — 여전히 미확인. 다만 절반이 좁혀졌다.** 에뮬레이터의
+`marketplace add`는 언제나 github 모양을 쓴다(6번). `marketplace_arg`는 url·git에 대해 URL
+문자열을 내는데 에뮬레이터가 그것을 **github 값의 `repo` 필드**에 담는다. 복원 직후 로컬 값이
+레포 값과 달라 `_next_base_sections`의 "로컬과 merged가 같은 키만 전진"에 걸리고 다음 백업이
+같은 차이를 다시 보고한다 — **수렴 자체가 깨진다**(코드를 따라간 귀결, 실측 없음).
+스모크가 확인한 것은 둘이다 — **실제 CLI가 인자에서 출처 종류를 판별한다**는 것(디렉토리
+경로를 주니 `directory` 출처로 썼다)과 **directory 출처 값의 모양**이 가정과 정확히 같다는 것
+(`{"source": {"source": "directory", "path": "<절대경로>"}}`). **url·git 두 출처의 값 모양은
+재지 않았다** — 그 픽스처는 네트워크를 타지 않는 로컬 마켓플레이스 하나뿐이었다. 시나리오를
+쓰려면 `plugin_cli.marketplace_add`를 **먼저 고쳐야 한다**는 인계는 그대로다.
+
+**스모크가 닫지 못한 셋**(에뮬레이터 추정 1·8·10)은 `tests/plugin_cli.py` 모듈 docstring에
+"미확인 셋을 닫는 방법"으로 픽스처 설계까지 적어 인계했다.
 
 ---
 
@@ -203,7 +221,8 @@ restore에서는 `local_stale`이 **`uninstall --scope user` 제안**으로 이�
 있고 로컬 키가 없으며 매니페스트가 `defaultEnabled: false`면 실제로 꺼져 있는데 레포가 `true`면
 `value_command(True, True) = None`이라 **아무 명령도 나가지 않는다.** 로컬 문서만으로는 닫을 수 없다.
 
-**③ 위 「미확인」 ⑴이 (ㄱ)으로 판명되는 경우.**
+**③ 위 「미확인」 ⑴** — **(ㄱ)으로 판명됐다**(2026-08-29 스모크 4장). 조건부가 아니라
+확정된 항목이다. spec 9.3.1의 단계 순서 자체를 고쳐야 한다.
 
 ---
 

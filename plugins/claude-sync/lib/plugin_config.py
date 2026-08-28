@@ -379,8 +379,11 @@ def read_hold_inputs(installed_path=None, held_path=None):
       held_state["release"]            build_hooks의 released → H3      **아니다**
 
     빈 installed_ids는 그 자체로 위험한 값이다 — 소비자가 "아무것도 설치 안 됨"으로
-    읽으면 restore가 이미 설치된 플러그인 전부에 bare install을 내어 exit 1의 거짓
-    실패를 양산한다(9.3.1의 2단계). 접어도 되는 근거는 위 표의 셋째 열뿐이다.
+    읽으면 restore가 이미 설치된 플러그인 **전부에** bare install을 낸다(9.3.1의 2단계).
+    그 명령은 **exit 0이다**(브리프 1-b #2 · 2026-08-29 스모크 2장 — 실측). 그래서 결과는
+    거짓 실패가 아니라 **조용한 상태 파괴다**: 값이 `true`로 덮여 꺼 둔 플러그인이 전부
+    켜지고 객체 값이 전부 평탄화되며, 다음 백업이 그 상태를 레포로 민다.
+    접어도 되는 근거는 위 표의 셋째 열뿐이다.
     설치 집합을 읽는 자리를 늘릴 때는 그 자리가 skip 범위 안인지 먼저 확인할 것.
 
     **넷째 행이 "아니다"라서 다섯째 반환값이 있다.** release를 잃으면 H3가 걸리는
@@ -736,7 +739,12 @@ def _make_hold(section, *, auto_ids, directory_names, held_configs, released):
     판정이 조용히 반대로 선다.
 
     **입력은 이미 정규화돼 있다** — H4의 지문이 마스킹된 레포 값으로 계산되는 근거다.
-    """
+
+    **H3만 값 보류이면서 행동 보류가 아닌 것(설치는 한다)에는 실측 근거가 있다**
+    (2026-08-29 스모크 3장): CLI는 확장 값을 「꺼짐」으로 읽어 `disable`은 exit 1로
+    죽이고 `enable`은 exit 0으로 `true`를 덮어쓴다. 값을 맞추려는 명령은 값을 **파괴하는
+    쪽 하나뿐**이라 값은 밀지 않고 보류하되, 설치 자체는 어느 명령도 값을 건드리지
+    않으므로 그대로 한다. 표는 `value_command`의 docstring에 있다."""
     def hold(local, repo):
         value, action = set(), set()
         for key in set(local) | set(repo):
@@ -955,8 +963,22 @@ def value_command(local_value, repo_value):
     enable/disable은 **멱등이 아니다** — 이미 그 상태면 exit 1이다(실측). 현재 상태와
     같은데 부르면 거짓 실패를 양산한다.
 
-    레포 값이 불리언이 아니면 None이다 — 배열·객체를 쓸 CLI가 없다(H3의 값은 밀지
-    않는다). **로컬의 부재는 false가 아니다** — 매니페스트 기본값(defaultEnabled)에
+    **레포 값이 불리언이 아니면 None이다.** 근거는 "배열·객체를 쓸 CLI가 없다"보다 좁고
+    무겁다 — 2026-08-29 스모크 3장이 실측한 것은 **CLI가 비불리언 값을 「꺼짐」으로
+    읽는다**는 것이다:
+
+        settings의 값        enable                    disable
+        true                 exit 1 (already enabled)  exit 0 → false
+        false                exit 0 → true             exit 1 (already disabled)
+        ["1.0.0"]            exit 0 → true (값 파괴)   exit 1, 값 보존
+        {"version": "1.0.0"} exit 0 → true (값 파괴)   exit 1, 값 보존
+
+    즉 확장 값에 낼 수 있는 명령은 `enable` 하나뿐이고 **그것은 값을 지운다.** 어느
+    방향으로도 "레포의 확장 값을 이 기기에 재현"할 수 없으므로 여기서 `None`을 내는
+    보수적 선택이 옳다(spec 7.3의 H3가 값 보류인 것과 같은 사실이다). 이 표는
+    `tests/test_plugin_cli.py::test_a_non_boolean_value_reads_as_off`가 고정한다.
+
+    **로컬의 부재는 false가 아니다** — 매니페스트 기본값(defaultEnabled)에
     위임하는 상태이므로 의미가 반대다. 따라서 부재는 "명령이 필요하다"로 다룬다.
     """
     if not isinstance(repo_value, bool):

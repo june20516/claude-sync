@@ -4829,7 +4829,7 @@ git commit -m "feat(restore): apply-base — 선택 override 넷과 plugins-held
 | 어디 | 무엇이 막혔나 |
 |---|---|
 | Task 8의 `absent_locally` | spec 9.2가 *"H3 항목은 '설치됨'과 '미설치'를 구별해 말한다"*를 요구하는데, 지금은 "로컬 섹션 문서에 값이 없다"까지만 말할 수 있어 이름을 그렇게 바꿨다 |
-| Task 9의 `install` | spec 9.3.1이 **2단계**(`plugin install <id>`)와 **4단계**(`plugin install <id> --config k=v`)를 다른 단계로 정의하고 9.3.2가 단계 간 의존까지 규정하는데, 계획이 둘을 `install` 하나로 합쳤다. **이미 설치된 플러그인에 bare install이 나가 거짓 실패가 난다**(Task 9 quality review에서 실측 재현됨) |
+| Task 9의 `install` | spec 9.3.1이 **2단계**(`plugin install <id>`)와 **4단계**(`plugin install <id> --config k=v`)를 다른 단계로 정의하고 9.3.2가 단계 간 의존까지 규정하는데, 계획이 둘을 `install` 하나로 합쳤다. **이미 설치된 플러그인에 bare install이 나간다** — 그 명령은 `exit 0`이지만 값을 `true`로 덮어써 꺼 둔 플러그인을 켜고 객체 값을 평탄화한다(브리프 1-b #2 · 2026-08-29 스모크 2장 — 실측). *초판은 이 자리에 "exit 1의 거짓 실패"라고 적었다. 결함의 존재는 그대로이고 증상만 다르다 — 실패가 아니라 **조용한 상태 파괴**다.* |
 
 **같은 파일을 두 번 파싱하지 않는다.** `read_auto_ids`가 이미 `installed_plugins.json`을 파싱하며 **auto 집합만** 뽑아 쓴다. 옆에 두 번째 파서를 두면 이 저장소가 반복해 막아 온 "파서 두 벌"이 어댑터 안에서 재생산되고, 두 판의 예외 갈래가 갈리면 부분 skip이 조용히 전체 skip이 된다.
 
@@ -5089,8 +5089,9 @@ def test_a_broken_held_file_does_not_empty_the_installed_set(tmp_path):
     접힘이 fail-open이 아닌 유일한 근거다. 보류 파일 갈래(HeldStateUnavailable)는
     pluginConfigs 하나만 skip하므로, 여기서도 설치 집합을 접으면 enabledPlugins가 살아
     있는 채로 그 집합만 비어 정확히 근거가 경고한 재앙이 일어난다 — compare는 설치된
-    플러그인 전부를 "미설치"로 보고하고, build_plan은 그 전부를 2단계에 실어
-    bare install → exit 1의 거짓 실패를 양산한다(9.3.1).
+    플러그인 전부를 "미설치"로 보고하고, build_plan은 그 전부를 2단계에 실어 bare install을
+    낸다. **exit 0이라 죽지도 않고**(실측) 값이 전부 `true`로 덮여 꺼 둔 플러그인이 전부
+    켜진다(9.3.1).
 
     **한 fixture를 두 스크립트에 함께 건다.** 설치 집합의 소비자가 그 둘뿐이라, 한쪽만
     재면 다른 쪽에서 조용히 갈릴 수 있다.
@@ -5133,9 +5134,11 @@ def test_a_broken_held_file_does_not_empty_the_installed_set(tmp_path):
 def test_plan_splits_bare_install_from_the_config_step_by_the_installed_set(tmp_path):
     """9.3.1 — 2단계(`plugin install <id>`)와 4단계(`install --config k=v`)는 다른 단계다.
 
-    Task 9 quality review가 실측한 재현이 이것이다: 이미 설치된 플러그인에 bare install이
-    나가면 CLI가 exit 1로 죽어 **거짓 실패**가 된다. old@m은 이 기기에 **설치돼 있고**
-    레포에만 pluginConfigs가 있으므로 2단계가 아니라 4단계다.
+    이미 설치된 플러그인에 bare install이 나가면 그 값이 `true`로 덮인다 — **exit 0이라
+    실패로 보이지도 않는다**(브리프 1-b #2 · 2026-08-29 스모크 2장 — 실측). old@m은 이
+    기기에 **설치돼 있고** 레포에만 pluginConfigs가 있으므로 2단계가 아니라 4단계다.
+    (*초판은 "exit 1로 죽어 거짓 실패"라고 적었다 — 같은 저장소의 1-b #2가 이미 반증하고
+    있던 문장이다. 분리의 필요는 그대로이고 사유만 바뀐다.*)
 
     두 목록이 **서로 다른 비지 않은 값**을 갖는다 — 한쪽이 비면 분리 자체가 측정되지 않고
     "합쳐도 같은 결과"와 구별할 수 없다.
@@ -5160,7 +5163,8 @@ def test_plan_does_not_reinstall_what_only_the_manifest_default_enables(tmp_path
 
     default@m은 settings.json의 enabledPlugins에 **없지만** 설치돼 있다. 2단계/4단계
     판정을 설치 집합 대신 **로컬 섹션 문서**로 하면 이 키가 2단계로 가서 bare install이
-    나가고, 이미 설치된 플러그인이라 exit 1로 실패한다.
+    나가고, 그 명령이 매니페스트 기본값에 위임하던 상태를 **명시적 `true` 키로 굳힌다**
+    (exit 0이라 조용하다).
 
     miss@m은 어디에도 없다 — 2단계가 비지 않아야 위 단정이 "install이 늘 빈다"로 저절로
     참이 되지 않는다.
@@ -6261,7 +6265,7 @@ class PluginCLI:
 - `Device.backup`의 게이트 `os.path.exists(staged)`를 `report["status"] == "ok"`로 바꾸기 → **등가 변이다(실측). 잡히지 않는 것이 정상이다.** 두 조건이 갈리는 상태는 둘뿐이고 둘 다 관측 불가다 — (i) `status "ok"` + staged 부재는 `update_base.py`가 경고만 내고 exit 0, base SHA 불변이며, (ii) `status "skipped"` + staged 잔존은 **존재 게이트 쪽이 오히려 위험한데**(옛 staged 내용이 base를 덮는다) `backup()`의 `rmtree`가 그 상태를 막는다. 존재 게이트를 쓰는 이유는 더 강해서가 아니라 **SKILL.md 배선이라서**이고, 같은 계약을 `update_base`가 한 번 더 진다. 그 근거를 `Device.backup` 주석에 남길 것
 - `collect`의 rename을 레포 쓰기보다 **앞으로** 옮기기 → 잡혀야 한다. 다만 **이것은 무방비 지점이 아니다** — 이 task 이전부터 있던 `tests/test_plugin_scripts.py`의 `test_collect_does_not_stage_when_repo_write_fails`가 이미 스크립트 층에서 잡는다(실측). 여기서 고쳐야 하는 것은 무방비가 아니라 **하네스 층 단정의 공허함**이다: 규정의 `test_base_does_not_advance_when_the_repo_file_cannot_be_written`의 base 단정은 그 테스트가 `update_base`를 아예 부르지 않는 데다 `collect_plugins.py`가 base를 쓰지도 않아 **어떤 구현에서도 참이다**(실측). 스테이징 최종 파일이 직전 백업 내용 그대로인지를 재는 **대체 단정**이 함께 있어야 한다
 - `Device.backup`의 `shutil.rmtree(self.staging, ignore_errors=True)`를 지우기 → **잡혀야 한다.** 바로 위 일곱째를 등가로 판정하는 근거 전체가 이 한 줄에 걸려 있다 — rmtree가 없으면 (ii)가 실재하는 상태가 되고, `status "skipped"`인데도 옛 staged 내용이 base를 덮는다. 관측하려면 **base가 빈 채로 staged만 남은 시점**을 만들어야 한다: `backup(push=False)` → `settings.json` 제거 → `backup()` → `base() is None`. 두 번째 백업이 skipped라 새 staged가 생기지 않으므로, rmtree가 있으면 게이트가 끝내 닫히고 없으면 `update_base`가 옛 파일을 올린다. (규정 초판은 이 변조를 지시하지 않았고, 그 결과 rmtree를 지워도 **757 passed**였다 — 실측)
-- **실패 갈래가 다른 파일에 남기는 부작용** 둘 → **잡혀야 한다.** 위 아홉은 전부 **성공 갈래**만 건드린다. ① `uninstall`이 exit 1로 죽는 자리에서도 `_forget_installed`를 부르게 하기 ② `_set_value`가 미설치 id에 exit 1을 내면서 `_mark_installed`는 부르게 하기. 두 파일 중 한쪽만 갱신되면 갈린다는 것이 이 파일의 핵심 위험인데, 실패 갈래의 단정이 전부 `settings()`만 보면 둘 다 조용하다(초판대로면 **758 passed로 둘 다 살아남는다** — 실측). ①은 "설치 기록만 있고 `enabledPlugins`에는 없는 id"가 필요한데 공개 API로는 만들 수 없으므로 파일을 직접 심는다(스코프 테스트와 같은 방식).
+- **실패 갈래가 다른 파일에 남기는 부작용** 둘 → **잡혀야 한다.** 위 아홉은 전부 **성공 갈래**만 건드린다. ① `uninstall`이 exit 1로 죽는 자리에서도 `_forget_installed`를 부르게 하기 ② `_set_value`가 미설치 id에 exit 1을 내면서 `_mark_installed`는 부르게 하기. 두 파일 중 한쪽만 갱신되면 갈린다는 것이 이 파일의 핵심 위험인데, 실패 갈래의 단정이 전부 `settings()`만 보면 둘 다 조용하다(초판대로면 **758 passed로 둘 다 살아남는다** — 실측). ①은 "설치 기록만 있고 `enabledPlugins`에는 없는 id"가 필요한데 공개 API로는 만들 수 없으므로 파일을 직접 심는다(스코프 테스트와 같은 방식). **[2026-08-29 갱신]** ②의 문면은 더 이상 적용되지 않는다 — 실환경 스모크가 *"미설치 id에 `enable`/`disable`은 exit 1"*을 뒤집어(exit 0이고 키를 만든다) `_set_value`에 그 갈래가 없어졌다. 같은 위험을 재는 대체 변조는 **"유령 키를 만들면서 `_mark_installed`도 부르게 하기"**이고, `test_enable_and_disable_on_an_unknown_plugin_create_a_ghost_key`가 잡는다(실측 CAUGHT).
 - **`_apply_base`가 알 수 없는 선택지 섹션 이름을 삼키기**(`assert section in pc.SECTIONS`를 `setdefault`로 되돌리기) → **잡혀야 한다.** `plan_plugins`의 `choice_list`가 모르는 섹션을 그냥 무시하므로, 삼키면 **선택을 하나도 적용하지 않은 restore**가 초록으로 지나간다. 정상 이름이 통과하는 절반을 함께 두어 "언제나 죽는다"가 아님을 잰다(초판대로면 SURVIVED — 실측).
 - **restore 3단계의 `blocked` 필터를 지우기** → **잡혀야 한다.** 관측에는 네 조건이 함께 필요하다(위 P10) — 그 조건을 세운 자매 시나리오가 Step 1에 있다. 그 시나리오가 없으면 이 변조는 살아남는다(초판·r2 트리 둘 다에서 SURVIVED였다 — 실측). 함께 재는 것: **네 조건을 하나씩 지우는 변조 넷**(레포 값을 `true`로 · `pluginConfigs`를 비우기 · 사전 설치를 빼기 · `fail_marketplaces`를 빼기) → 넷 다 잡혀야 한다. 넷 중 하나라도 살아남으면 그 조건은 docstring의 장식이다.
 - **`Device.restore`의 4단계 가드**(`assert plugin_id in plan["config_keys"]`)를 지우기 → **잡혀야 한다.** 없으면 계획이 되묻지 않은 id에도 설정이 채워져 **실제 흐름이 만들 수 없는 상태**가 만들어지고, 이어지는 백업이 그 값을 레포로 민다 — Task 13이 여섯 시나리오에서 `secrets`를 쓰므로 그때 조용한 fail-open이 된다. 정상 id가 통과하는 절반을 함께 두어 "언제나 죽는다"가 아님을 잰다.
@@ -6281,7 +6285,7 @@ git commit -m "test: CLI 에뮬레이터와 교대 하네스, 부트스트랩·r
 
 **판정표를 100% 덮은 테스트가 전부 통과하는데도 시스템이 데이터를 잃을 수 있다.** 아래 여섯은 단위 테스트로 잡히지 않는 것들이고, 특히 #4·#5·#8은 서로를 대체하지 못한다 — #2·#3은 보류가 **유지되는 동안만** 보고, #2는 "사라지지 않음"만 보므로 **영원히 다시 묻는** 실패를 통과시킨다.
 
-**에뮬레이터의 `marketplace add`는 언제나 github 모양의 값을 만든다(Task 12의 추정 — 실측 없음).** url·git 출처 시나리오를 쓰려면 **그 자리를 먼저 고쳐야 한다.** 고치지 않고 쓰면 시나리오가 조용히 github를 검증하고, `restorable`·`marketplace_arg`의 출처별 갈래는 하나도 타지 않는다. **결과는 "차이가 드러난다"보다 무겁다** — github는 왕복이 닫히지만(`marketplace_arg`가 `repo` 필드를 내고 에뮬레이터가 같은 필드에 되쓴다), url·git은 `marketplace_arg`가 URL 문자열을 내는데 에뮬레이터가 그것을 **github 값의 `repo` 필드**에 담는다(`_SOURCE_ARG_FIELDS = {"github": ("repo",), "url": ("url",), "git": ("url", "repo")}`). 복원 직후 로컬 값이 레포 값과 다르므로 `_next_base_sections`의 "로컬과 merged가 같은 값인 키만 전진"에 걸려 그 키는 base에 실리지 않고, 다음 백업이 같은 차이를 다시 보고한다 — **수렴 자체가 깨진다.** (코드를 따라간 귀결이고 끝까지 돌려 본 실측은 없다. 그런 시나리오가 아직 없기 때문이다.)
+**에뮬레이터의 `marketplace add`는 언제나 github 모양의 값을 만든다(Task 12의 6번 — 에뮬레이터의 단순화다. 2026-08-29 스모크가 **실제 CLI는 인자에서 출처 종류를 판별한다**를 실측했고, url·git 두 출처의 값 모양은 여전히 미측정이다).** url·git 출처 시나리오를 쓰려면 **그 자리를 먼저 고쳐야 한다.** 고치지 않고 쓰면 시나리오가 조용히 github를 검증하고, `restorable`·`marketplace_arg`의 출처별 갈래는 하나도 타지 않는다. **결과는 "차이가 드러난다"보다 무겁다** — github는 왕복이 닫히지만(`marketplace_arg`가 `repo` 필드를 내고 에뮬레이터가 같은 필드에 되쓴다), url·git은 `marketplace_arg`가 URL 문자열을 내는데 에뮬레이터가 그것을 **github 값의 `repo` 필드**에 담는다(`_SOURCE_ARG_FIELDS = {"github": ("repo",), "url": ("url",), "git": ("url", "repo")}`). 복원 직후 로컬 값이 레포 값과 다르므로 `_next_base_sections`의 "로컬과 merged가 같은 값인 키만 전진"에 걸려 그 키는 base에 실리지 않고, 다음 백업이 같은 차이를 다시 보고한다 — **수렴 자체가 깨진다.** (코드를 따라간 귀결이고 끝까지 돌려 본 실측은 없다. 그런 시나리오가 아직 없기 때문이다.)
 
 **`Device.restore`의 소비자는 Task 12가 넷 세워 두었다** — `test_a_blocked_marketplace_stops_the_install_and_config_steps`(9.3.2 blocked의 2·4단계), `test_a_blocked_marketplace_stops_the_disable_step`(같은 9.3.2의 3단계 — `fail_marketplaces`와 재실행 수렴을 함께 쓰는 유일한 자리다), `test_restore_rejects_a_secret_the_plan_did_not_ask_for`(4단계 `config_keys` 가드), `test_restore_rejects_an_unknown_choice_section`(선택지 섹션 이름). 첫·둘째가 `fail_marketplaces`를, 첫·셋째가 `secrets`를, 넷째가 `choices`를(값을 바꾸지 않는 형태로) 쓴다. **`choices`가 실제로 값을 바꾸는 갈래는 아직 아무도 타지 않는다** — `keep_stale`·`keep_local`에 실제 키를 넣고 그 효과를 재는 것은 이 task가 처음이다. 그때까지 그 갈래의 변조는 전부 살아남는 상태이므로, 여기서 도입하는 시나리오가 그 가드를 함께 세운다.
 
@@ -6292,10 +6296,11 @@ git commit -m "test: CLI 에뮬레이터와 교대 하네스, 부트스트랩·r
 - **선택지 섹션 이름 오타는 `AssertionError`로 죽는다**(`Device._apply_base`). `plan_plugins`의 `choice_list`가 모르는 섹션을 무시하므로 그 가드가 없으면 "선택을 하나도 적용하지 않은 restore"가 초록으로 지나간다. 9.3.4의 세 선택지를 섹션별로 쓸 때 이 가드가 먼저 말한다.
 - **4단계가 3단계를 되돌린다 — 미확인이고, 어느 쪽이든 이 task가 밟는다.** 한 id가 `disable_after_install`과 `config_keys`에 **함께** 실릴 수 있다(spec 9.3.1이 두 단계 모두 *"설치 여부로 좁히지 않는다"*로 못 박는다). 그때 3단계가 낸 `disable` 뒤에 4단계의 `install --config`가 오므로, 사용자가 그 id의 값을 입력하면 **복원이 끝난 로컬 값이 `true`가 된다** — 레포가 `false`인데도. 실측 확인했다(위 P10의 표 3행). 갈래가 둘이고 **지금은 어느 쪽인지 모른다.**
   - **(ㄱ) 실제 CLI도 `--config`와 함께 값을 `true`로 되돌린다면** — 이것은 하네스가 아니라 **spec 9.3.1의 순서 규정에서 나오는 설계상의 귀결**이다. 3단계가 무효화되므로 레포의 `false`가 그 기기에 영영 복원되지 않고, 다음 백업이 로컬 `true`를 도로 밀어 **수렴이 깨진다.** 순서를 바꾸거나(4단계 뒤에 3단계를 다시 낸다) 4단계를 값 보존형으로 만드는 **spec 결정이 필요하다 — plan ③ 후보로 표시한다.**
-  - **(ㄴ) 실제 CLI가 `--config`만 쓰고 `enabledPlugins` 값을 건드리지 않는다면** — 틀린 것은 에뮬레이터의 **추정 3번**(값이 `false`인 항목을 `install`하면 `true`가 된다 — 실측 없음)이고, `PluginCLI.install`을 고쳐야 한다.
+  - **(ㄴ) 실제 CLI가 `--config`만 쓰고 `enabledPlugins` 값을 건드리지 않는다면** — 틀린 것은 에뮬레이터의 **3번**(값이 `false`인 항목을 `install`하면 `true`가 된다)이고, `PluginCLI.install`을 고쳐야 한다.
   - 둘 중 무엇인지는 **실제 CLI를 재야 알 수 있다.** 재기 전까지는 어느 쪽도 단정하지 말 것. 그때까지 3단계를 관측하는 시나리오는 **그 id에 `secrets`를 주지 않는 것**으로 우회한다(`test_a_blocked_marketplace_stops_the_disable_step`이 그렇게 한다).
+  - **[2026-08-29 갱신 — 닫혔다. 갈래 (ㄱ)이다.]** 실환경 스모크가 `disable`된 id에 `install --config token=…`를 내어 `enabledPlugins`가 `false` → `true`로 바뀌는 것을 실측했다(`docs/superpowers/2026-08-29-plugin-cli-smoke.md` 4장). 에뮬레이터의 3번이 옳았고, 따라서 **spec 9.3.1의 순서를 고쳐야 하는 plan ③ 항목이다.** 우회(secrets를 주지 않는다)는 그대로 유효하다.
 - **14.2 #7의 픽스처로는 3단계가 관측되지 않는다(실측).** 레포 `enabledPlugins`가 둘 다 `true`이고 `pluginConfigs`가 비어 `disable_after_install`이 두 회차 모두 `[]`이므로, 원본 트리와 3단계 필터를 지운 트리의 출력이 완전히 같다. 3단계는 Task 12의 자매 시나리오가 이미 잰다(위 P10) — **14.2 #7의 픽스처를 그쪽에 맞추려 하지 말 것.** 두 시나리오는 같은 id에 **반대되는 설치 상태**를 요구한다.
-- **`set_directory_marketplace`에는 호출자가 하나도 없다**(Task 12 종료 시점, 스위트 전체 grep 0건 — 실측). 그래서 그 값의 모양(Task 12 추정 7번, 실측 없음)을 **지금 어떤 테스트도 고정하지 않고**, 그 자리를 github 모양으로 바꾸는 변조가 **SURVIVED**다(실측). H2 시나리오 `test_local_directory_marketplace_never_reaches_the_repo`가 **첫 소비자**다. url·git 갈래에는 "그 자리를 먼저 고칠 것"이 세 곳에 적혀 있으나 directory 갈래에는 그 안내가 없었다.
+- **`set_directory_marketplace`에는 호출자가 하나도 없다**(Task 12 종료 시점, 스위트 전체 grep 0건 — 실측). 그래서 그 값의 모양(Task 12 7번 — 당시 추정이었고 2026-08-29 스모크가 **가정과 정확히 같음**을 실측했다)을 **지금 어떤 테스트도 고정하지 않고**, 그 자리를 github 모양으로 바꾸는 변조가 **SURVIVED**다(실측). H2 시나리오 `test_local_directory_marketplace_never_reaches_the_repo`가 **첫 소비자**다. url·git 갈래에는 "그 자리를 먼저 고칠 것"이 세 곳에 적혀 있으나 directory 갈래에는 그 안내가 없었다.
 - **`test_plugin_cycle.py`는 이미 책임이 둘이다** — (A) 14.3 에뮬레이터 계약(`PluginCLI`만 쓴다, 서브프로세스를 부르지 않는다)과 (B) `Device` 하네스 시나리오. 이 task가 여섯 시나리오를 얹어 (B)가 크게 늘면 (A)를 `test_plugin_cli.py`로 떼는 것을 권한다.
 
 **Files:**
