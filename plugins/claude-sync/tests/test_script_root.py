@@ -192,18 +192,6 @@ def read_skill(name):
         return f.read()
 
 
-def test_backup_documents_marker_fields():
-    """세 필드 각각에 대한 설명 문장(백틱 표기)이 있는지 확인한다.
-
-    필드 이름만 찾으면 같은 절 안의 JSON 예시(따옴표 표기)가 항상 걸려
-    설명 문단이 통째로 지워져도 통과한다(불변식 7). 백틱으로 감싼 표기는
-    JSON 예시가 아니라 산문 설명에만 나타난다.
-    """
-    sec = section("sync-backup", "7. sync-metadata.json 생성")
-    for field in ("written_by_version", "min_reader_version", "schema"):
-        assert "`%s`" % field in sec, field
-
-
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
 
 
@@ -225,6 +213,18 @@ def subsection(skill, heading):
     i = text.index("#### " + heading)
     m = re.compile(r"\n#{3,4} ").search(text, i + 1)
     return text[i:m.start() if m else len(text)]
+
+
+def test_backup_documents_marker_fields():
+    """세 필드 각각에 대한 설명 문장(백틱 표기)이 있는지 확인한다.
+
+    필드 이름만 찾으면 같은 절 안의 JSON 예시(따옴표 표기)가 항상 걸려
+    설명 문단이 통째로 지워져도 통과한다(불변식 7). 백틱으로 감싼 표기는
+    JSON 예시가 아니라 산문 설명에만 나타난다.
+    """
+    sec = section("sync-backup", "7. sync-metadata.json 생성")
+    for field in ("written_by_version", "min_reader_version", "schema"):
+        assert "`%s`" % field in sec, field
 
 
 def plugin_restore_section():
@@ -299,7 +299,7 @@ COMPAT_WIRING = {
             # "호환성 검사가 이 실행줄보다 앞에 있어야 한다"를 거는 자리다. 지우면
             # 새 호출이 아무 앵커도 없이 남고 2.5단계가 뒤로 밀려도 아무도 못 잡는다.
             # 표의 **축소**는 test_before_calls_covers_every_gated_script_call이 잡는다.
-            # 그 단정이 없으면 항목을 지워도 788개가 전부 통과했다(실측) — "각 항목마다
+            # 그 단정이 없으면 항목을 지워도 스위트 전체가 통과했다(실측) — "각 항목마다
             # 검사"하는 맨 목록은 자기 축소를 탐지할 수 없고, 이 저장소가 그것을 푸는
             # 방식이 완전성 단정을 짝지어 두는 것이다(test_every_skill_on_disk_...와 같은 꼴).
             COLLECT_PLUGINS_CALL,
@@ -353,7 +353,7 @@ def test_skill_actually_runs_the_compatibility_check(skill):
     """세 스킬 모두 compat.py를 **실제로 실행**한다.
 
     절의 산문만 검사하면 절이 남은 채 호출줄만 사라져도 통과한다 — 실측으로, status와
-    restore에서 이 한 줄을 지웠을 때 367개가 전부 통과했다. backup만 실행줄 앵커가
+    restore에서 이 한 줄을 지웠을 때 스위트 전체가 통과했다. backup만 실행줄 앵커가
     있었고 나머지 둘은 "분석은 계속한다" 같은 문장만 보고 있었다(불변식 7).
 
     호출이 지정된 절 **안에** 있어야 한다. 파일 어딘가에 있기만 하면 되는 검사는
@@ -415,7 +415,7 @@ DOWNGRADE_CALL = 'detect_downgrade.py" "$SYNC_REPO"'
 DOWNGRADE_CALLERS = SKILLS
 
 # 탐지 호출이 있어야 할 절. 파일 어딘가면 되는 검사는 호출이 엉뚱한 단계로 옮겨져도
-# 통과한다 — 실측으로, 호출을 MCP 계획 바로 앞으로 옮겼을 때 383개가 전부 통과했다.
+# 통과한다 — 실측으로, 호출을 MCP 계획 바로 앞으로 옮겼을 때 스위트 전체가 통과했다.
 DOWNGRADE_SECTION = {
     "sync-backup": "4.5 다운그레이드 사고 탐지",
     "sync-status": "1.5 호환성 검사",
@@ -484,6 +484,9 @@ def test_every_skill_on_disk_is_covered_by_the_contract():
     SKILLS와 COMPAT_WIRING이 둘 다 손으로 쓴 목록이다. 넷째 스킬이 생겼는데 여기에
     안 적으면 위 검사들이 그 스킬을 아예 보지 않는다 — 통과하지만 아무것도 안 지킨다.
     새 스킬을 더할 때는 계약을 어떻게 할지 정하고 두 곳에 적어라.
+
+    표 셋(`SKILLS`·`COMPAT_WIRING`·`PLUGIN_STEP`)을 함께 걸므로 어느 위치에 두어도
+    한쪽은 앞서 참조하게 된다. `PLUGIN_STEP`은 플러그인 단계 가드들과 함께 아래에 있다.
     """
     on_disk = {
         d for d in os.listdir(SKILLS_DIR)
@@ -496,7 +499,7 @@ def test_every_skill_on_disk_is_covered_by_the_contract():
         set(COMPAT_WIRING).symmetric_difference(SKILLS)
     )
     # 같은 이유로 플러그인 단계 표도 함께 건다. 이 표에서 스킬 하나를 빼면 그 스킬은
-    # 섹션 단위 status 검사를 아무 소리 없이 빠져나간다(실측 — 빼도 786개가 전부 통과했다).
+    # 섹션 단위 status 검사를 아무 소리 없이 빠져나간다(실측 — 빼도 스위트 전체가 통과했다).
     assert set(PLUGIN_STEP) == set(SKILLS), "PLUGIN_STEP이 SKILLS와 다르다: %s" % sorted(
         set(PLUGIN_STEP).symmetric_difference(SKILLS)
     )
@@ -761,7 +764,7 @@ def test_restore_never_executes_marketplace_remove():
 # 검사를 조용히 빠져나가고, 나중에 추가되는 명령은 아예 검사되지 않는다.
 # **동사가 아니라 명령 전문으로 적는다.** 동사(`update `)로 면제하면 5-2의 install을
 # `claude plugin update <id>`로 바꾼 줄까지 함께 빠져나가 --scope user 가드도 -y 가드도
-# 그 줄을 보지 않는다(실측 — 그렇게 바꿔도 788개가 전부 통과했다).
+# 그 줄을 보지 않는다(실측 — 그렇게 바꿔도 스위트 전체가 통과했다).
 RESTORE_SELF_UPDATE_COMMANDS = (
     "claude plugin marketplace update claude-sync",
     "claude plugin update claude-sync",
@@ -804,6 +807,9 @@ PLUGIN_STEP = {
     "sync-restore": plugin_restore_section,
 }
 PER_SECTION_STATUS = 'sections[<섹션>]["status"]'
+# 문단을 반대 지시로 뒤집으면 반드시 사라지는 어휘. 리터럴 하나만 걸면 "최상위만 읽으면
+# 된다"로 뒤집어도 그 리터럴이 남아 통과한다(실측). 세 스킬 모두 지금 이 둘을 갖는다.
+PER_SECTION_WORDING = ("반영하지 않는다", "반드시 따로 읽")
 
 
 @pytest.mark.parametrize("skill", sorted(PLUGIN_STEP))
@@ -811,8 +817,19 @@ def test_plugin_step_reads_the_per_section_status_separately(skill):
     """최상위 status는 섹션 skip을 반영하지 않는다 — 그 사실이 절 안에 적혀야 한다.
 
     파일 어딘가면 되는 검사는 문장이 엉뚱한 단계로 옮겨져도 통과한다(불변식 7).
+
+    **리터럴 하나로는 부족하다** — 그것만 남기고 문단을 반대 지시로 뒤집어도 통과한다.
+    뒤집으면 반드시 사라지는 어휘를 함께 건다.
     """
-    assert PER_SECTION_STATUS in PLUGIN_STEP[skill](), skill
+    # 상수 자신이 넓어지는 것도 막는다 — 'sections'로 줄이면 어느 문장이든 만족시킨다.
+    assert '["status"]' in PER_SECTION_STATUS
+    # 어휘 목록이 줄면 그만큼 뒤집기가 통과한다(실측). 손으로 고른 목록이라 대조할
+    # 외부 진실 원천이 없으므로 개수를 건다 — 늘리거나 줄이는 것은 의도된 행위여야 한다.
+    assert len(PER_SECTION_WORDING) == 2
+    sec = PLUGIN_STEP[skill]()
+    assert PER_SECTION_STATUS in sec, skill
+    for wording in PER_SECTION_WORDING:
+        assert wording in sec, (skill, wording)
 
 
 def test_status_reports_plugin_sections_through_the_new_script():
@@ -869,12 +886,24 @@ def test_restore_choice_json_uses_the_real_section_names():
 RESTORE_BASE_SECTION = "6.5 base 갱신 (스테이징 → base)"
 RELS_LOOP = "for rel in plugins.json mcp-servers.json"
 
+# 통째로 건너뛸 수 있다고 스스로 적어 둔 단계. 이 목록은 아래에서 **파일에서 뽑은
+# 집합과 대조**하므로 손으로 줄일 수 없다.
+SKIPPABLE_RESTORE_STEPS = (
+    ("5. 플러그인 복원", "플러그인 단계 전체를 건너뛴다"),
+    ("6. MCP 서버 복원", "MCP 단계 전체를 건너뛴다"),
+)
+
+
+def restore_step_headings():
+    """sync-restore의 '### ' 제목 전부(제목 문자열만)."""
+    return [m.group(1) for m in re.finditer(r"\n### (.+)", read_skill("sync-restore"))]
+
 
 def test_restore_base_gate_covers_both_relpaths():
     """9.3.7 — restore 경로의 base가 전진하지 않으면 탈출구가 통째로 죽는다.
 
     backup 쪽 동형은 test_backup_base_gate_covers_both_relpaths가 잡는데, restore 쪽은
-    무가드였다(실측 — 루프를 mcp-servers.json 하나로 줄여도 788개가 전부 통과했다).
+    무가드였다(실측 — 루프를 mcp-servers.json 하나로 줄여도 스위트 전체가 통과했다).
     그렇게 되면 `keep_stale`·`keep_local`·`release` 선택이 base에 반영되지 않아
     **사용자가 고른 것이 조용히 무효가 된다.**
     """
@@ -893,9 +922,16 @@ def test_restore_base_advance_is_reachable_when_either_step_is_skipped():
     **어느 단계에도 속하지 않아야** 한다.
     """
     text = read_skill("sync-restore")
+    # 루프의 **내용**도 함께 건다 — RELS_LOOP를 "for rel in"으로 넓히면 개수·부재·모양
+    # 단정이 전부 통과하면서 두 relpath 가드가 조용히 죽는다(실측).
+    assert "plugins.json" in RELS_LOOP and "mcp-servers.json" in RELS_LOOP
     assert text.count(RELS_LOOP) == 1, "base 이동 루프가 하나여야 한다"
-    for step, skip in (("5. 플러그인 복원", "플러그인 단계 전체를 건너뛴다"),
-                       ("6. MCP 서버 복원", "MCP 단계 전체를 건너뛴다")):
+    # **표를 파일에서 뽑은 사실과 짝짓는다.** 손으로 쓴 목록이면 항목을 지우는 것만으로
+    # 그 단계가 검사를 조용히 빠져나간다(실측) — 이 파일이 다른 자리에서 닫은 성질이다.
+    skippable = {heading for heading, _ in SKIPPABLE_RESTORE_STEPS}
+    found = {h for h in restore_step_headings() if "단계 전체를 건너뛴다" in section("sync-restore", h)}
+    assert skippable == found, sorted(skippable.symmetric_difference(found))
+    for step, skip in SKIPPABLE_RESTORE_STEPS:
         sec = section("sync-restore", step)
         assert skip in sec, "%s가 통째로 건너뛸 수 있다는 사실이 사라졌다" % step
         assert RELS_LOOP not in sec, (
@@ -903,12 +939,23 @@ def test_restore_base_advance_is_reachable_when_either_step_is_skipped():
         )
     assert "어느 쪽이 건너뛰어졌더라도" in section("sync-restore", RESTORE_BASE_SECTION)
 
+    # **어느 단계에도 속하지 않는 것만으로는 부족하다 — 두 생산자보다 뒤여야 한다.**
+    # 이동이 6-6의 MCP apply-base보다 앞이면 그 산출물이 만들어지기 전에 옮기기가
+    # 끝나 mcp-servers.json의 base가 영영 전진하지 않는다(실측 — 절을 앞으로 옮겨도
+    # 스위트 전체가 통과했다). 플러그인 쪽에서 이 절이 막은 것과 같은 상태다.
+    # test_restore_clears_the_shared_staging_before_both_apply_base_calls의 짝이다.
+    move = index_of(text, RELS_LOOP, "sync-restore")
+    for producer in ('"$SYNC_SCRIPTS/plan_plugins.py" apply-base',
+                     '"$SYNC_SCRIPTS/plan_mcp.py" apply-base'):
+        assert index_of(text, producer, "sync-restore") < move, (
+            "base 이동이 %r보다 앞이다 — 그 산출물이 옮겨지지 않는다" % producer
+        )
+
 
 # 게이트되는 스크립트 실행줄. `cp`는 자료 복사라 게이트 대상이 아니고, 인라인
 # `python3 -c`·`python3 - <<'PY'`는 스크립트를 부르지 않으므로 둘 다 이 정규식에
 # 걸리지 않는다 — 예외 목록을 따로 두지 않는 근거가 그것이다.
 SCRIPT_CALL = re.compile(r'python3 "?\$SYNC_(?:SCRIPTS|BACKUP_SCRIPTS|LIB)/')
-BASH_BLOCK = re.compile(r"```bash\n(.*?)```", re.S)
 
 
 def script_calls_after_the_check(skill):
@@ -916,9 +963,10 @@ def script_calls_after_the_check(skill):
 
     **면제는 검사 호출줄과 그 앞까지다 — 블록 단위가 아니다.** 블록째 면제하면 검사와
     같은 블록에 실행줄을 **덧붙이는** 것만으로 그 줄이 대조에서 통째로 빠진다(실측).
-    검사 앞의 줄을 요구하지 않는 것은 그렇게 하면
-    test_compatibility_check_precedes_everything_it_gates와 논리적으로 충돌하기
-    때문이다 — 그 줄들은 검사가 막을 수 없는 자리에 있다.
+    검사 **앞**의 줄은 여기서 요구하지 않는다 — 요구하면
+    test_compatibility_check_precedes_everything_it_gates와 논리적으로 충돌한다.
+    대신 script_calls_before_the_check가 그런 줄을 **금지한다**: 검사가 막을 수 없는
+    자리에 있다는 사실이 곧 거기 있으면 안 되는 이유다.
     """
     text = read_skill(skill)
     after = index_of(text, COMPAT_CALL, skill)
@@ -931,6 +979,33 @@ def script_calls_after_the_check(skill):
             if here > after and SCRIPT_CALL.match(raw.strip()):
                 out.append(raw.strip())
     return out
+
+
+def script_calls_before_the_check(skill):
+    """호환성 검사 호출줄 **앞에** 오는 스크립트 실행줄. 지금은 세 스킬 다 0건이다."""
+    text = read_skill(skill)
+    before = index_of(text, COMPAT_CALL, skill)
+    out, cursor = [], 0
+    for m in BASH_BLOCK.finditer(text):
+        cursor = m.start(1)
+        for raw in m.group(1).splitlines():
+            here = text.index(raw, cursor) if raw else cursor
+            cursor = here + len(raw)
+            line = raw.strip()
+            if here < before and SCRIPT_CALL.match(line) and line != COMPAT_CALL:
+                out.append(line)
+    return out
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_no_gated_script_call_precedes_the_check(skill):
+    """검사보다 앞에서 스크립트를 부르면 **그 줄은 검사가 막을 수 없다.**
+
+    표에 넣어 순서를 걸 수도 없다(검사가 그보다 앞이라는 단정과 충돌한다). 그러므로
+    남는 처방은 금지 하나다. 지금 세 스킬 다 0건이라 이 단정은 공허하지 않다 —
+    실측으로, 검사 호출 **앞**에 게이트 대상 한 줄을 넣어도 스위트 전체가 통과했다.
+    """
+    assert not script_calls_before_the_check(skill), script_calls_before_the_check(skill)
 
 
 @pytest.mark.parametrize("skill", SKILLS)
@@ -949,13 +1024,38 @@ def test_before_calls_covers_every_gated_script_call(skill):
         )
 
 
+REDIRECT = re.compile(r"\s*>\s*\S+$")
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_each_anchor_witnesses_exactly_one_call_site(skill):
+    """앵커 하나는 **호출 지점 하나**를 증언해야 한다.
+
+    좁은 앵커 둘을 넓은 하나로 교체하면 그 하나가 두 지점을 덮고, 그 순간 표는 두 지점이
+    **존재한다는 사실**을 더 이상 증언하지 못한다 — 한 지점을 파일에서 지워도 남은
+    지점이 앵커를 만족시켜 아무도 알아채지 못한다. 접두 관계만 보는 위 단정은 그 교체를
+    통과시킨다(실측).
+
+    끝의 `> /tmp/…` 리다이렉트는 지우고 센다 — 같은 호출의 표기 차이일 뿐이고,
+    restore의 `--set-base-from`처럼 **같은 줄이 여러 번** 나오는 것은 지점 하나다.
+    """
+    calls = script_calls_after_the_check(skill)
+    for anchor in COMPAT_WIRING[skill]["before_calls"]:
+        sites = {REDIRECT.sub("", line) for line in calls if line.startswith(anchor)}
+        assert len(sites) == 1, (
+            "%s: 앵커가 호출 지점 %d개를 덮는다 — %r → %s" % (
+                skill, len(sites), anchor, sorted(sites))
+        )
+
+
 @pytest.mark.parametrize("skill", SKILLS)
 def test_no_anchor_swallows_another(skill):
     """앵커 하나가 다른 앵커의 접두이면 안 된다.
 
-    매칭이 startswith라 넓은 앵커 하나가 좁은 둘을 덮어 버리고, 그러면 순서 단정이
-    **첫 출현**만 보게 된다 — 표를 "정리"하다 자연히 일어나는 약화다(실측으로
-    restore의 plan_plugins 앵커 둘을 하나로 합쳐도 797개가 전부 통과했다).
+    **이 단정이 막는 것은 넓은 앵커를 「더하는」 형태 하나다.** 좁은 둘을 지우고 넓은
+    하나로 **교체**하면 남은 앵커 중 어느 것도 다른 것의 접두가 아니라 여기를 통과한다 —
+    실측으로 확인했다. 표를 "정리"하다 자연히 일어나는 편집은 추가가 아니라 그 교체이고,
+    그쪽은 test_each_anchor_witnesses_exactly_one_call_site가 잡는다.
     """
     anchors = COMPAT_WIRING[skill]["before_calls"]
     for one in anchors:
@@ -992,7 +1092,7 @@ def test_the_script_contract_table_did_not_shrink():
     """위 표는 **손으로 고른 목록**이라 대조할 외부 진실 원천이 없다.
 
     그래서 개수만 함께 건다 — 항목을 지우면 그 계약이 아무 소리 없이 검사에서
-    빠지기 때문이다(실측 — 하나를 지워도 795개가 전부 통과했다). 계약을 더하거나
+    빠지기 때문이다(실측 — 하나를 지워도 스위트 전체가 통과했다). 계약을 더하거나
     빼는 것은 의도된 행위여야 하고, 그때 이 숫자를 함께 고치는 것이 그 표시다.
     이 단정이 말하는 것은 그것뿐이다 — 표의 **내용**이 옳은지는 재지 않는다.
     """
@@ -1020,6 +1120,22 @@ def test_script_call_pattern_covers_every_root_variable():
         )
 
 
+def status_only_repo_guidance():
+    """2단계 `only_repo` 불릿이 말하는 처방 문장.
+
+    **손으로 적지 않고 파일에서 뽑는다.** `not in` 가드는 바늘이 틀려도 통과하므로
+    (없어야 할 것을 찾는 검사라 부재가 곧 초록이다) 상수로 두면 값을 아무 문구로
+    바꾸는 것만으로 통째로 공허해진다(실측). 여기서 뽑으면 2단계의 문구가 바뀔 때
+    가드가 따라가고, 뽑지 못하면 그 자리에서 실패한다.
+    """
+    for line in PLUGIN_STEP["sync-status"]().splitlines():
+        if line.startswith("- `only_repo`"):
+            for part in line.split("—", 1)[1].split(". "):
+                if "/sync-restore" in part:
+                    return part.strip().rstrip(".")
+    raise AssertionError("2단계에서 only_repo의 처방 문장을 뽑지 못했다 — 불릿이 낡았다")
+
+
 def test_status_summary_does_not_keep_a_second_glossary():
     """용어집이 두 벌이면 **낡은 쪽이 이긴다** — 3단계가 사용자에게 갈 최종 요약을 만든다.
 
@@ -1029,8 +1145,16 @@ def test_status_summary_does_not_keep_a_second_glossary():
     보류 항목이 `only_local`·`changed`로 나간다 — 역시 9.2가 금지한 것이다.
     """
     sec = section("sync-status", "3. 결과 요약")
-    # 금지하는 것은 **정의 불릿**이지 언급이 아니다 — 왜 두 벌이면 안 되는지를 적은
-    # 문장 자체가 버킷 이름을 부른다. 불릿의 머리가 버킷 이름이면 그것이 정의다.
+    # **형태가 아니라 문구를 건다.** 불릿 기호 한 글자(`-` → `*`)만 바꾸거나 표 한 행,
+    # 산문 한 줄로 되살리면 아래 불릿 검사를 전부 우회한다(실측). spec 9.2가 금지한
+    # 이 문장은 unrestorable 항목에 대해 거짓이므로 어느 형태로도 여기 있으면 안 된다.
+    # 백틱을 양쪽에서 지우고 비교한다 — `- **only_repo**:`든 표 한 행이든 산문이든,
+    # 표기만 바꾼 되살리기를 전부 같은 바늘로 잡는다.
+    banned = status_only_repo_guidance().replace("`", "")
+    assert banned, "금지 문구를 뽑지 못했다"
+    assert banned not in sec.replace("`", ""), banned
+    # 아래는 형태 쪽 그물이다 — 금지 문구를 바꿔 쓴 정의도 불릿 머리로는 걸린다.
+    # 언급까지 막지는 않는다: 왜 두 벌이면 안 되는지를 적은 문장 자체가 버킷 이름을 부른다.
     for line in sec.splitlines():
         line = line.strip()
         if not line.startswith("- "):
@@ -1074,7 +1198,7 @@ def test_every_skill_has_an_update_guidance_site():
 
 
 # 각 스킬의 플러그인 단계에 **있으면 안 되는** MCP 호출. PLUGIN_STEP의 접근자가 넓어지면
-# 절 경계가 무의미해지는데(status를 2단계 전체로 되돌려도 807개가 전부 통과했다),
+# 절 경계가 무의미해지는데(status를 2단계 전체로 되돌려도 스위트 전체가 통과했다),
 # 그 넓어짐은 이 호출이 딸려 들어오는 것으로 드러난다.
 FOREIGN_MCP_CALL = {
     "sync-backup": '"$SYNC_SCRIPTS/collect_mcp.py"',
@@ -1086,6 +1210,8 @@ FOREIGN_MCP_CALL = {
 @pytest.mark.parametrize("skill", SKILLS)
 def test_plugin_step_slice_excludes_the_mcp_half(skill):
     assert set(FOREIGN_MCP_CALL) == set(SKILLS)
+    # **값도 잠근다.** 아무 데도 없는 문자열로 바꾸면 이 단정이 통째로 공허해진다(실측).
+    assert FOREIGN_MCP_CALL[skill] in read_skill(skill), FOREIGN_MCP_CALL[skill]
     assert FOREIGN_MCP_CALL[skill] not in PLUGIN_STEP[skill](), (
         "%s: 플러그인 단계 접근자가 MCP 쪽까지 잘라 왔다 — 절 경계가 무의미해진다" % skill
     )
@@ -1095,7 +1221,7 @@ def test_backup_report_table_covers_every_held_kind():
     """보류 종류를 어댑터에서 뽑아 대조한다.
 
     표를 손으로 옮겨 적으면 종류가 늘 때 따라오지 못하고, 한 행이 지워져도 아무도
-    알아채지 못한다(실측 — `held.extended_value` 행을 지워도 797개가 전부 통과했다).
+    알아채지 못한다(실측 — `held.extended_value` 행을 지워도 스위트 전체가 통과했다).
     보류는 백업하지 않는 항목이라, 행이 사라지면 사용자는 그 항목이 왜 레포에 안
     올라가는지 들을 곳이 없어진다.
     """
