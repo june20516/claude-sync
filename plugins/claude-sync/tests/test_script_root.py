@@ -1120,6 +1120,32 @@ def test_status_reports_plugin_sections_through_the_new_script():
     assert "따로 보고합니다" in source
 
 
+def test_status_step2_does_not_promise_a_metadata_branch():
+    """2단계 산문이 **없는 분기**를 적으면 안 된다.
+
+    옛 문장은 *"`sync-metadata.json`이 있으면 이를 활용해 정밀하게 분석하고, 없으면
+    단순 diff로 비교한다"* 였는데, check_status.py는 그 파일을 **열지 않고 그 분기도
+    없다** — 언제나 같은 base 해시 경로다. SKILL.md의 산문은 모델이 읽고 실행하는
+    산출물이라, 없는 분기를 적으면 모델이 그 분기를 지어내 보고한다.
+
+    **두 쪽을 함께 건다.** 코드 쪽만 걸면 산문이 다시 거짓이 되어도 초록이고, 산문
+    쪽만 걸면 나중에 표식을 읽는 분기가 생겨도 초록이다. (코드 쪽 절반은
+    test_user_docs.py의 test_three_way_input_is_the_per_device_base와 겹치는데,
+    거기서는 백업 README의 서술을, 여기서는 이 절의 산문을 받친다.)
+    """
+    with open(os.path.join(SKILLS_DIR, "sync-status", "scripts", "check_status.py"),
+              encoding="utf-8") as f:
+        source = f.read()
+    assert "sync-metadata" not in source, "check_status.py가 표식 파일을 읽는다"
+    assert "base_hash(" in source
+
+    sec = section("sync-status", "2. 메타데이터 기반 상태 분석")
+    assert "`sync-metadata.json`은 읽지 않는다" in sec
+    assert ".sync-state/base" in sec
+    # 옛 거짓이 되살아나는 것을 막는다. 바늘의 값은 위 docstring이 축자로 인용한다.
+    assert "단순 diff" not in sec
+
+
 def test_extract_plugins_is_gone_everywhere():
     """12장 — 스킬이 새 스크립트를 부르게 된 뒤에 지운다. 그 전에 지우면 백업이 깨진다."""
     scripts = os.path.join(SKILLS_DIR, "sync-backup", "scripts")
