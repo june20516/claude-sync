@@ -839,10 +839,11 @@ PSEUDO_SOURCES = ALWAYS_KNOWN - {"claude-plugins-official"}
 # 제3자가 쓸 수 없는 예약 이름. **이 파일은 목록만 정하고 어디서도 쓰지 않는다** —
 # restorable도 orphaned도 이 집합을 보지 않는다. 미리 거르지 않는 것이 8.3이고(정당한
 # 소유자일 수 있다), 등록을 시도해 실패했을 때 "예약된 이름이라 거부되었다"로 갈래를
-# 구별해 보고하는 것은 **restore 스크립트가 할 일이다**(10.2). **오늘의 소비자는
-# `plan_plugins.marketplace_add`의 `"reserved"` 불리언이다** — 앞 판은 "사용처가 열거형
-# 대조 테스트뿐"이라 적었는데 후기 task가 그 소비자를 만들었다. 아직 없는 것은 등록
-# **실패 후** 갈래를 구별하는 처리뿐이다(10.2의 나머지).
+# 구별해 보고하는 것은 **스킬 층의 일이다**(10.2) — CLI를 실행하고 종료 코드를 보는 층이
+# 거기이므로 스크립트에 그 처리가 생길 일은 앞으로도 없다. **오늘의 소비자는
+# `plan_plugins.marketplace_add`의 `"reserved"` 불리언이고**(앞 판은 "사용처가 열거형
+# 대조 테스트뿐"이라 적었는데 후기 task가 그 소비자를 만들었다), 그 불리언을 받아
+# 실패 후 갈래를 구별하는 것은 `sync-restore/SKILL.md`의 5-1이 이미 한다.
 # always-known 판정이 우선한다 — claude-plugins-official은 ALWAYS_KNOWN에서 먼저
 # 걸러지므로 이 갈래에 도달하지 않는다.
 RESERVED_MARKETPLACE_NAMES = frozenset({

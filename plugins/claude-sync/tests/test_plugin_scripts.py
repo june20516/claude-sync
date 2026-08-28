@@ -1012,6 +1012,50 @@ def test_a_broken_held_file_reholds_released_keys_and_says_why(tmp_path, runner)
     assert pc.DEGRADED_RELEASE in reheld["degraded_reason"]
 
 
+@pytest.mark.parametrize("runner", ["plan", "apply_base"])
+def test_the_restore_side_carries_the_same_degraded_reason(tmp_path, runner):
+    """복원 쪽 배선 둘에도 같은 사유가 실린다.
+
+    위 테스트는 backup·status 쪽만 잰다. 사유를 얹는 자리는 넷인데
+    (`collect`·`compare`·`plan`·`apply-base`) 뒤의 둘을 재는 단정이 없었다 —
+    `sync-restore/SKILL.md`가 *"status가 ok인 섹션에 degraded_reason이 있으면 그 문장도
+    함께 알린다"* 를 약속하고 그 문단에는 가드가 있으므로, **약속에는 가드가 있고 그 약속을
+    지키는 배선에는 없는** 모양이었다.
+
+    apply-base 쪽이 특히 눈에 보인다 — 깨진 held에서는 그 키가 **base에서 통째로 빠진다.**
+    """
+    fixture = dict(local={"enabledPlugins": {"foo@m": True}},
+                   repo={"enabledPlugins": {"foo@m": {"version": "1.0"}},
+                         "extraKnownMarketplaces": {"m": GH}})
+    good = tmp_path / "plugins-held.json"
+    good.write_text(json.dumps({"version": 1, "pluginConfigs": {},
+                                "release": {"enabledPlugins": ["foo@m"]}}),
+                    encoding="utf-8")
+    broken = tmp_path / "broken-held.json"
+    broken.write_text("{not json", encoding="utf-8")
+
+    if runner == "plan":
+        def held_keys(path):
+            section = build_plan(tmp_path, held=str(path), **fixture)
+            return section["sections"]["enabledPlugins"]
+        released, reheld = held_keys(good), held_keys(broken)
+        assert released["value_held"] == []                 # 탈출구가 살아 있다
+        assert reheld["value_held"] == ["foo@m"]            # 해제가 되돌아갔다
+    else:
+        def run(path, staging):
+            result, staged = apply_base(tmp_path, held=str(path), staging=staging,
+                                        **fixture)
+            return result["sections"]["enabledPlugins"], staged
+        released, staged_ok = run(good, "ok")
+        reheld, staged_broken = run(broken, "broken")
+        assert staged_ok["enabledPlugins"] == {"foo@m": {"version": "1.0"}}
+        assert staged_broken["enabledPlugins"] == {}        # base에서 빠진다
+
+    assert "degraded_reason" not in released
+    assert reheld["status"] == "ok"                         # 이 섹션은 접히지 않는다
+    assert pc.DEGRADED_RELEASE in reheld["degraded_reason"]
+
+
 @pytest.mark.parametrize("broken", ["installed", "held"])
 def test_compare_and_collect_fold_the_same_sections(tmp_path, broken):
     """두 스킬의 skip 범위가 갈리면 사용자가 같은 기기에서 다른 상태를 본다.
