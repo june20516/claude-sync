@@ -193,8 +193,14 @@ def test_backup_documents_marker_fields():
 
 
 def test_restore_surfaces_update_guidance_in_plugin_step():
-    """버전이 낮아 막혔다면 필요한 것은 plugin update다. 여기가 탈출구다."""
-    assert "claude plugin update claude-sync" in plugin_restore_section()
+    """버전이 낮아 막혔다면 필요한 것은 plugin update다. 여기가 탈출구다.
+
+    **bash 블록 안에서 찾는다.** 절 전체에서 찾으면 같은 문구를 쓴 산문 한 줄이
+    블록을 대신 충족시켜, spec 12장이 보존하라고 지정한 실행 블록을 **통째로 지워도**
+    통과한다 — 실측으로 정확히 그 상태였다(불변식 7).
+    """
+    assert any("claude plugin update claude-sync" in block
+               for block in bash_blocks(plugin_restore_section()))
 
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
@@ -267,16 +273,16 @@ COMPAT_WIRING = {
             # extract_plugins.py를 지우면서 **앵커를 지우지 않는다** — 이 항목은
             # "호환성 검사가 이 실행줄보다 앞에 있어야 한다"를 거는 자리다. 지우면
             # 새 호출이 아무 앵커도 없이 남고 2.5단계가 뒤로 밀려도 아무도 못 잡는다.
-            # **이 표의 축소는 어떤 테스트도 잡지 못한다**(실측 — 이 줄을 지우면
-            # 787개가 전부 통과한다). "각 항목마다 검사"하는 목록은 자기 축소를
-            # 탐지할 수 없고, 여기를 완전성 검사로 바꾸려면 before_calls의 뜻이
-            # "검사가 막아야 할 실행줄"에서 "모든 스크립트 호출"로 달라진다
-            # (8·10단계의 cp·update_base는 게이트 대상이 아니다). spec 12장이
-            # 대신 글로 금지한다.
+            # 표의 **축소**는 test_before_calls_covers_every_gated_script_call이 잡는다.
+            # 그 단정이 없으면 항목을 지워도 788개가 전부 통과했다(실측) — "각 항목마다
+            # 검사"하는 맨 목록은 자기 축소를 탐지할 수 없고, 이 저장소가 그것을 푸는
+            # 방식이 완전성 단정을 짝지어 두는 것이다(test_every_skill_on_disk_...와 같은 꼴).
             COLLECT_PLUGINS_CALL,
             'python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"',
             COLLECT_MCP_CALL,
             'python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"',
+            'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${PUSHED_RELS[@]}"',
+            'python3 "$SYNC_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"',
         ),
     },
     "sync-status": {
@@ -295,6 +301,9 @@ COMPAT_WIRING = {
         "before_section": "### 3. 파일별 reconcile",
         "before_calls": (
             'python3 "$SYNC_SCRIPTS/reconcile_restore.py" "$SYNC_REPO" --apply',
+            'python3 "$SYNC_SCRIPTS/reconcile_restore.py" --set-base-from "$SYNC_REPO"',
+            'python3 "$SYNC_SCRIPTS/plan_plugins.py" apply-base',
+            'python3 "$SYNC_SCRIPTS/plan_mcp.py" apply-base',
             'python3 "$SYNC_SCRIPTS/plan_plugins.py" plan "$SYNC_REPO/plugins.json"',
             'python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json"',
             'python3 "$SYNC_BACKUP_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"',
@@ -690,6 +699,9 @@ def test_backup_base_gate_covers_both_relpaths():
     block = section("sync-backup", "10. 커밋 & 푸시")
     assert "for rel in plugins.json mcp-servers.json" in block
     assert '"$BASE_STAGING" "${RELS[@]}"' in block
+    # 게이트의 **두 축**을 다 건다. 이 축을 빼면 푸시 실패 실행에서도 base가 전진해
+    # spec 7.4가 막으려던 상태가 된다 — 파일 존재만으로는 그것을 막지 못한다.
+    assert '[ "$REPO_HAS_CONTENT" = "1" ]' in block
     assert '[ -f "$MCP_STAGING/mcp-servers.json" ]' not in read_skill("sync-backup")
 
 
@@ -717,10 +729,16 @@ def test_restore_never_executes_marketplace_remove():
 
 
 # 5절의 자기 업데이트 안내. claude-sync **자신**을 올리는 명령이라 9.3.1이 스코프를
-# 규정한 대상이 아니다. **제외 목록으로 적는다** — 허용 목록(설치·활성화 동사)으로 적으면
-# 목록에서 동사 하나를 빼는 것만으로 그 명령이 검사를 조용히 빠져나가고, 나중에 추가되는
-# 명령은 아예 검사되지 않는다. 제외 목록이면 반대로, 여기서 빼면 검사가 더 엄해진다.
-RESTORE_SELF_UPDATE_VERBS = ("marketplace update ", "update ")
+# 규정한 대상이 아니다(spec 12장이 이 두 줄의 보존을 지시한다). **제외 목록으로 적는다** —
+# 허용 목록(설치·활성화 동사)으로 적으면 목록에서 동사 하나를 빼는 것만으로 그 명령이
+# 검사를 조용히 빠져나가고, 나중에 추가되는 명령은 아예 검사되지 않는다.
+# **동사가 아니라 명령 전문으로 적는다.** 동사(`update `)로 면제하면 5-2의 install을
+# `claude plugin update <id>`로 바꾼 줄까지 함께 빠져나가 --scope user 가드도 -y 가드도
+# 그 줄을 보지 않는다(실측 — 그렇게 바꿔도 788개가 전부 통과했다).
+RESTORE_SELF_UPDATE_COMMANDS = (
+    "claude plugin marketplace update claude-sync",
+    "claude plugin update claude-sync",
+)
 
 
 def restore_plugin_commands():
@@ -730,9 +748,7 @@ def restore_plugin_commands():
     for block in bash_blocks(plugin_restore_section()):
         for line in block.splitlines():
             line = line.strip()
-            if not line.startswith(prefix):
-                continue
-            if line[len(prefix):].startswith(RESTORE_SELF_UPDATE_VERBS):
+            if not line.startswith(prefix) or line in RESTORE_SELF_UPDATE_COMMANDS:
                 continue
             out.append(line)
     return out
@@ -813,3 +829,107 @@ def test_restore_choice_json_uses_the_real_section_names():
     # 사용자가 값을 채워도 보류 파일에 남아 지문이 계속 매치되어 다시 묻지 않는다.
     assert "configured" in data["pluginConfigs"]
     assert "release" in data["enabledPlugins"]
+
+
+def test_restore_base_gate_covers_both_relpaths():
+    """9.3.7 — restore 경로의 base가 전진하지 않으면 탈출구가 통째로 죽는다.
+
+    backup 쪽 동형은 test_backup_base_gate_covers_both_relpaths가 잡는데, restore 쪽은
+    무가드였다(실측 — 루프를 mcp-servers.json 하나로 줄여도 788개가 전부 통과했다).
+    그렇게 되면 `keep_stale`·`keep_local`·`release` 선택이 base에 반영되지 않아
+    **사용자가 고른 것이 조용히 무효가 된다.**
+    """
+    sec = section("sync-restore", "6. MCP 서버 복원")
+    assert "for rel in plugins.json mcp-servers.json" in sec
+    assert '"$BASE_STAGING" "${RELS[@]}"' in sec
+
+
+# 게이트되는 스크립트 실행줄. `cp`는 자료 복사라 게이트 대상이 아니고, 인라인
+# `python3 -c`·`python3 - <<'PY'`는 스크립트를 부르지 않으므로 둘 다 이 정규식에
+# 걸리지 않는다 — 예외 목록을 따로 두지 않는 근거가 그것이다.
+SCRIPT_CALL = re.compile(r'python3 "?\$SYNC_(?:SCRIPTS|BACKUP_SCRIPTS|LIB)/')
+BASH_BLOCK = re.compile(r"```bash\n(.*?)```", re.S)
+
+
+def script_calls_after_the_check(skill):
+    """호환성 검사 **뒤에** 오는 스크립트 실행줄 전부. 완전성 단정의 진실 원천이다.
+
+    검사와 **같은 블록**에 있는 줄은 세지 않는다 — 한 덩어리로 실행되므로 순서가 이미
+    정해져 있고, 표에 넣어도 새 사실을 말하지 않는다.
+    """
+    text = read_skill(skill)
+    after = index_of(text, COMPAT_CALL, skill)
+    out = []
+    for m in BASH_BLOCK.finditer(text):
+        if m.start(1) <= after <= m.end(1):
+            continue
+        if m.end(1) < after:
+            continue
+        out.extend(line.strip() for line in m.group(1).splitlines()
+                   if SCRIPT_CALL.match(line.strip()))
+    return out
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_before_calls_covers_every_gated_script_call(skill):
+    """`before_calls`가 게이트되는 실행줄을 **전부** 담는지 SKILL.md에서 뽑아 대조한다.
+
+    이 단정이 없으면 표에서 앵커 한 줄을 지워도 아무도 못 잡는다(실측) — "각 항목마다
+    검사"하는 맨 목록은 자기 축소를 탐지할 수 없기 때문이다. 진실 원천을 손으로 쓴
+    목록이 아니라 **SKILL.md의 bash 블록 자체**로 잡아 그 성질을 없앤다
+    (test_every_skill_on_disk_is_covered_by_the_contract와 같은 idiom).
+    """
+    covered = COMPAT_WIRING[skill]["before_calls"]
+    for line in script_calls_after_the_check(skill):
+        assert any(line.startswith(anchor) for anchor in covered), (
+            "%s: 검사 뒤의 실행줄인데 before_calls에 없다 — %r" % (skill, line)
+        )
+
+
+# SKILL.md가 스크립트의 계약을 **어느 키에서 읽는지**까지 적어야 하는 자리. 이 문장이
+# 흐려지면 스킬이 다른 경로로 같은 값을 만들어 내고, 그 순간 결함 B(파서 두 벌)와
+# 인계 계약 ⑶(계획이 지목하지 않은 id에 설정을 채운다 = 실제 흐름이 만들 수 없는 상태)이
+# 되살아난다. 둘 다 예외도 빈 결과도 없이 조용하다.
+SCRIPT_CONTRACT_PHRASES = [
+    ("sync-status", "2. 메타데이터 기반 상태 분석", '`changed_detail[<키>]["local"]`'),
+    ("sync-restore", "5. 플러그인 복원", "**`config_keys`에 실린 키만**"),
+    # 5-6이 **계획이 실제로 내는 버킷**을 가리켜야 한다. 앞 판은 `absent_locally`를
+    # 가리켰는데 그것은 compare_plugins(status)만 내는 필드이고, restore 문맥에서는
+    # 구조적으로 공집합이다(restore_plan이 값 보류 키를 value_held에 넣는 조건이
+    # `name in local`이라 로컬에 값이 없는 키는 add/needs_secret으로 빠진다).
+    ("sync-restore", "5. 플러그인 복원", "`add`/`needs_secret`"),
+]
+
+
+@pytest.mark.parametrize("skill,heading,phrase", SCRIPT_CONTRACT_PHRASES)
+def test_plugin_step_names_the_key_it_reads(skill, heading, phrase):
+    assert phrase in section(skill, heading), (skill, phrase)
+
+
+def test_the_script_contract_table_did_not_shrink():
+    """위 표는 **손으로 고른 목록**이라 대조할 외부 진실 원천이 없다.
+
+    그래서 개수만 함께 건다 — 항목을 지우면 그 계약이 아무 소리 없이 검사에서
+    빠지기 때문이다(실측 — 하나를 지워도 794개가 전부 통과했다). 계약을 더하거나
+    빼는 것은 의도된 행위여야 하고, 그때 이 숫자를 함께 고치는 것이 그 표시다.
+    이 단정이 말하는 것은 그것뿐이다 — 표의 **내용**이 옳은지는 재지 않는다.
+    """
+    assert len(SCRIPT_CONTRACT_PHRASES) == 3
+
+
+# SCRIPT_CALL의 대안 목록이 SKILL.md가 실제로 쓰는 루트 변수를 전부 덮는지 대조한다.
+# 덮지 못하면 그 변수로 부르는 실행줄이 완전성 검사에서 통째로 빠지는데, 빠져도
+# 아무 테스트가 실패하지 않는다(실측). `.py` 경로만 보므로 bootstrap.sh 복사와
+# `$SYNC_ROOT/.claude-plugin/...` 읽기는 자연히 제외된다 — 예외 목록이 필요 없다.
+SCRIPT_PATH_VAR = re.compile(r"\$(SYNC_[A-Z_]+)/[A-Za-z0-9_]+\.py")
+
+
+def test_script_call_pattern_covers_every_root_variable():
+    found = {name for skill in SKILLS for block in bash_blocks(read_skill(skill))
+             for name in SCRIPT_PATH_VAR.findall(block)}
+    assert found, "SKILL.md에서 스크립트 경로 변수를 하나도 못 찾았다 — 정규식이 낡았다"
+    for name in sorted(found):
+        assert SCRIPT_CALL.match('python3 "$%s/x.py"' % name), (
+            "SCRIPT_CALL이 $%s를 덮지 않는다 — 그 변수로 부르는 줄이 완전성 검사에서 빠진다"
+            % name
+        )
