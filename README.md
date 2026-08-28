@@ -95,8 +95,8 @@ claude-sync uses a **content-hash, git-like 3-way reconcile** — modification t
 
 Not synced:
 
-- Marketplace **auto-update settings** (`autoUpdate`) — the CLI has no option to set them
-- **Marketplaces registered from a local directory, and the plugins that belong to them** — another machine has no source to register them from
+- Marketplace **auto-update settings** (`autoUpdate`) — the CLI has no option to set them; edit `~/.claude/settings.json` on each machine if you need them
+- **Marketplaces registered from a local directory, and the plugins that belong to them** — another machine has no source to register them from; run `claude plugin marketplace add` there yourself
 - **Plugins installed automatically as dependencies** — restoring the parent brings them along
 - **Plugins that a marketplace installs through a command** — they cannot be installed inside a session, so your own terminal is needed
 - **The values of version constraints (arrays/objects)** — such a plugin is installed, but the constraint itself is not reproduced on this machine. The repo value is preserved; to give it up, choose "unify on this machine's value" during a restore. **That comes first if you want it gone**
