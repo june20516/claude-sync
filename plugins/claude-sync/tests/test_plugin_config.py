@@ -349,33 +349,62 @@ def test_read_hold_inputs_parses_the_installed_file_once(tmp_path, monkeypatch):
         return real_open(path, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "open", counting_open)
-    auto_ids, installed_ids, held_state, skipped = pc.read_hold_inputs(installed, held)
+    auto_ids, installed_ids, held_state, skipped, degraded = pc.read_hold_inputs(
+        installed, held)
     monkeypatch.undo()
     assert opened.count(installed) == 1
-    # 아래 넷이 비지 않아야 위의 1이 "한 번도 안 열었다"가 아님이 증명된다.
+    # 아래 다섯이 비지 않아야 위의 1이 "한 번도 안 열었다"가 아님이 증명된다.
     assert auto_ids == frozenset({"dep@m"})
     assert installed_ids == frozenset({"dep@m", "manual@m"})
     assert held_state["pluginConfigs"] == {"delta@m": "abc"}
-    assert skipped == {}
+    assert skipped == {} and degraded == {}
 
 
-def test_read_hold_inputs_returns_four_values_and_folds_installed_on_failure(tmp_path):
-    """(auto_ids, installed_ids, held_state, skipped).
+def test_read_hold_inputs_returns_five_values_and_folds_installed_on_failure(tmp_path):
+    """(auto_ids, installed_ids, held_state, skipped, degraded).
 
     **빈 installed_ids가 조용한 fail-open이 아닌 근거는 같은 갈래의 skip이다** —
     enabledPlugins·pluginConfigs 두 섹션이 함께 접히므로 그 값이 쓰이지 않는다.
     접지 않고 전파하면 소비자가 그것을 "아무것도 설치 안 됨"으로 읽어 restore가 전부
     재설치를 시도한다. 정상 갈래를 먼저 재어 빈 집합 단정이 공허하지 않게 한다.
+
+    auto 실패는 **degraded를 만들지 않는다** — 그 갈래가 잃는 값(auto_ids·installed_ids)을
+    읽는 자리는 함께 접힌 두 섹션 안에 전부 있다. degraded가 생기는 것은 그 대응이
+    깨지는 갈래(보류 파일)뿐이고, 아래 held 테스트가 그쪽을 잰다.
     """
     good = write_installed(tmp_path, {"p@m": [{"scope": "user"}]})
     ok = pc.read_hold_inputs(good, str(tmp_path / "none-held.json"))
-    assert len(ok) == 4
-    assert ok[1] == frozenset({"p@m"}) and ok[3] == {}
-    auto_ids, installed_ids, held_state, skipped = pc.read_hold_inputs(
+    assert len(ok) == 5
+    assert ok[1] == frozenset({"p@m"}) and ok[3] == {} and ok[4] == {}
+    auto_ids, installed_ids, held_state, skipped, degraded = pc.read_hold_inputs(
         str(tmp_path / "missing.json"), str(tmp_path / "none-held.json"))
     assert auto_ids == frozenset() and installed_ids == frozenset()
     assert held_state == pc.EMPTY_HELD
     assert sorted(skipped) == ["enabledPlugins", "pluginConfigs"]
+    assert degraded == {}
+
+
+def test_read_hold_inputs_marks_enabled_plugins_degraded_when_held_is_broken(tmp_path):
+    """**접히지 않는 섹션이 잃는 값이 있다** — release가 enabledPlugins의 H3 탈출구다.
+
+    skip 범위는 pluginConfigs 하나 그대로다(그 규정은 의도적으로 고정돼 있다). 대신
+    enabledPlugins에 "판정 불가" 사유가 실려, 그 실행에서 이미 해제한 확장 값 항목이
+    다시 보류되는 이유를 사용자가 읽을 수 있다. 이 값이 없으면 그 사유는
+    pluginConfigs의 reason에만 붙어 enabledPlugins 쪽에서 읽을 수 없다(fail-open).
+
+    **두 문장이 같은 detail을 가리키는지 함께 건다** — 갈리면 사용자가 두 섹션의 사유를
+    서로 다른 사건으로 읽는다.
+    """
+    broken = write_held(tmp_path, "{not json")
+    _a, _i, held_state, skipped, degraded = pc.read_hold_inputs(
+        write_installed(tmp_path, {}), broken)
+    assert held_state == pc.EMPTY_HELD
+    assert sorted(skipped) == ["pluginConfigs"]
+    assert sorted(degraded) == ["enabledPlugins"]
+    assert pc.SKIP_PLUGIN_CONFIGS in skipped["pluginConfigs"]
+    assert pc.DEGRADED_RELEASE in degraded["enabledPlugins"]
+    assert "파싱 실패" in degraded["enabledPlugins"]
+    assert broken in degraded["enabledPlugins"]
 
 
 # --- 6.4 보류 상태 파일 ---

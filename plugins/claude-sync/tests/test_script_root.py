@@ -909,6 +909,28 @@ def test_plugin_step_reads_the_per_section_status_separately(skill):
         assert wording in sec, (skill, wording)
 
 
+# skip이 **아닌** 갈래. 보류 파일을 읽지 못한 실행에서 pluginConfigs만 접히는데
+# enabledPlugins는 H3의 해제 기록을 함께 잃는다 — 그 섹션은 status가 "ok"이므로 skip
+# 분기로는 절대 렌더링되지 않고, 이 문단이 없으면 **왜 해제가 되돌아갔는지가 사용자에게
+# 도달할 경로가 없다.** 스크립트가 필드를 싣고만 있으므로 여기가 그 유일한 경로다.
+DEGRADED_KEY = "`degraded_reason`"
+DEGRADED_WORDING = ("다시 보류", "함께 알린다")
+
+
+@pytest.mark.parametrize("skill", sorted(PLUGIN_STEP))
+def test_plugin_step_reports_the_degraded_reason_of_a_section_it_kept(skill):
+    """`status`가 "ok"인 섹션에도 실릴 수 있는 사유를 세 스킬이 함께 알려야 한다.
+
+    키 이름만 걸면 "이 필드는 무시해도 된다"로 뒤집어도 통과한다(PER_SECTION_WORDING과
+    같은 형태의 실측). 뒤집으면 반드시 사라지는 어휘를 함께 건다.
+    """
+    assert len(DEGRADED_WORDING) == 2
+    sec = PLUGIN_STEP[skill]()
+    assert DEGRADED_KEY in sec, skill
+    for wording in DEGRADED_WORDING:
+        assert wording in sec, (skill, wording)
+
+
 def test_status_reports_plugin_sections_through_the_new_script():
     """결함 B — check_status.py의 키 집합 비교를 지우고 새 스크립트를 부른다."""
     sec = PLUGIN_STEP["sync-status"]()
@@ -1151,6 +1173,11 @@ SCRIPT_CONTRACT_PHRASES = [
     # 사용자에게 닿는 유일한 경로**다. 지워지면 남는 문장은 전부 참인데(absent_locally
     # 불릿이 "이 목록 자체는 미설치가 아니다"라고만 말한다) 구별을 말할 자리가 없어진다.
     ("sync-status", "`not_installed` — `absent_locally` 중"),
+    # `unrestorable`은 `only_repo`에서 뽑히지 않는다 — restore가 새 항목으로 훑는
+    # 집합에서 뽑으므로 값 보류(H3) + 레포 전용 키도 담는다. 이 문장이 없으면 소비자가
+    # `only_repo` 밑에서만 "복원할 수 없습니다"를 붙이고, 그 키에는 `not_installed`의
+    # "restore가 설치합니다"가 그대로 나간다(spec 9.2가 금지한 문구).
+    ("sync-status", "**`only_repo`의 부분집합이 아니다**"),
     ("sync-restore", "**`config_keys`에 실린 키만**"),
     # 5-6이 **계획이 실제로 내는 버킷**을 가리켜야 한다. 앞 판은 `absent_locally`를
     # 가리켰는데 그것은 compare_plugins(status)만 내는 필드이고, restore 문맥에서는
@@ -1173,7 +1200,7 @@ def test_the_script_contract_table_did_not_shrink():
     빼는 것은 의도된 행위여야 하고, 그때 이 숫자를 함께 고치는 것이 그 표시다.
     이 단정이 말하는 것은 그것뿐이다 — 표의 **내용**이 옳은지는 재지 않는다.
     """
-    assert len(SCRIPT_CONTRACT_PHRASES) == 4
+    assert len(SCRIPT_CONTRACT_PHRASES) == 5
 
 
 # SCRIPT_CALL의 대안 목록이 SKILL.md가 실제로 쓰는 루트 변수를 전부 덮는지 대조한다.

@@ -19,7 +19,9 @@ installed_plugins.json을 값의 원천으로 삼지 않는 이유는 그것이 
   LocalConfigUnavailable   전체 skip (settings.json = 세 섹션 값의 유일한 원천)
   UnknownBackupSchema      전체 skip (레포 문서를 알아볼 수 없다)
   AutoFlagsUnavailable     enabledPlugins·pluginConfigs만 skip, marketplaces는 진행
-  HeldStateUnavailable     pluginConfigs만 skip
+  HeldStateUnavailable     pluginConfigs만 skip. **enabledPlugins는 접히지 않지만**
+                           H3의 release 탈출구를 함께 잃으므로 그 섹션 보고에
+                           degraded_reason이 붙는다(skip이 아니라 "판정 불가")
 
 **이 네 예외를 공통 기반 클래스로 묶지 말 것.** `except PluginReadUnavailable` 한 줄로
 전부 잡히면 위의 부분 skip 규정이 조용히 전체 skip으로 바뀐다 — auto를 못 읽었을 뿐인데
@@ -68,6 +70,13 @@ SKIP_ALL = "플러그인 단계 전체를 건너뛴다"
 SKIP_AUTO_SECTIONS = "enabledPlugins·pluginConfigs를 건너뛴다"
 SKIP_PLUGIN_CONFIGS = "pluginConfigs를 건너뛴다"
 
+# **skip이 아닌 꼬리다.** 보류 파일을 읽지 못한 실행에서 그 파일의 release 항목도 함께
+# 사라지는데, release를 읽는 자리(H3)는 **접히지 않는** enabledPlugins에 있다. 그 섹션은
+# 계속 진행하되 "보류 없음"이 아니라 "판정 불가"로 다뤄야 하므로 사유를 함께 싣는다.
+# 방향은 보수적이다(해제가 사라져 **다시 보류**되는 쪽) — 값이 파괴되지는 않는다.
+DEGRADED_RELEASE = ("enabledPlugins는 계속 진행하지만 release 판정 불가"
+                    " — 이미 해제한 확장 값 항목이 이번 실행에서 다시 보류될 수 있다")
+
 # 코어의 예외를 그대로 re-export한다. 클래스가 두 벌이 되면 스크립트의 except 튜플이
 # 갈라지고, 갱신을 잊으면 traceback으로 죽어 결함 C가 되살아난다.
 LocalConfigUnavailable = ks.LocalConfigUnavailable
@@ -89,6 +98,11 @@ class HeldStateUnavailable(Exception):
 
     **파일 부재는 이 예외가 아니다** — 보류 없음이 첫 실행의 정상 상태다.
     이 예외는 pluginConfigs 한 섹션만 skip하는 근거다.
+
+    **skip 범위와 실효 범위가 다르다.** 이 파일이 담는 release 항목은 H3의 탈출구인데
+    H3가 걸리는 곳은 **접히지 않는** enabledPlugins다. 그래서 이 예외에는
+    `degraded_reason` 속성이 붙는다 — 그 섹션에 실어 "release 판정 불가"를 알리기
+    위한 문장이고, read_held_state가 skip 문구와 **같은 자리에서** 만든다.
     """
 
 
@@ -290,47 +304,57 @@ def read_held_state(held_path=None):
     이 파일의 **소유자는 plan_plugins.py apply-base 하나뿐이다.** 다른 스크립트는 읽기만 한다.
     """
     path = DEFAULT_HELD if held_path is None else held_path
+
+    def unreadable(detail):
+        # **한 실패가 두 섹션에 다른 뜻을 갖는다** — pluginConfigs는 접히고,
+        # enabledPlugins는 접히지 않은 채 release 탈출구만 잃는다(위 클래스 docstring).
+        # 두 문장을 같은 자리에서 만들어 "무엇을 읽지 못했는가"가 양쪽에서 같은 detail을
+        # 가리키게 한다. 갈리면 사용자가 두 섹션의 사유를 서로 다른 사건으로 읽는다.
+        error = HeldStateUnavailable("%s: %s — %s" % (path, detail, SKIP_PLUGIN_CONFIGS))
+        error.degraded_reason = "%s: %s — %s" % (path, detail, DEGRADED_RELEASE)
+        return error
+
     try:
         with open(path, "rb") as f:
             data = json.loads(f.read())
     except FileNotFoundError:
         return copy.deepcopy(EMPTY_HELD)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise HeldStateUnavailable(
-            "%s: 파싱 실패(%s) — %s" % (path, e, SKIP_PLUGIN_CONFIGS)) from e
+        raise unreadable("파싱 실패(%s)" % e) from e
     if not isinstance(data, dict):
-        raise HeldStateUnavailable("%s: 최상위가 객체가 아님(%s) — %s"
-                                   % (path, type(data).__name__, SKIP_PLUGIN_CONFIGS))
+        raise unreadable("최상위가 객체가 아님(%s)" % type(data).__name__)
     if ks.claims_newer_schema(data.get("version"), HELD_SCHEMA_VERSION):
-        raise HeldStateUnavailable("%s: 상위 버전 주장(version=%r) — %s"
-                                   % (path, data.get("version"), SKIP_PLUGIN_CONFIGS))
+        raise unreadable("상위 버전 주장(version=%r)" % data.get("version"))
     configs = data.get("pluginConfigs", {})
     if not isinstance(configs, dict) or not all(
             isinstance(v, str) for v in configs.values()):
-        raise HeldStateUnavailable("%s: pluginConfigs가 {id: 지문} 형태가 아님 — %s"
-                                   % (path, SKIP_PLUGIN_CONFIGS))
+        raise unreadable("pluginConfigs가 {id: 지문} 형태가 아님")
     release = data.get("release", {})
     if not isinstance(release, dict):
-        raise HeldStateUnavailable("%s: release가 객체가 아님(%s) — %s"
-                                   % (path, type(release).__name__, SKIP_PLUGIN_CONFIGS))
+        raise unreadable("release가 객체가 아님(%s)" % type(release).__name__)
     released = release.get("enabledPlugins", [])
     if not isinstance(released, list) or not all(isinstance(v, str) for v in released):
-        raise HeldStateUnavailable("%s: release.enabledPlugins가 문자열 배열이 아님 — %s"
-                                   % (path, SKIP_PLUGIN_CONFIGS))
+        raise unreadable("release.enabledPlugins가 문자열 배열이 아님")
     return {"pluginConfigs": dict(configs),
             "release": {"enabledPlugins": list(released)}}
 
 
 def read_hold_inputs(installed_path=None, held_path=None):
-    """auto·설치 집합과 보류 상태를 읽고, 실패에 대응하는 **섹션 skip 사유**를 함께 돌려준다.
+    """auto·설치 집합과 보류 상태를 읽고, 실패에 대응하는 **섹션별 사유**를 함께 돌려준다.
 
-    반환: (auto_ids, installed_ids, held_state, {섹션: 사유})
+    반환: (auto_ids, installed_ids, held_state, {섹션: skip 사유}, {섹션: 판정 불가 사유})
 
     두 실패는 범위가 다르다(spec 9.1.2·9.3.6):
-      installed_plugins.json 판정 불가 → enabledPlugins·pluginConfigs 두 섹션
-      plugins-held.json 깨짐          → pluginConfigs 한 섹션
+      installed_plugins.json 판정 불가 → enabledPlugins·pluginConfigs 두 섹션 skip
+      plugins-held.json 깨짐          → pluginConfigs 한 섹션 skip
+                                      + enabledPlugins는 진행하되 **판정 불가**로 표시
     어느 쪽도 전체 skip이 아니다 — extraKnownMarketplaces는 auto와도 보류 파일과도
     무관하므로 계속 진행한다.
+
+    **다섯째 반환값이 skip과 다른 층이다.** 그 섹션은 접히지 않으므로 보고에
+    skipped_section이 아니라 with_degraded로 사유만 얹는다. 두 dict를 합치면 진행한
+    섹션이 접힌 것으로 렌더링되고, 반대로 다섯째를 버리면 그 섹션이 왜 다르게
+    판정됐는지가 **어디에서도 읽히지 않는다** — 그것이 이 항목이 생긴 이유다.
 
     **이 함수를 스크립트마다 다시 짜지 않는다.** 범위가 갈리면 backup은 두 섹션을 접는데
     restore는 안 접는 상태가 생기고, 그 비대칭은 예외 종류가 같아 보여 흔적을 남기지 않는다.
@@ -338,19 +362,36 @@ def read_hold_inputs(installed_path=None, held_path=None):
     실패한 쪽의 값은 "보류 없음"으로 채우지만 **그 섹션은 어차피 skip되므로 쓰이지
     않는다.** 채우는 이유는 나머지 섹션의 훅을 만들 수 있게 하기 위해서다.
 
-    **installed_ids도 같은 갈래에서 빈 frozenset으로 접는다.** 빈 집합 자체는 위험한
-    값이다 — 소비자가 그것을 "아무것도 설치 안 됨"으로 읽으면 restore가 이미 설치된
-    플러그인 전부에 bare install을 내어 exit 1의 거짓 실패를 양산한다(9.3.1의 2단계).
-    **그런데도 접는 것이 옳은 근거는 그 값을 읽는 자리가 전부 함께 접힌 두 섹션 안에
-    있다는 것이다** — compare_plugins의 설치 구별은 enabledPlugins·pluginConfigs에만
-    실리고, plan_plugins의 2단계/4단계 분리는 그 두 섹션의 버킷에서만 후보를 모은다.
-    **그 대응이 깨지면 이 접힘이 곧 fail-open이 된다** — 설치 집합을 읽는 자리를 늘릴
-    때는 그 자리가 이 skip 범위 안에 있는지 먼저 확인할 것.
+    **접는 값 × 그 값을 읽는 섹션의 전수 표.** 실패 갈래마다 "보류 없음"으로 채우는
+    값이 있고, 그 값을 읽는 자리가 **함께 접힌 섹션 안에 없으면 그 접힘이 곧
+    fail-open이 된다.** 표에 없는 값을 새로 접을 때는 이 열거부터 늘릴 것 —
+    한 줄을 세다 말아서 아래 셋째 행이 실제로 fail-open이었다.
+
+      접는 값                          읽는 자리                        접힌 섹션 안인가
+      auto_ids = frozenset()           _make_hold의 H1 / held_kinds     예(두 섹션)
+      installed_ids = frozenset()      compare의 설치 구별, plan의       예(두 섹션)
+                                       2단계/4단계 분리
+      held_state["pluginConfigs"]      _make_hold의 H4 / held_kinds     예(pluginConfigs)
+      held_state["release"]            build_hooks의 released → H3      **아니다**
+
+    빈 installed_ids는 그 자체로 위험한 값이다 — 소비자가 "아무것도 설치 안 됨"으로
+    읽으면 restore가 이미 설치된 플러그인 전부에 bare install을 내어 exit 1의 거짓
+    실패를 양산한다(9.3.1의 2단계). 접어도 되는 근거는 위 표의 셋째 열뿐이다.
+    설치 집합을 읽는 자리를 늘릴 때는 그 자리가 skip 범위 안인지 먼저 확인할 것.
+
+    **넷째 행이 "아니다"라서 다섯째 반환값이 있다.** release를 잃으면 H3가 걸리는
+    enabledPlugins가 접히지 않은 채 "해제 없음"으로 계산된다 — 이미 해제한 확장 값
+    항목이 다시 보류되고, push되어야 할 로컬 값이 push되지 않으며 base에서도 그 키가
+    빠진다(실측). 보수적인 방향이라 값이 파괴되지는 않지만, **왜 그렇게 됐는지가
+    pluginConfigs의 사유에만 붙어 그 섹션에서는 읽을 수 없었다.** 여기서 degraded로
+    실어 그 섹션의 보고에 붙인다. release도 함께 접는 쪽(enabledPlugins까지 skip)은
+    범위를 넓히는 변경이라 채택하지 않았다 — 마켓플레이스 등록처럼 멀쩡히 낼 수 있는
+    단계까지 함께 버리게 되고, 위 두 줄의 skip 범위 규정이 의도적으로 고정돼 있다.
 
     PermissionError 등 그 외 OSError는 두 읽기 함수와 마찬가지로 전파한다 — 여기서
     삼키면 "읽을 수 없음"이 "auto 없음·보류 없음"으로 접혀 N6의 입구가 열린다.
     """
-    skipped = {}
+    skipped, degraded = {}, {}
     try:
         auto_ids, installed_ids = read_installed(installed_path)
     except AutoFlagsUnavailable as e:
@@ -365,7 +406,11 @@ def read_hold_inputs(installed_path=None, held_path=None):
         # 덮으면 사용자가 보는 reason이 "보류 파일이 깨졌다"뿐이라, 정작 enabledPlugins도
         # 함께 접힌 이유(auto 판정 불가)를 어디에서도 읽을 수 없게 된다.
         skipped.setdefault("pluginConfigs", str(e))
-    return auto_ids, installed_ids, held_state, skipped
+        # 접히지 않는 섹션이 잃은 것(release)을 그 섹션에 실어 보낸다. enabledPlugins가
+        # auto 실패로 이미 접혔다면 스크립트가 skipped를 먼저 보므로 이 사유는 쓰이지
+        # 않는다 — 여기서 조건을 두면 같은 우선순위를 두 곳에서 정하게 된다.
+        degraded["enabledPlugins"] = e.degraded_reason
+    return auto_ids, installed_ids, held_state, skipped, degraded
 
 
 def skipped_section(reason):
@@ -384,6 +429,22 @@ def skipped_section(reason):
     공유하는 모양이 오히려 두 곳에서 정의된다. 여기가 정하는 것은 **섹션 층위 하나**다.
     """
     return {"status": "skipped", "reason": reason}
+
+
+def with_degraded(entry, reason):
+    """접지 **않은** 섹션 보고에 "판정 불가" 사유를 얹는다. 사유가 없으면 그대로 둔다.
+
+    skipped_section과 같은 층위의 짝이지만 뜻이 반대다 — 그쪽은 접은 섹션의 보고이고
+    이쪽은 **진행한** 섹션에 붙는 경고이므로 status는 "ok"로 남는다. 네 자리(collect·
+    compare·plan의 두 갈래)가 같은 모양을 손으로 쓰지 않게 한 번만 정한다.
+
+    **키 이름을 reason과 가르는 것이 계약이다**(base_staging_reason과 같은 근거).
+    세 SKILL.md가 `reason`을 "그 섹션을 건너뛰었다"의 분기에서 읽으므로, 같은 이름을
+    쓰면 정상 처리된 섹션이 접힌 것으로 렌더링된다.
+    """
+    if reason is not None:
+        entry["degraded_reason"] = reason
+    return entry
 
 
 # ---------------------------------------------------------------- 인식 계층 (4.4)
@@ -1021,6 +1082,26 @@ def value_held_for(section, hooks, local, repo):
     normalize = hooks[section]["normalize"]
     held = hooks[section]["hold"](normalize(local), normalize(repo))
     return frozenset(held["value"])
+
+
+def route_new_for(section, hooks, local, repo):
+    """**restore가 새 항목으로 훑는 키.** 복원 가능성을 묻는 자리는 이것을 훑는다.
+
+    value_held_for와 **같은 층위의 짝**이다 — 코어에 넘길 훅과 인자를 어댑터가 한 번만
+    조립하고, 조립의 함정도 같다(hold는 정규화된 입력을 받고 (local, repo) 순서가
+    뒤집히면 예외도 빈 결과도 없이 판정이 반대로 선다). 코어의 ks.route_new_keys가
+    restore_plan과 **같은 _route_new_names**를 부르므로, 이것을 부르는 소비자는
+    restore와 정의상 같은 집합을 본다.
+
+    **ks.diff의 only_repo를 대신 훑으면 갈린다.** 그쪽은 값 보류 키를 세 버킷 어디에도
+    넣지 않으므로, H3(확장 값) 보류이면서 로컬에 값이 없는 레포 전용 키가 빠진다.
+    그 키를 restore는 `unrestorable`로 보고하는데 status는 "미설치 → restore가 설치"로
+    보고하게 된다 — 같은 기기에서 같은 키를 두고 두 스킬이 반대로 말하고, **예외도 빈
+    결과도 나지 않는다.** H1·H2는 행동 보류이기도 해서 이 갈래에 오지 않으므로 갈리는
+    것은 H3 하나뿐이고, 그래서 더 조용하다.
+    """
+    return ks.route_new_keys(local, repo, normalize=hooks[section]["normalize"],
+                             hold=hooks[section]["hold"])
 
 
 # ------------------------------------- 선택 반영 (9.3.7)·보류 기록 (6.4·7.3)

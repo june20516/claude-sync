@@ -42,8 +42,11 @@ INSTALL_BUCKETS = ("add", "needs_secret")
 REGISTER_BUCKETS = ("add", "needs_secret")
 
 
-def _plan_sections(local, repo, base, hooks, skipped):
-    """섹션별 restore_plan. skipped 섹션은 계획을 내지 않는다."""
+def _plan_sections(local, repo, base, hooks, skipped, degraded):
+    """섹션별 restore_plan. skipped 섹션은 계획을 내지 않는다.
+
+    degraded는 **접지 않은** 섹션에 얹는 "판정 불가" 사유다(with_degraded).
+    """
     out = {}
     for section in pc.SECTIONS:
         if section in skipped:
@@ -56,7 +59,7 @@ def _plan_sections(local, repo, base, hooks, skipped):
             restorable=hooks[section]["restorable"],
             secret_keys=hooks[section]["secret_keys"])
         plan["status"] = "ok"
-        out[section] = plan
+        out[section] = pc.with_degraded(plan, degraded.get(section))
     return out
 
 
@@ -134,10 +137,10 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)
     base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
-    auto_ids, installed_ids, held_state, skipped = pc.read_hold_inputs(
+    auto_ids, installed_ids, held_state, skipped, degraded = pc.read_hold_inputs(
         installed_path, held_path)
     hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=held_state)
-    sections = _plan_sections(local, repo, base, hooks, skipped)
+    sections = _plan_sections(local, repo, base, hooks, skipped, degraded)
 
     masked = {section: hooks[section]["normalize"](repo[section])
               for section in pc.SECTIONS}
@@ -263,7 +266,8 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     }
 
 
-def _next_base_sections(local, repo, base, hooks, skipped, choices, next_held):
+def _next_base_sections(local, repo, base, hooks, skipped, degraded, choices,
+                        next_held):
     """섹션별 다음 base와 그 보고. _plan_sections와 **같은 층위의 짝**이다.
 
     앞의 다섯 인자는 _plan_sections와 같고, 뒤의 둘만 base 경로에만 있는 입력이다 —
@@ -336,8 +340,9 @@ def _next_base_sections(local, repo, base, hooks, skipped, choices, next_held):
                 nb[key] = masked[key]
                 kept_local.append(key)
         doc[section] = nb
-        report[section] = {"status": "ok", "kept_stale": stale, "kept_local": kept_local,
-                           "base_keys": sorted(nb)}
+        report[section] = pc.with_degraded(
+            {"status": "ok", "kept_stale": stale, "kept_local": kept_local,
+             "base_keys": sorted(nb)}, degraded.get(section))
     return doc, report
 
 
@@ -380,7 +385,7 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
     base = pc.parse_base(ss.read_base(pc.BACKUP_RELPATH, base_dir=base_dir))
     # installed_ids는 쓰지 않는다 — base 계산은 "이 기기에 설치돼 있는가"를 묻지 않는다.
     # 다음 base는 복원 후 로컬 값과 레포 값의 일치로만 전진한다(_next_base_sections).
-    auto_ids, _installed_ids, held_state, skipped = pc.read_hold_inputs(
+    auto_ids, _installed_ids, held_state, skipped, degraded = pc.read_hold_inputs(
         installed_path, held_path)
 
     # **이번 실행의** 보류 상태로 훅을 만든다. 이것이 실제로 결과를 가르는 곳은 H4다 —
@@ -393,8 +398,8 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
     next_held = pc.next_held_state(held_state, pc.normalized_sections(repo), choices)
     hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=next_held)
 
-    doc, report = _next_base_sections(local, repo, base, hooks, skipped, choices,
-                                      next_held)
+    doc, report = _next_base_sections(local, repo, base, hooks, skipped, degraded,
+                                      choices, next_held)
 
     os.makedirs(staging_dir, exist_ok=True)
     pc.dump_backup(doc, os.path.join(staging_dir, pc.BACKUP_RELPATH))

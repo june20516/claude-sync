@@ -675,6 +675,62 @@ def test_restore_plan_buckets_are_exact_not_membership():
     assert plan["action_held"] == []
 
 
+def test_route_new_keys_gives_hold_normalized_local_and_repo_in_that_order():
+    """hold는 정규화된 입력을 (local, repo) 순서로 정확히 한 번 받는다(훅 계약).
+
+    이 함수의 hold는 **행동 축만** 본다. 순서가 뒤집히면 로컬 전용 키가 "새 항목"으로
+    올라가는데 예외도 빈 결과도 나지 않는다.
+    """
+    seen = []
+    ks.route_new_keys({"a": "x "}, {"b": " y"},
+                      normalize=trim_whitespace, hold=recording_hold(seen))
+    assert seen == [({"a": "x"}, {"b": "y"})]
+
+
+def test_route_new_keys_matches_the_three_restore_plan_buckets():
+    """`add` + `needs_secret` + `unrestorable`과 **정확히 같은 집합**이어야 한다.
+
+    두 곳이 각자 만들면 갈리고, 갈려도 증상이 없다 — 한쪽 소비자는 "설치한다"고,
+    다른 쪽은 "복원 불가"라고 말하게 된다. 픽스처가 세 버킷을 **동시에** 비어 있지
+    않게 만드는 것이 요점이다: 하나만 채우면 두 버킷을 빠뜨리는 변조가 통과한다.
+    값 보류 키(`vheld`)와 행동 보류 키(`aheld`)를 함께 두는 것도 같은 이유다 —
+    전자는 이 집합에 **들어와야** 하고 후자는 **빠져야** 한다.
+    """
+    local = {"mine": 1, "both": 1, "vlocal": 1}
+    repo = {"ok": 1, "sec": 2, "bad": 3, "both": 9, "vheld": 4, "aheld": 5,
+            "vlocal": 7}
+    hooks = dict(normalize=lambda m: m,
+                 hold=hold_keys(value=("vheld", "vlocal"), action=("aheld",)))
+    plan = ks.restore_plan(local, repo, {}, restorable=lambda k, v: k != "bad",
+                           secret_keys=lambda v: ["k"] if v == 2 else [], **hooks)
+    assert ks.route_new_keys(local, repo, **hooks) == sorted(
+        plan["add"] + plan["needs_secret"] + plan["unrestorable"])
+    # 픽스처가 실제로 셋을 다 채우는지 함께 건다 — 채우지 못하면 위 등호가 공허해진다.
+    assert plan["add"] == ["ok", "vheld"]
+    assert plan["needs_secret"] == ["sec"] and plan["unrestorable"] == ["bad"]
+    assert plan["action_held"] == ["aheld"] and plan["value_held"] == ["vlocal"]
+
+
+def test_route_new_keys_is_not_the_only_repo_of_diff():
+    """diff의 only_repo와 **다른 집합**이다 — 값 보류 키에서 갈린다.
+
+    두 집합을 같다고 읽는 소비자는 H3 보류 + 레포 전용 키를 복원 가능성 판정에서
+    빠뜨린다. 이 줄이 그 차이를 명시적으로 고정한다(양쪽을 같게 만드는 변조를 잡는다).
+    """
+    local, repo = {}, {"vheld": 1, "plain": 2}
+    hooks = dict(normalize=lambda m: m, hold=hold_keys(value=("vheld",)))
+    assert ks.diff(local, repo, **hooks)["only_repo"] == ["plain"]
+    assert ks.route_new_keys(local, repo, **hooks) == ["plain", "vheld"]
+
+
+def test_route_new_keys_rejects_normalize_that_drops_keys():
+    """코어의 키 보존 집행을 이 진입점도 받는다 — 빠지면 값 무관 계약에 구멍이 난다."""
+    with pytest.raises(ValueError):
+        ks.route_new_keys({"a": 1, "b": 1}, {"a": 1},
+                          normalize=lambda m: {k: v for k, v in m.items() if k != "b"},
+                          hold=ks.no_hold)
+
+
 HOLD_CONSUMER = re.compile(r"^def (\w+)\((.*?)\):\s*$", re.M | re.S)
 HOLD_TEST = "def test_%s_gives_hold_normalized_local_and_repo_in_that_order("
 

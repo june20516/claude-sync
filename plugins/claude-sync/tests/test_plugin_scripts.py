@@ -202,12 +202,21 @@ def test_skipped_section_passes_the_previous_base_through(tmp_path):
 
 
 def test_collect_skips_only_plugin_configs_when_held_file_is_broken(tmp_path):
-    """6.4 — 없음은 정상이고 깨짐은 한 섹션만 skip이다."""
+    """6.4 — 없음은 정상이고 깨짐은 한 섹션만 skip이다.
+
+    **범위만 재면 절반이다.** 접히지 않은 enabledPlugins도 그 파일의 release를 함께
+    잃으므로, 그 섹션이 실제로 판정을 냈는지(내용)와 무엇을 잃었는지(사유)를 함께 잰다 —
+    범위만 재던 판에서는 release 손실이 무증상이었다.
+    """
     held = tmp_path / "plugins-held.json"
     held.write_text("{not json", encoding="utf-8")
     out = collect(tmp_path, local={"enabledPlugins": {"p@m": True}}, held=str(held))
     assert out["sections"]["pluginConfigs"]["status"] == "skipped"
-    assert out["sections"]["enabledPlugins"]["status"] == "ok"
+    plugins = out["sections"]["enabledPlugins"]
+    assert plugins["status"] == "ok"
+    # 접히지 않았다는 것을 **내용으로** 확인한다 — 병합이 실제로 돌아 레포에 실렸다.
+    assert repo_doc(write_repo(tmp_path))["enabledPlugins"] == {"p@m": True}
+    assert pc.DEGRADED_RELEASE in plugins["degraded_reason"]
 
 
 def test_auto_failure_reason_is_not_overwritten_by_the_held_failure(tmp_path):
@@ -953,13 +962,54 @@ def test_compare_skips_sections_the_same_way_backup_does(tmp_path):
 
 
 def test_compare_skips_only_plugin_configs_when_the_held_file_is_broken(tmp_path):
-    """6.4 — 없음은 정상이고 깨짐은 한 섹션만 skip이다."""
+    """6.4 — 없음은 정상이고 깨짐은 한 섹션만 skip이다.
+
+    collect 쪽과 같은 이유로 **내용과 사유를 함께 잰다**(범위만 재면 절반이다).
+    """
     held = tmp_path / "plugins-held.json"
     held.write_text("{not json", encoding="utf-8")
     out = compare(tmp_path, local={"enabledPlugins": {"p@m": True}}, held=str(held))
     assert out["sections"]["pluginConfigs"]["status"] == "skipped"
     assert out["sections"]["pluginConfigs"]["reason"]
-    assert out["sections"]["enabledPlugins"]["status"] == "ok"
+    plugins = out["sections"]["enabledPlugins"]
+    assert plugins["status"] == "ok"
+    assert plugins["only_local"] == ["p@m"]        # 비교가 실제로 수행됐다
+    assert pc.DEGRADED_RELEASE in plugins["degraded_reason"]
+    # 접힌 섹션의 사유와 **같은 사건**을 가리킨다.
+    assert str(held) in plugins["degraded_reason"]
+
+
+@pytest.mark.parametrize("runner", ["collect", "compare"])
+def test_a_broken_held_file_reholds_released_keys_and_says_why(tmp_path, runner):
+    """**접히지 않는 섹션이 조용히 되돌아가는 것을 막는다.**
+
+    보류 파일에는 H3의 탈출구(`release`)가 들어 있는데 그 파일을 읽지 못하면
+    `EMPTY_HELD`로 접힌다. 그런데 release를 읽는 자리(build_hooks → H3)는 **접히지 않는**
+    enabledPlugins에 있어, 이미 해제한 확장 값 항목이 그 실행에서 다시 보류된다 —
+    push되어야 할 로컬 값이 push되지 않고 base에서도 그 키가 빠진다(실측).
+
+    방향은 보수적이라 값이 파괴되지는 않지만, **왜 그렇게 됐는지**가 pluginConfigs의
+    reason에만 붙어 이 섹션에서는 읽을 수 없었다. 정상 held와 깨진 held를 나란히 재어
+    ⑴ 판정이 실제로 뒤집히고 ⑵ 그 사유가 이 섹션에 실리는 것을 함께 건다.
+    """
+    run = {"collect": collect, "compare": compare}[runner]
+    fixture = dict(local={"enabledPlugins": {"foo@m": True}},
+                   repo={"enabledPlugins": {"foo@m": {"version": "1.0"}},
+                         "extraKnownMarketplaces": {"m": GH}})
+    good = tmp_path / "plugins-held.json"
+    good.write_text(json.dumps({"version": 1, "pluginConfigs": {},
+                                "release": {"enabledPlugins": ["foo@m"]}}),
+                    encoding="utf-8")
+    released = run(tmp_path, held=str(good), **fixture)["sections"]["enabledPlugins"]
+    assert released["held"]["extended_value"] == []       # 탈출구가 살아 있다
+    assert "degraded_reason" not in released
+
+    broken = tmp_path / "broken-held.json"
+    broken.write_text("{not json", encoding="utf-8")
+    reheld = run(tmp_path, held=str(broken), **fixture)["sections"]["enabledPlugins"]
+    assert reheld["status"] == "ok"
+    assert reheld["held"]["extended_value"] == ["foo@m"]   # 해제가 되돌아갔다
+    assert pc.DEGRADED_RELEASE in reheld["degraded_reason"]
 
 
 @pytest.mark.parametrize("broken", ["installed", "held"])
@@ -1547,6 +1597,50 @@ def test_unrestorable_reason_and_the_verdict_read_the_same_repo(tmp_path):
                      repo={"enabledPlugins": {"p@m": True}})
     assert out["sections"]["enabledPlugins"]["unrestorable"] == ["p@m"]
     assert "소스가 없" in out["unrestorable_reasons"]["p@m"]
+
+
+def test_status_and_restore_agree_on_which_keys_are_unrestorable(tmp_path):
+    """**같은 fixture에서 두 스크립트의 `unrestorable`이 섹션마다 같은 집합이어야 한다.**
+
+    갈렸던 자리는 값 보류다 — `compare_plugins`가 `ks.diff`의 `only_repo`(값 보류 제외)를
+    훑고 `plan_plugins`가 `ks.restore_plan`의 버킷(값 보류 포함)에서 뽑아, H3(확장 값)
+    보류이면서 레포 전용인 키에서 status는 "미설치 → restore가 설치"로, restore는
+    "복원 불가"로 보고했다. **예외도 빈 결과도 나지 않아 증상이 전혀 없었다.**
+
+    이 fixture가 그 갈래에 실제로 닿는지를 함께 건다 — `held.extended_value`가 비면
+    아래 등호는 H3를 한 번도 지나지 않고 참이 된다(다섯째 축).
+    H1·H2는 행동 보류이기도 해 restore가 `action_held`로 보내므로 이 갈래에 오지 않는다.
+    """
+    fixture = dict(
+        local={},
+        # h3@nowhere  확장 값(H3 보류) + 레포 전용 + 마켓플레이스 소스 없음 → 복원 불가
+        # plain@nowhere 보류가 아닌 레포 전용 + 소스 없음 → 복원 불가(대조군)
+        # ok@known    소스가 있어 복원 가능 → 어느 목록에도 없어야 한다
+        repo={"enabledPlugins": {"h3@nowhere": {"version": "1.2"},
+                                 "plain@nowhere": True,
+                                 "ok@known": True},
+              "extraKnownMarketplaces": {"known": GH}})
+    status = compare(tmp_path, **fixture)["sections"]
+    plan = build_plan(tmp_path, **fixture)["sections"]
+    assert status["enabledPlugins"]["held"]["extended_value"] == ["h3@nowhere"]
+    for section in pc.SECTIONS:
+        assert status[section]["unrestorable"] == plan[section]["unrestorable"], section
+    assert status["enabledPlugins"]["unrestorable"] == ["h3@nowhere", "plain@nowhere"]
+
+
+def test_compare_marks_a_held_repo_only_entry_unrestorable(tmp_path):
+    """값 보류 키가 `only_repo`에서 빠지는 것과 복원 가능성 판정은 **다른 질문**이다.
+
+    이 항목은 `only_repo`에 없고 `held.extended_value`·`not_installed`에만 뜨는데,
+    restore는 그것을 설치 대상으로 훑다가 `unrestorable`로 접는다. 그 사실이 status에
+    없으면 사용자는 "restore가 설치합니다"만 듣는다(spec 9.2가 금지한 문구).
+    """
+    out = compare(tmp_path, local={},
+                  repo={"enabledPlugins": {"h3@nowhere": {"version": "1.2"}}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["only_repo"] == []                    # 값 보류라 세 버킷에 없다
+    assert section["not_installed"] == ["h3@nowhere"]
+    assert section["unrestorable"] == ["h3@nowhere"]
 
 
 def test_plan_gives_reasons_for_unrestorable_marketplaces(tmp_path):

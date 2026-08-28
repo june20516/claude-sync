@@ -68,7 +68,7 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
 
     # installed_ids는 쓰지 않는다 — backup은 "이 기기에 설치돼 있는가"를 묻지 않는다.
     # 그 질문이 필요한 곳은 restore의 2단계/4단계와 status의 설치 구별 둘뿐이다(9.3.1).
-    auto_ids, _installed_ids, held_state, skipped = pc.read_hold_inputs(
+    auto_ids, _installed_ids, held_state, skipped, degraded = pc.read_hold_inputs(
         installed_path, held_path)
     # 훅과 보고 컨텍스트를 **한 번의 (local, repo)** 로 만든다. 따로 부르면 두 입력이
     # 같다는 보장이 이 줄의 규율뿐이고, 어긋나면 held_kinds가 분류에 실패해 섹션이
@@ -93,7 +93,9 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
         merged = result["merged"]
         merged_doc[section] = merged
         base_doc[section] = result["next_base"]
-        sections[section] = {
+        # 접지 않은 섹션에 "판정 불가" 사유를 얹는다 — 보류 파일을 읽지 못하면
+        # pluginConfigs만 접히는데 enabledPlugins도 release 탈출구를 함께 잃는다.
+        sections[section] = pc.with_degraded({
             "status": "ok",
             # 케이스 9는 레포 값이 남고 케이스 5는 아예 빠진다 — 처방이 다르므로 가른다.
             "conflicts": {
@@ -111,7 +113,7 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
             },
             "held": pc.held_kinds(section, result["held"],
                                   repo_norm=normalize(repo[section]), **context),
-        }
+        }, degraded.get(section))
 
     out = {
         "status": "ok",

@@ -379,6 +379,37 @@ BUCKETS = (
 )
 
 
+def _route_new_names(local, repo, action_held):
+    """restore_plan이 route_new에 태우는 이름 집합. **이미 정규화된 입력을 받는다.**
+
+    = 레포에만 있는 키 − 행동 보류. 행동 보류는 어떤 CLI 명령의 대상도 아니므로
+    action_held 버킷으로 빠지고, 값 보류는 **빠지지 않는다** — H3는 값만 보류하고
+    설치는 하기 때문이다(spec 5.3).
+
+    아래 restore_plan의 루프와 공개 route_new_keys가 **둘 다 이 함수를 부른다.**
+    같은 집합을 두 곳에서 만들면 갈리고, 갈려도 증상이 없다.
+    """
+    return set(repo) - set(local) - set(action_held)
+
+
+def route_new_keys(local, repo, *, normalize, hold):
+    """restore가 "레포에만 있는 새 항목"으로 훑는 키(정렬된 목록).
+
+    restore_plan의 `add` + `needs_secret` + `unrestorable` 세 버킷의 합집합과 **같은
+    집합**이다 — 같은 _route_new_names가 양쪽을 정하므로 갈릴 자리가 없다.
+    base를 받지 않는 것은 이 분기가 `known`을 보지 않기 때문이다(레포 전용 키는
+    판정표에 도달하지 않는다). 그래서 base를 모르는 읽기 전용 소비자도 부를 수 있다.
+
+    **diff의 only_repo와 다른 집합이다.** 그쪽은 값 보류 키를 세 버킷 어디에도 넣지
+    않고 held에만 싣는다(diff의 계약). 두 집합을 같다고 읽으면 H3(확장 값) 보류이면서
+    레포 전용인 키에서 status와 restore가 **반대로** 말한다 — 한쪽은 "미설치, restore가
+    설치한다", 다른 쪽은 "복원 불가"다. 예외도 빈 결과도 나지 않는다.
+    **복원 가능성을 restore 밖에서 물을 때는 only_repo가 아니라 이 집합을 훑는다.**
+    """
+    local, repo = _normalized(local, normalize), _normalized(repo, normalize)
+    return sorted(_route_new_names(local, repo, hold(local, repo)["action"]))
+
+
 # restorable(key, value) -> bool
 #   restore_plan만 쓰는 훅이다. 레포에만 있는 항목을 이 도구가 재현할 수 있는가를 묻는다 —
 #   거짓이면 unrestorable 버킷으로 가고 어떤 복원 명령의 대상도 되지 않는다.
@@ -411,13 +442,20 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
     (None은 합집합 degrade, {}는 판정표) 복원 쪽은 `known`이 비면 **삭제 후보(`local_stale`,
     케이스 4·5)로 가는 경로 자체가 닫히고**(`name in known`이 항상 거짓) 7·8도 `both_changed`로
     뭉친다 — 두 입력이 같은 결과 버킷으로 수렴하므로 구별할 실익이 없다. 이 함수의 직접
-    호출자는 `mcp_config.restore_plan`이고, `plan_mcp.build_plan`이 그 어댑터를 거쳐 None
-    가능한 base를 그대로 넘긴다.
+    호출자는 **둘**이다 — `mcp_config.restore_plan`(그 어댑터를 거쳐 `plan_mcp.build_plan`이
+    None 가능한 base를 그대로 넘긴다)과 `plan_plugins._plan_sections`(어댑터를 거치지 않고
+    직접 부르며, 섹션마다 `base.get(section, {})` 또는 None을 넘긴다). **코어의 base
+    처리를 바꿀 때 MCP만 확인하면 플러그인 쪽이 조용히 어긋난다.**
+
+    **`add`·`needs_secret`·`unrestorable` 세 버킷의 대상은 _route_new_names가 정한다** —
+    공개 `route_new_keys`가 같은 함수를 부르므로, 복원 가능성을 restore 밖에서 묻는
+    소비자(`compare_plugins`)와 이 함수가 같은 집합을 본다.
     """
     local, repo = _normalized(local, normalize), _normalized(repo, normalize)
     known = _normalized(base, normalize) if base else {}
     held = hold(local, repo)
     value_held, action_held = set(held["value"]), set(held["action"])
+    new_names = _route_new_names(local, repo, action_held)
 
     plan = {key: [] for key in BUCKETS}
 
@@ -434,16 +472,15 @@ def restore_plan(local, repo, base, *, normalize, hold, restorable, secret_keys)
         if name in action_held:
             plan["action_held"].append(name)
             continue
-        if name in value_held:
-            if name in local:
-                plan["value_held"].append(name)
-            elif name in repo:
-                route_new(name, repo[name])
-            continue
-        in_local, in_repo = name in local, name in repo
-        if in_repo and not in_local:
+        # 값 보류이면서 로컬에 없는 키도 여기로 온다 — H3는 설치는 한다(위 두 축).
+        if name in new_names:
             route_new(name, repo[name])
-        elif in_local and in_repo:
+            continue
+        # 여기 남는 이름은 전부 로컬에 있다(레포 전용 키는 위에서 갈라졌다).
+        if name in value_held:
+            plan["value_held"].append(name)
+            continue
+        if name in repo:
             if same(local[name], repo[name]):                        # 6
                 plan["in_sync"].append(name)
             elif name in known and same(repo[name], known[name]):    # 7

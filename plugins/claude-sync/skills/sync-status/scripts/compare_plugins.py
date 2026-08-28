@@ -55,7 +55,7 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
     """
     local = pc.read_local_sections(settings_path)
     repo = pc.load_backup(backup_path)
-    auto_ids, installed_ids, held_state, skipped = pc.read_hold_inputs(
+    auto_ids, installed_ids, held_state, skipped, degraded = pc.read_hold_inputs(
         installed_path, held_path)
     # 훅과 보고 컨텍스트를 **한 번의 (local, repo)** 로 만든다. 따로 부르면 두 입력이
     # 어긋날 수 있고, 그러면 hold가 보류한 키를 held_kinds가 분류하지 못해 섹션이
@@ -90,8 +90,16 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
             "changed_detail": {k: {"local": local_norm[k], "repo": repo_norm[k]}
                                for k in out["changed"]},
             # "restore 시 설치"가 거짓인 항목을 갈라 낸다 — 이 기기에서는 복원할 수 없다.
-            "unrestorable": [k for k in out["only_repo"]
-                             if not restorable(k, repo_norm[k])],
+            # **훑는 집합은 out["only_repo"]가 아니다.** diff의 only_repo는 값 보류 키를
+            # 빼는데 restore는 그중 로컬에 없는 것을 설치 대상으로 훑으므로(H3는 설치는
+            # 한다), only_repo를 훑으면 그 키에서 이 필드가 plan_plugins의 unrestorable과
+            # **반대로 선다** — 여기서는 "미설치 → restore가 설치", 저기서는 "복원 불가".
+            # 그래서 restore와 같은 집합을 만드는 어댑터 함수를 부른다(route_new_for).
+            # **이 목록은 only_repo의 부분집합이 아니다** — 소비자 문구가 그것을 전제하면
+            # 보류 키의 복원 불가가 사용자에게 도달하지 않는다.
+            "unrestorable": [
+                k for k in pc.route_new_for(section, hooks, local[section], repo[section])
+                if not restorable(k, repo_norm[k])],
             "held": pc.held_kinds(section, out["held"], repo_norm=repo_norm, **context),
             # **값 보류 키 중 로컬 섹션 문서에 값이 없는 것.** H3만이 아니라 out["held"]
             # 전부를 훑는다 — "레포 값을 보존합니다"가 거짓이 되는 조건이 종류와
@@ -112,7 +120,8 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
         if section in INSTALL_KEYED_SECTIONS:
             entry["not_installed"] = [k for k in entry["absent_locally"]
                                       if k not in installed_ids]
-        sections[section] = entry
+        # 접지 않은 섹션에 "판정 불가" 사유를 얹는다(collect_plugins와 같은 처방).
+        sections[section] = pc.with_degraded(entry, degraded.get(section))
     return {"status": "ok", "sections": sections}
 
 
