@@ -19,11 +19,14 @@
 
 실제 ~/.claude는 건드리지 않는다. HOME을 픽스처 트리로 바꿔 실행한다.
 """
+import json
 import os
 import re
 import subprocess
 
 import pytest
+
+import plugin_config as pc   # conftest.py가 lib를 sys.path에 넣는다
 
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills")
 SKILLS = ["sync-backup", "sync-status", "sync-restore"]
@@ -191,9 +194,7 @@ def test_backup_documents_marker_fields():
 
 def test_restore_surfaces_update_guidance_in_plugin_step():
     """버전이 낮아 막혔다면 필요한 것은 plugin update다. 여기가 탈출구다."""
-    text = read_skill("sync-restore")
-    plugin_step = text[text.index("### 5. 플러그인 복원"):text.index("### 6. MCP 서버 복원")]
-    assert "claude plugin update claude-sync" in plugin_step
+    assert "claude plugin update claude-sync" in plugin_restore_section()
 
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
@@ -219,10 +220,36 @@ def subsection(skill, heading):
     return text[i:m.start() if m else len(text)]
 
 
+def plugin_restore_section():
+    """restore의 플러그인 절. **제목의 접두를 바꾸면 여기서 ValueError로 죽는다.**
+
+    절 하나를 두 곳에서 자르면 한쪽만 갱신돼 서로 다른 범위를 보게 된다 — 이 파일의
+    검사들이 전부 "절 안에 있는가"를 묻는 형태이므로 그 어긋남은 조용하다.
+    """
+    text = read_skill("sync-restore")
+    return text[text.index("### 5. 플러그인 복원"):text.index("### 6. MCP 서버 복원")]
+
+
+def bash_blocks(text):
+    """```bash 블록의 본문만 모은다 — 산문의 언급과 실행줄을 가른다."""
+    out, rest = [], text
+    while "```bash" in rest:
+        _, rest = rest.split("```bash", 1)
+        body, rest = rest.split("```", 1)
+        out.append(body)
+    return out
+
+
 # 세 스킬이 호환성 검사를 부르는 유일한 형태. **셋이 같은 문자열을 쓰는 것 자체가 계약이다** —
 # 스킬마다 제 나름의 호출을 만들면 경로·인자가 갈리고, 그것이 이 프로젝트가 없애려고 만든
 # 드리프트다. 산문이 아니라 실행줄이라야 앵커가 된다(불변식 7).
 COMPAT_CALL = 'python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"'
+
+# 두 수집 단계의 실행줄. 세 곳이 함께 쓰므로 상수로 묶는다 — 스테이징 순서 가드가
+# COMPAT_WIRING의 **인덱스**를 딛으면, 표에서 항목 하나를 빼는 것만으로 그 가드가
+# 엉뚱한 줄을 보게 되고 아무도 그것을 알아채지 못한다.
+COLLECT_PLUGINS_CALL = 'python3 "$SYNC_SCRIPTS/collect_plugins.py" "$SYNC_REPO" "$BASE_STAGING"'
+COLLECT_MCP_CALL = 'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$BASE_STAGING"'
 
 # 스킬별 배선. 세 스킬의 계약이 서로 다르므로(막는 대상도, 앞뒤 경계도) 표로 몬다.
 # 한 스킬씩 손으로 쓰면 새 스킬이나 새 단계가 생겼을 때 한 곳만 고치고 만다.
@@ -237,9 +264,18 @@ COMPAT_WIRING = {
         "before_section": "### 3. Git User 설정",
         "before_calls": (
             'python3 $SYNC_SCRIPTS/reconcile_backup.py "$SYNC_REPO"',
-            "python3 $SYNC_SCRIPTS/extract_plugins.py plugins.json",
+            # extract_plugins.py를 지우면서 **앵커를 지우지 않는다** — 이 항목은
+            # "호환성 검사가 이 실행줄보다 앞에 있어야 한다"를 거는 자리다. 지우면
+            # 새 호출이 아무 앵커도 없이 남고 2.5단계가 뒤로 밀려도 아무도 못 잡는다.
+            # **이 표의 축소는 어떤 테스트도 잡지 못한다**(실측 — 이 줄을 지우면
+            # 787개가 전부 통과한다). "각 항목마다 검사"하는 목록은 자기 축소를
+            # 탐지할 수 없고, 여기를 완전성 검사로 바꾸려면 before_calls의 뜻이
+            # "검사가 막아야 할 실행줄"에서 "모든 스크립트 호출"로 달라진다
+            # (8·10단계의 cp·update_base는 게이트 대상이 아니다). spec 12장이
+            # 대신 글로 금지한다.
+            COLLECT_PLUGINS_CALL,
             'python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"',
-            'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$MCP_STAGING"',
+            COLLECT_MCP_CALL,
             'python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"',
         ),
     },
@@ -249,6 +285,7 @@ COMPAT_WIRING = {
         "before_section": "### 2. 메타데이터 기반 상태 분석",
         "before_calls": (
             'python3 $SYNC_SCRIPTS/check_status.py "$SYNC_REPO"',
+            'python3 "$SYNC_SCRIPTS/compare_plugins.py" "$SYNC_REPO/plugins.json"',
             'python3 "$SYNC_SCRIPTS/compare_mcp.py" "$SYNC_REPO/mcp-servers.json"',
         ),
     },
@@ -258,8 +295,9 @@ COMPAT_WIRING = {
         "before_section": "### 3. 파일별 reconcile",
         "before_calls": (
             'python3 "$SYNC_SCRIPTS/reconcile_restore.py" "$SYNC_REPO" --apply',
+            'python3 "$SYNC_SCRIPTS/plan_plugins.py" plan "$SYNC_REPO/plugins.json"',
             'python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json"',
-            'python3 "$SYNC_BACKUP_SCRIPTS/update_base.py" "$MCP_STAGING" mcp-servers.json',
+            'python3 "$SYNC_BACKUP_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"',
         ),
     },
 }
@@ -343,7 +381,7 @@ DOWNGRADE_CALLERS = SKILLS
 # 탐지 호출이 있어야 할 절. 파일 어딘가면 되는 검사는 호출이 엉뚱한 단계로 옮겨져도
 # 통과한다 — 실측으로, 호출을 MCP 계획 바로 앞으로 옮겼을 때 383개가 전부 통과했다.
 DOWNGRADE_SECTION = {
-    "sync-backup": "5.5 다운그레이드 사고 탐지",
+    "sync-backup": "4.5 다운그레이드 사고 탐지",
     "sync-status": "1.5 호환성 검사",
     "sync-restore": RESTORE_CHECK_SECTION,
 }
@@ -367,11 +405,13 @@ def test_downgrade_detection_is_actually_called(skill):
 
 
 # 탐지 호출이 반드시 앞서야 하는 실행줄.
-#  - backup : 수집이 레포 파일을 v2로 덮어쓰면 "레포가 v1"이라는 증거가 사라진다
+#  - backup : 수집이 레포 파일을 v2로 덮어쓰면 "레포가 옛 형식"이라는 증거가 사라진다.
+#             **가장 앞선 수집 단계**를 앵커로 쓴다 — plan ③이 탐지를 plugins.json으로
+#             넓히면 그 순서가 곧 정확도가 된다.
 #  - restore: 6-5의 local_stale 안내 문구가 이 판정에 기대므로 그 앞이어야 한다
 # status는 읽기 전용이라 순서가 결과를 바꾸지 않으므로 표에 없다.
 DOWNGRADE_BEFORE = {
-    "sync-backup": 'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$MCP_STAGING"',
+    "sync-backup": COLLECT_PLUGINS_CALL,
     "sync-restore": 'python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json"',
 }
 
@@ -418,6 +458,11 @@ def test_every_skill_on_disk_is_covered_by_the_contract():
     )
     assert set(COMPAT_WIRING) == set(SKILLS), "COMPAT_WIRING이 SKILLS와 다르다: %s" % sorted(
         set(COMPAT_WIRING).symmetric_difference(SKILLS)
+    )
+    # 같은 이유로 플러그인 단계 표도 함께 건다. 이 표에서 스킬 하나를 빼면 그 스킬은
+    # 섹션 단위 status 검사를 아무 소리 없이 빠져나간다(실측 — 빼도 786개가 전부 통과했다).
+    assert set(PLUGIN_SECTION) == set(SKILLS), "PLUGIN_SECTION이 SKILLS와 다르다: %s" % sorted(
+        set(PLUGIN_SECTION).symmetric_difference(SKILLS)
     )
 
 
@@ -609,3 +654,162 @@ def test_backup_base_gate_distinguishes_push_failure_from_staging_failure():
     """
     sec = section("sync-backup", "11. base(.sync-state) 갱신 규칙")
     assert "REPO_HAS_CONTENT=0" in sec and "이미 존재한다" in sec
+
+
+# 두 수집 단계(backup)와 두 apply-base(restore)가 **같은 디렉토리**를 쓴다. 각 단계가
+# 제 앞에서 비우면 앞 단계의 산출물이 지워지고 그 파일의 base가 영영 전진하지 않는다.
+STAGING_CLEAR = 'rm -rf "$BASE_STAGING"'
+
+
+def test_backup_clears_the_shared_staging_once_before_both_collectors():
+    """7.4 — 각 단계가 제 앞에서 rm -rf하면 앞 단계의 산출물이 지워진다.
+
+    횟수와 순서를 **둘 다** 건다. 순서만 걸면 6단계에 rm -rf를 하나 더 넣어도 통과하고,
+    그때 플러그인 스테이징이 지워져 `base/plugins.json`이 영영 만들어지지 않는다.
+    """
+    text = read_skill("sync-backup")
+    count = text.count(STAGING_CLEAR)
+    assert count == 1, "스테이징 비우기가 %d번이다. 정확히 한 번이어야 한다" % count
+    clear = index_of(text, STAGING_CLEAR, "sync-backup")
+    for call in (COLLECT_PLUGINS_CALL, COLLECT_MCP_CALL):
+        assert clear < index_of(text, call, "sync-backup"), (
+            "스테이징 비우기가 %r보다 뒤에 있다" % call
+        )
+
+
+def test_backup_base_gate_covers_both_relpaths():
+    """게이트가 한 파일에만 걸리면 MCP가 skipped인 실행에서 플러그인 base가 전진하지 않는다.
+
+    그러면 merge가 매번 base=None 합집합 degrade를 타 케이스 3·4가 영영 발생하지 않고,
+    삭제 전파가 **조용히** 죽는다(7.4).
+
+    `"$BASE_STAGING"`까지 함께 거는 것은 source_root를 `"$SYNC_REPO"`로 바꾸는 오사용을
+    이 자리에서 잡기 위해서다 — 그러면 base ← 레포 파일 바이트가 되어 다음 백업이
+    타 기기의 플러그인을 경고 없이 지운다.
+    """
+    block = section("sync-backup", "10. 커밋 & 푸시")
+    assert "for rel in plugins.json mcp-servers.json" in block
+    assert '"$BASE_STAGING" "${RELS[@]}"' in block
+    assert '[ -f "$MCP_STAGING/mcp-servers.json" ]' not in read_skill("sync-backup")
+
+
+def test_restore_clears_the_shared_staging_before_both_apply_base_calls():
+    """apply-base 산출물이 같은 디렉토리를 쓴다 — rm -rf는 둘보다 앞에서 한 번이다."""
+    text = read_skill("sync-restore")
+    count = text.count(STAGING_CLEAR)
+    assert count == 1, "스테이징 비우기가 %d번이다. 정확히 한 번이어야 한다" % count
+    clear = index_of(text, STAGING_CLEAR, "sync-restore")
+    for call in ('"$SYNC_SCRIPTS/plan_plugins.py" apply-base',
+                 '"$SYNC_SCRIPTS/plan_mcp.py" apply-base'):
+        assert clear < index_of(text, call, "sync-restore"), (
+            "스테이징 비우기가 %r보다 뒤에 있다" % call
+        )
+
+
+def test_restore_never_executes_marketplace_remove():
+    """14.1 — 연쇄 삭제 방어. 안내는 하되 실행하지 않는다 (9.3.5).
+
+    산문에는 나타나야 한다 — 사용자가 손으로 실행할 명령을 알려 주는 자리다.
+    """
+    sec = plugin_restore_section()
+    assert "marketplace remove" in sec
+    assert not any("marketplace remove" in block for block in bash_blocks(sec))
+
+
+# 5절의 자기 업데이트 안내. claude-sync **자신**을 올리는 명령이라 9.3.1이 스코프를
+# 규정한 대상이 아니다. **제외 목록으로 적는다** — 허용 목록(설치·활성화 동사)으로 적으면
+# 목록에서 동사 하나를 빼는 것만으로 그 명령이 검사를 조용히 빠져나가고, 나중에 추가되는
+# 명령은 아예 검사되지 않는다. 제외 목록이면 반대로, 여기서 빼면 검사가 더 엄해진다.
+RESTORE_SELF_UPDATE_VERBS = ("marketplace update ", "update ")
+
+
+def restore_plugin_commands():
+    """5절의 bash 블록에서 복원이 실제로 내는 `claude plugin` 명령을 모은다."""
+    prefix = "claude plugin "
+    out = []
+    for block in bash_blocks(plugin_restore_section()):
+        for line in block.splitlines():
+            line = line.strip()
+            if not line.startswith(prefix):
+                continue
+            if line[len(prefix):].startswith(RESTORE_SELF_UPDATE_VERBS):
+                continue
+            out.append(line)
+    return out
+
+
+def test_restore_plugin_commands_carry_scope_user_and_never_dash_y():
+    """14.1 — --scope user가 없으면 복원된 플러그인이 settings.json에 나타나지 않아
+    backup이 못 보고 status가 only_repo를 영구 보고한다(I6). -y는 D2 위반이다."""
+    commands = restore_plugin_commands()
+    assert commands, "5절에 복원 명령이 하나도 없다 — 배선이 사라졌다"
+    for command in commands:
+        assert "--scope user" in command, command
+        assert " -y" not in command and "--yes" not in command, command
+
+
+# 플러그인 단계가 있어야 할 절. 세 스크립트의 최상위 status가 **섹션 skip을 반영하지
+# 않으므로**(collect_plugins·compare_plugins·build_plan·apply_base의 공통 계약),
+# 소비자가 최상위만 읽으면 두 섹션이 접힌 실행을 "할 것이 없습니다"로 보고하고
+# **조용히 아무것도 하지 않는다.** 세 스킬이 각자 그 자리에서 섹션 단위 status를
+# 따로 읽는다고 적어야 한다.
+PLUGIN_SECTION = {
+    "sync-backup": "5. plugins.json 생성 (키 단위 3-way 병합)",
+    "sync-status": "2. 메타데이터 기반 상태 분석",
+    "sync-restore": "5. 플러그인 복원",
+}
+PER_SECTION_STATUS = 'sections[<섹션>]["status"]'
+
+
+@pytest.mark.parametrize("skill", sorted(PLUGIN_SECTION))
+def test_plugin_step_reads_the_per_section_status_separately(skill):
+    """최상위 status는 섹션 skip을 반영하지 않는다 — 그 사실이 절 안에 적혀야 한다.
+
+    파일 어딘가면 되는 검사는 문장이 엉뚱한 단계로 옮겨져도 통과한다(불변식 7).
+    """
+    assert PER_SECTION_STATUS in section(skill, PLUGIN_SECTION[skill]), skill
+
+
+def test_status_reports_plugin_sections_through_the_new_script():
+    """결함 B — check_status.py의 키 집합 비교를 지우고 새 스크립트를 부른다."""
+    sec = section("sync-status", PLUGIN_SECTION["sync-status"])
+    assert '"$SYNC_SCRIPTS/compare_plugins.py"' in sec
+    assert "skipped" in sec
+    with open(os.path.join(SKILLS_DIR, "sync-status", "scripts", "check_status.py"),
+              encoding="utf-8") as f:
+        source = f.read()
+    assert "enabledPlugins" not in source
+
+
+def test_extract_plugins_is_gone_everywhere():
+    """12장 — 스킬이 새 스크립트를 부르게 된 뒤에 지운다. 그 전에 지우면 백업이 깨진다."""
+    scripts = os.path.join(SKILLS_DIR, "sync-backup", "scripts")
+    assert not os.path.exists(os.path.join(scripts, "extract_plugins.py"))
+    for skill in SKILLS:
+        assert "extract_plugins" not in read_skill(skill), skill
+
+
+def choice_json_payload():
+    """5-7의 선택 결과 heredoc 본문. 없으면 무엇이 사라졌는지 말하고 실패한다."""
+    sec = plugin_restore_section()
+    marker = "<< 'EOF'\n"
+    assert marker in sec, "5-7에 선택 결과 heredoc이 없다"
+    body = sec.split(marker, 1)[1]
+    return body.split("\nEOF", 1)[0]
+
+
+def test_restore_choice_json_uses_the_real_section_names():
+    """9.3.7 — 섹션 이름이 틀리면 `choice_list`가 **그 섹션을 조용히 무시한다.**
+
+    예외도 빈 결과도 나지 않는다. 선택을 하나도 적용하지 않은 복원이 성공한 것처럼
+    보이고, 사용자가 고른 "로컬 유지"·"이 기기 값으로 통일"이 전부 사라진다.
+    프로덕션에는 이 오타를 막는 가드가 없으므로(하네스의 `_apply_base`에만 있다)
+    **템플릿 자체를 어댑터의 SECTIONS에 묶는다** — 손으로 옮겨 적은 목록과 비교하면
+    섹션 이름이 바뀔 때 같이 틀린다.
+    """
+    data = json.loads(choice_json_payload())
+    assert set(data) == set(pc.SECTIONS), sorted(set(data).symmetric_difference(pc.SECTIONS))
+    # `configured`를 빠뜨리면 6.4의 탈출구가 무증상으로 죽는다 — 한 번 declined된 항목은
+    # 사용자가 값을 채워도 보류 파일에 남아 지문이 계속 매치되어 다시 묻지 않는다.
+    assert "configured" in data["pluginConfigs"]
+    assert "release" in data["enabledPlugins"]
