@@ -1613,16 +1613,26 @@ def test_status_and_restore_agree_on_which_keys_are_unrestorable(tmp_path):
     """
     fixture = dict(
         local={},
-        # h3@nowhere  확장 값(H3 보류) + 레포 전용 + 마켓플레이스 소스 없음 → 복원 불가
+        # auto@nowhere는 **행동 보류**(H1)여야 하므로 설치 파일에 auto로 실어 둔다.
+        installed=write_installed(
+            tmp_path, {"auto@nowhere": [{"scope": "user", "auto": True}]}),
+        # h3@nowhere    확장 값(H3 = 값 보류만) + 레포 전용 + 소스 없음 → 복원 불가
         # plain@nowhere 보류가 아닌 레포 전용 + 소스 없음 → 복원 불가(대조군)
-        # ok@known    소스가 있어 복원 가능 → 어느 목록에도 없어야 한다
+        # auto@nowhere  H1(값·행동 양축) + 레포 전용 + 소스 없음 → **어느 쪽도 아니다**
+        #               (restore가 action_held로 보내 훑지 않는다). 이 키가 없으면
+        #               route_new_for가 hold 대신 no_hold를 넘겨도 결과가 같아진다 —
+        #               행동 축을 실제로 재는 것이 이 키뿐이다(다섯째 축, 실측).
+        # ok@known      소스가 있어 복원 가능 → 어느 목록에도 없어야 한다
         repo={"enabledPlugins": {"h3@nowhere": {"version": "1.2"},
                                  "plain@nowhere": True,
+                                 "auto@nowhere": True,
                                  "ok@known": True},
               "extraKnownMarketplaces": {"known": GH}})
     status = compare(tmp_path, **fixture)["sections"]
     plan = build_plan(tmp_path, **fixture)["sections"]
     assert status["enabledPlugins"]["held"]["extended_value"] == ["h3@nowhere"]
+    assert status["enabledPlugins"]["held"]["auto"] == ["auto@nowhere"]
+    assert plan["enabledPlugins"]["action_held"] == ["auto@nowhere"]
     for section in pc.SECTIONS:
         assert status[section]["unrestorable"] == plan[section]["unrestorable"], section
     assert status["enabledPlugins"]["unrestorable"] == ["h3@nowhere", "plain@nowhere"]

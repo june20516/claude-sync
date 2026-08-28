@@ -705,6 +705,9 @@ def test_route_new_keys_matches_the_three_restore_plan_buckets():
                            secret_keys=lambda v: ["k"] if v == 2 else [], **hooks)
     assert ks.route_new_keys(local, repo, **hooks) == sorted(
         plan["add"] + plan["needs_secret"] + plan["unrestorable"])
+    # 픽스처가 diff와 **갈리는** 키를 실제로 담는지 함께 건다 — 담지 않으면 위 등호가
+    # only_repo로 바꿔도 참이 되어 이 테스트가 자기 주제를 재지 않는다(다섯째 축, 실측).
+    assert "vheld" not in ks.diff(local, repo, **hooks)["only_repo"]
     # 픽스처가 실제로 셋을 다 채우는지 함께 건다 — 채우지 못하면 위 등호가 공허해진다.
     assert plan["add"] == ["ok", "vheld"]
     assert plan["needs_secret"] == ["sec"] and plan["unrestorable"] == ["bad"]
