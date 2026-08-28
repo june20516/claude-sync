@@ -12,6 +12,10 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "skills", "sync-backup", "scripts")
 )
 
+import pytest  # noqa: E402
+
+from marks import requires_permission_bits  # noqa: E402
+
 import compat  # noqa: E402
 import mcp_config as mc  # noqa: E402
 import generate_metadata as gm  # noqa: E402
@@ -286,3 +290,44 @@ def test_syncignore_with_a_utf8_bom_still_excludes(tmp_path):
         claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
     assert rel not in meta["files"]
     assert "agents/a.md" in meta["files"]
+
+
+@requires_permission_bits
+def test_unreadable_syncignore_is_not_folded_into_no_patterns(tmp_path):
+    """`.syncignore`를 **못 읽는 것**과 **없는 것**은 다르다.
+
+    OSError를 삼켜 빈 목록으로 접으면 제외 목록이 통째로 사라진 채 표식이 써진다 —
+    사용자는 걸렀다고 믿고 이름과 해시를 푸시한다. 조용히 새는 것보다 시끄럽게
+    서는 것이 싸다. (파일 **부재**는 정상 경로이므로 위 테스트들이 그쪽을 받친다.)
+    """
+    claude_dir = fake_claude_dir(tmp_path)
+    secret_agent(claude_dir)
+    path = os.path.join(claude_dir, ".syncignore")
+    write_syncignore(claude_dir, "agents/internal-*.md\n")
+    os.chmod(path, 0)
+    try:
+        with pytest.raises(OSError):
+            gm.build_metadata(
+                claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    finally:
+        os.chmod(path, 0o600)
+
+
+def test_the_excluded_count_is_reported(tmp_path, capsys):
+    """제외를 **조용히** 하면 안 된다 — 사용자는 표식이 전수 목록이라고 믿는다.
+
+    sync-backup/SKILL.md 7단계가 "제외된 개수는 stderr에 알린다"고 적는다. 그 문장을
+    코드에 묶는 것이 이 단정이다. 제외가 0건일 때는 아무 말도 하지 않는 것까지 함께
+    건다 — 매 백업마다 뜨는 줄은 소음이 되고, 소음은 읽히지 않는다.
+    """
+    claude_dir = fake_claude_dir(tmp_path)
+    secret_agent(claude_dir)
+    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
+
+    gm.build_metadata(claude_dir, plugin_json)
+    assert ".syncignore" not in capsys.readouterr().err
+
+    write_syncignore(claude_dir, "agents/internal-*.md\n")
+    gm.build_metadata(claude_dir, plugin_json)
+    err = capsys.readouterr().err
+    assert ".syncignore" in err and "1개" in err, err

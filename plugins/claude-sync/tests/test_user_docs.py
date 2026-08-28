@@ -478,6 +478,19 @@ THREE_WAY_CONSUMERS = {
 }
 
 
+def test_the_three_way_consumer_table_covers_every_skill():
+    """표에서 스킬 하나를 빼면 그 스크립트가 조용히 검사에서 사라진다(실측 — 항목을
+    지워도 스위트 전체가 통과했다).
+
+    세 스킬이 전부 3-way 판정을 하므로 디스크의 스킬 목록과 짝짓는다. 새 스킬이
+    생기면 여기가 빨개져 "그 스킬은 무엇을 기준선으로 쓰는가"를 묻게 한다.
+    """
+    skills = {n for n in os.listdir(SKILLS_DIR)
+              if os.path.isfile(os.path.join(SKILLS_DIR, n, "SKILL.md"))}
+    assert set(THREE_WAY_CONSUMERS) == skills, sorted(
+        set(THREE_WAY_CONSUMERS).symmetric_difference(skills))
+
+
 @pytest.mark.parametrize("skill", sorted(THREE_WAY_CONSUMERS))
 def test_three_way_input_is_the_per_device_base(skill):
     """3-way 판정의 실제 입력은 기기별 base 블롭이다 — 세 스크립트가 전부 base_hash를 쓴다.
@@ -498,5 +511,13 @@ def test_backup_readme_points_at_the_sync_state_base(name):
 
     "이 파일이 아니다"만 적으면 클론한 사람은 그럼 무엇인지 알 수 없고, 위
     CORRECTIONS의 바늘은 그 절반을 재지 않는다.
+
+    **한 줄 안에서 찾는다.** 초판은 파일 전체에서 `.sync-state/`를 찾았는데, 새 한계
+    목록의 `plugins-held.json` 줄이 항상 걸려 이 문장에서 지목을 빼도 통과했다
+    (변조 실측 — 공허한 단정이었다).
     """
-    assert ".sync-state/" in read_doc(name), name
+    hits = [line for line in read_doc(name).splitlines()
+            if "sync-metadata.json" in line and ".sync-state/" in line]
+    assert len(hits) == 1, (
+        "%s: `sync-metadata.json` 줄이 3-way의 기준선을 지목하지 않는다: %s"
+        % (name, hits))

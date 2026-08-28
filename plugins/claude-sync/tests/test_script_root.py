@@ -305,6 +305,55 @@ def test_backup_documents_marker_fields():
         assert "`%s`" % field in sec, field
 
 
+def test_backup_step7_says_the_marker_honours_syncignore():
+    """표식은 레포가 아니라 `~/.claude`를 걷는다 — 그 사실이 절 안에 적혀야 한다.
+
+    필터 자체는 generate_metadata.py와 lib/syncignore.py가 갖고 있고 그쪽에는
+    테스트가 있다. 여기서 거는 것은 **산문이 그 사실을 말하는가**다. 스킬 산문은
+    모델이 읽고 실행하는 산출물이라, 이 문장이 사라지면 다음 사람이 "표식은 레포를
+    그대로 읽으니 필터가 필요 없다"고 되돌릴 수 있다.
+    """
+    sec = section("sync-backup", "7. sync-metadata.json 생성")
+    assert ".syncignore" in sec
+    assert "syncignore.py" in sec, "매칭 규칙이 어디 한 벌로 있는지를 적지 않았다"
+    # 사용자가 이 사실을 찾는 곳은 실행 절차가 아니라 `## 보안` 절이다. 한 곳만 걸면
+    # 나머지가 조용히 사라진다 — 이 저장소가 반복해서 만난 형태다(변조 실측).
+    security = security_section()
+    assert "sync-metadata.json" in security, "보안 절이 표식 적용을 말하지 않는다"
+
+
+def security_section():
+    """sync-backup SKILL.md의 `## 보안` 절. section()은 `### `만 자른다."""
+    text = read_skill("sync-backup")
+    i = text.index("## 보안")
+    return text[i:text.index("## 실행 절차", i)]
+
+
+def test_syncignore_cannot_exclude_the_two_generated_files():
+    """`.syncignore`는 `plugins.json`·`mcp-servers.json`을 제외하지 못한다 — **왜인지**를 건다.
+
+    4단계가 그 둘을 지워도 **뒤인** 5·6단계가 다시 생성한다. 산문만 걸면 순서가
+    바뀌었을 때(또는 수집이 레포 쓰기를 그만뒀을 때) 문서가 낡은 채로 초록이 되므로,
+    한계를 만드는 **두 사실**을 함께 잰다: 실행 순서와, 두 수집 스크립트가 레포
+    파일을 실제로 쓴다는 것.
+
+    한계가 사라졌다면 여기가 빨개진다 — 그때 고칠 것은 이 단정이 아니라 보안 절이다.
+    """
+    text = read_skill("sync-backup")
+    i_ignore = text.index(syncignore_block())
+    assert i_ignore < text.index(COLLECT_PLUGINS_CALL), "4단계가 5단계보다 뒤에 있다"
+    assert i_ignore < text.index(COLLECT_MCP_CALL), "4단계가 6단계보다 뒤에 있다"
+    for name in ("collect_plugins.py", "collect_mcp.py"):
+        with open(os.path.join(SKILLS_DIR, "sync-backup", "scripts", name),
+                  encoding="utf-8") as f:
+            source = f.read()
+        assert "repo_file = os.path.join(repo_path" in source, name
+        assert "repo_file)" in source, "%s가 레포 파일을 쓰지 않는다" % name
+    sec = security_section()
+    assert "제외하지 못한다" in sec
+    assert "마스킹" in sec
+
+
 def plugin_restore_section():
     """restore의 플러그인 절. **제목의 접두를 바꾸면 여기서 ValueError로 죽는다.**
 
@@ -1027,6 +1076,7 @@ SYNCIGNORE_RULES = (
     "skills/secret-tool",      # 디렉토리 — find가 매치하고 rm -rf가 그 아래를 다 지운다
     "skills/*/internal-*.md",  # `*`가 `/`를 넘는가 (find -path에는 FNM_PATHNAME이 없다)
     "skills/keep/",            # 후행 슬래시 — find는 디렉토리를 슬래시 없이 출력한다
+    " agents/public.md",       # 선행 공백 — bash는 줄을 다듬지 않는다(strip하면 갈린다)
     "",                        # 빈 줄
     "# 주석",
 )
@@ -1098,6 +1148,13 @@ def test_the_syncignore_fixture_still_exercises_every_matching_property(tmp_path
     for pattern, (rel, expected) in checks.items():
         assert rel in SYNCIGNORE_TREE, rel
         assert syncignore.is_excluded(rel, [pattern]) is expected, (pattern, rel)
+    # 다섯째 성질은 `is_excluded`가 아니라 `load_patterns`의 것이다 — 선행 공백이 붙은
+    # 줄을 **원문 그대로** 남겨야 bash와 갈리지 않는다(bash의 read -r은 줄을 다듬지
+    # 않는다). 픽스처에서 이 줄이 빠지면 위 대조가 그 성질을 재지 못한다.
+    assert " agents/public.md" in SYNCIGNORE_RULES
+    path = tmp_path / ".syncignore"
+    path.write_text("\n".join(SYNCIGNORE_RULES) + "\n", encoding="utf-8")
+    assert " agents/public.md" in syncignore.load_patterns(str(path))
 
 
 def test_status_reports_plugin_sections_through_the_new_script():
