@@ -322,6 +322,21 @@ def test_backup_step7_says_the_marker_honours_syncignore():
     assert "sync-metadata.json" in security, "보안 절이 표식 적용을 말하지 않는다"
 
 
+def test_status_step2_says_the_report_honours_syncignore():
+    """`/sync-status`도 `~/.claude`를 직접 걷는다 — 그 사실이 절 안에 적혀야 한다.
+
+    backup 7단계의 자매 가드다(위). 필터 자체는 check_status.py와 lib/syncignore.py가
+    갖고 test_reconcile.py가 잰다. 여기서 거는 것은 **산문이 그 사실을 말하는가**이고,
+    함께 거는 것은 **비대칭의 근거**다 — 레포 쪽 열거를 거르지 않는 이유를 적지 않으면
+    다음 사람이 "일관성"을 이유로 union 전체에 필터를 걸어 restore와 보고를 어긋나게
+    만든다.
+    """
+    sec = section("sync-status", "2. 메타데이터 기반 상태 분석")
+    assert ".syncignore" in sec
+    assert "syncignore.py" in sec, "매칭 규칙이 어디 한 벌로 있는지를 적지 않았다"
+    assert "레포에도 있는 제외 파일" in sec, "레포 쪽을 거르지 않는 비대칭을 적지 않았다"
+
+
 def security_section():
     """sync-backup SKILL.md의 `## 보안` 절. section()은 `### `만 자른다."""
     text = read_skill("sync-backup")

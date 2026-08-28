@@ -118,7 +118,15 @@ SYNCED_FILES = ("CLAUDE.md",)
 
 
 def iter_synced_relpaths(root):
-    """root(=~/.claude 또는 레포) 아래 동기화 대상 상대경로를 yield."""
+    """root(=~/.claude 또는 레포) 아래 동기화 대상 상대경로를 yield.
+
+    **`.syncignore`를 적용하지 않는다(의도).** 이 함수는 레포 쪽 트리에도 쓰이는데
+    제외 목록은 `~/.claude` 안에 있어 root 하나로는 어느 쪽 규칙인지 정할 수 없다.
+    그래서 필터는 **소비자가 건다** — 로컬 열거에 거는 곳이 sync-status의
+    check_status.py이고, 규칙 한 벌은 lib/syncignore.py다. 나머지 두 소비자는 걸지
+    않는다: reconcile_backup.py는 걸어도 결과가 같고(4단계 bash가 레포에서 지운다),
+    reconcile_restore.py는 복원 방향이라 "제외를 존중할 것인가"가 아직 정해지지 않았다.
+    """
     for name in SYNCED_DIRS:
         d = os.path.join(root, name)
         if os.path.isdir(d):

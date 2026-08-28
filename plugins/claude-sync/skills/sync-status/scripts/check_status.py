@@ -12,13 +12,32 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
 import sync_state as ss  # noqa: E402
+import syncignore  # noqa: E402
 
 repo_path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
     "SYNC_REPO", "/tmp/claude-sync-repo"
 )
 HOME_CLAUDE = os.path.expanduser("~/.claude")
 
-rels = sorted(set(ss.iter_synced_relpaths(repo_path)) | set(ss.iter_synced_relpaths(HOME_CLAUDE)))
+# **`.syncignore`에 걸린 로컬 파일은 열거하지 않는다.** backup 4단계가 그 파일을 레포에서
+# 지우므로 실제로는 push되지 않는데, 필터가 없으면 이 스크립트가 그것을
+# `local_only`("backup 시 push")로 보고한다 — 사용자가 제외했다고 믿은 파일을 두고
+# "다음 백업이 올립니다"라고 말하는 자리다. 누수는 아니고 **보고만 어긋난다.**
+# 매칭은 4단계 bash·generate_metadata.py와 같은 한 벌을 쓴다(lib/syncignore.py).
+#
+# **레포 쪽 열거는 거르지 않는다(의도).** reconcile_restore.py는 `.syncignore`를 보지
+# 않으므로 레포에 있는 항목은 제외 대상이라도 restore가 실제로 건드린다 — 거르면 이
+# 보고가 restore와 어긋난다. 그래서 이 필터가 없애는 것은 정확히 **"레포에 없는 제외
+# 파일"** 하나뿐이다. 레포에도 있는 제외 파일은 여전히 보고되고, 그중
+# `local_ahead`의 "backup 시 push" 문구는 아직 정확하지 않다 — 그것을 닫으려면
+# "restore가 `.syncignore`를 존중해야 하는가"를 먼저 정해야 한다(범위 밖).
+#
+# `.syncignore`를 못 읽으면 예외가 전파된다 — load_patterns의 규약이다. 여기서 삼키면
+# 제외 목록이 통째로 빈 것으로 읽혀 위의 잘못된 보고가 조용히 돌아온다.
+patterns = syncignore.load_patterns(syncignore.default_path(HOME_CLAUDE))
+local_rels = syncignore.filter_relpaths(
+    sorted(ss.iter_synced_relpaths(HOME_CLAUDE)), patterns)
+rels = sorted(set(ss.iter_synced_relpaths(repo_path)) | set(local_rels))
 
 buckets = {
     "in_sync": [],

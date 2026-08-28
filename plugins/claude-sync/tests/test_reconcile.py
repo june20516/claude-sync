@@ -143,3 +143,67 @@ def test_update_base_multiple_files(tmp_path):
     assert len(written) == 2
     assert written["agents/a.md"] == b"content 0"
     assert written["agents/b.md"] == b"content 1"
+
+
+# ── /sync-status의 `.syncignore` ─────────────────────────────────────────────
+#
+# check_status.py는 `~/.claude`를 직접 걷는다. 4단계의 `find | rm -rf`는 레포 작업
+# 트리만 손대므로, 필터가 없으면 사용자가 제외한 파일이 `local_only`("backup 시 push")로
+# 보고된다 — 백업은 그것을 push하지 않으므로 **보고만 어긋난다**(누수가 아니다).
+# 매칭 규칙 한 벌은 lib/syncignore.py이고, 4단계 bash와 같은지는 test_script_root.py의
+# test_python_syncignore_matches_the_skill_bash가 두 구현을 함께 돌려 잰다.
+
+def run_check_status(home, repo):
+    script = os.path.join(
+        os.path.dirname(__file__), "..", "skills", "sync-status", "scripts",
+        "check_status.py")
+    return subprocess.run(
+        ["python3", os.path.abspath(script), str(repo)],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)))
+
+
+def status_fixture(tmp_path):
+    """제외 대상 하나와 대조군 하나를 가진 HOME·레포. `.syncignore`는 아직 없다."""
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    (home / ".claude" / "agents").mkdir(parents=True)
+    (repo / "agents").mkdir(parents=True)
+    (home / ".claude" / "agents" / "internal-secret.md").write_text("사내 URL")
+    (home / ".claude" / "agents" / "keep.md").write_text("공개")
+    return home, repo
+
+
+def test_syncignore_keeps_an_excluded_local_file_out_of_the_status_report(tmp_path):
+    """제외한 파일을 "backup 시 push"로 보고하지 않는다.
+
+    **대조 파일 하나를 함께 둔다** — 없으면 "아무것도 보고하지 않는다"로도 단정이
+    참이 되고, 필터가 전부를 지우는 회귀가 조용히 지나간다.
+    """
+    home, repo = status_fixture(tmp_path)
+    (home / ".claude" / ".syncignore").write_text("agents/internal-*.md\n")
+    out = run_check_status(home, repo).stdout
+    assert "agents/internal-secret.md" not in out
+    assert "agents/keep.md" in out
+
+
+def test_without_syncignore_the_same_file_is_reported(tmp_path):
+    """대조군 — 위 단정이 "그 파일이 원래 안 나온다"로 참이 되는 것을 막는다."""
+    home, repo = status_fixture(tmp_path)
+    out = run_check_status(home, repo).stdout
+    assert "agents/internal-secret.md" in out
+    assert "agents/keep.md" in out
+
+
+def test_an_excluded_file_that_is_also_in_the_repo_is_still_reported(tmp_path):
+    """**레포 쪽 열거는 거르지 않는다(의도).**
+
+    reconcile_restore.py는 `.syncignore`를 보지 않으므로 레포에 있는 항목은 제외
+    대상이라도 restore가 실제로 건드린다. 여기서 함께 걸러 버리면 이 보고가 restore와
+    어긋난다 — 그 비대칭이 의도라는 것을 이 테스트가 고정한다. 필터를 union 전체에
+    거는 회귀는 여기서 죽는다.
+    """
+    home, repo = status_fixture(tmp_path)
+    (home / ".claude" / ".syncignore").write_text("agents/internal-*.md\n")
+    (repo / "agents" / "internal-secret.md").write_text("사내 URL")
+    out = run_check_status(home, repo).stdout
+    assert "agents/internal-secret.md" in out
