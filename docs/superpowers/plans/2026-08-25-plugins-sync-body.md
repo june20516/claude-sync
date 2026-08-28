@@ -7173,6 +7173,12 @@ git commit -m "feat(skills): 세 스킬을 새 플러그인 스크립트에 배�
 - Modify: `plugins/claude-sync/skills/sync-backup/scripts/backup-readme.md`, `backup-readme.ko.md`
 - Modify: `plugins/claude-sync/skills/sync-backup/SKILL.md:33·36·42`
 - Modify: `plugins/claude-sync/tests/test_script_root.py`
+- Create: `plugins/claude-sync/tests/test_user_docs.py` — **실행 시 추가됨.** 아래 Step 1의 초안은
+  사용자 문서 가드를 `test_script_root.py` 끝에 두라고 적었으나, 그 파일은 스스로
+  *"관심사를 둘 담는다"*(0단계 bash 실행 / 세 SKILL.md 계약)라고 적고 있고 `README.md`는
+  스킬도 스크립트도 아니다. 셋째 관심사를 얹으면 Task 14 품질 리뷰의 I4(간판이 내용을
+  설명하지 못한다)가 그대로 재발하므로 갈랐다. SKILL.md의 서술 정정 가드는 둘째 관심사에
+  속하므로 `test_script_root.py`에 남겼다
 
 - [ ] **Step 1: 실패하는 test 작성**
 
@@ -7221,10 +7227,23 @@ def test_backup_skill_lists_all_three_fields_and_the_auto_source():
     assert "두 필드만" not in text
 ```
 
+**위 코드는 초안이고 실행에서 다음을 고쳤다.**
+
+- `STALE_CLAIMS`의 `not in` 형태는 **바늘이 틀려도 초록이다.** 옛 문구를 혼자 걸지 않고
+  **(옛 문구, 정정 문안) 쌍**으로 바꿔 positive 절반을 함께 걸었다(`CORRECTIONS`).
+- `assert "key by key" in text`는 **공허하다** — 같은 문서의 `mcp-servers.json` 문단이
+  이미 그 문구를 갖고 있어 플러그인 쪽 문장이 통째로 없어도 통과한다. `plugins.json`을
+  **같은 줄에서** 지목하도록 좁혔다.
+- 세 토큰 존재 단정은 어댑터에서 뽑는다 — `pc.SECTIONS`·`pc.MARKETPLACE_ALIASES`·
+  `pc.DEFAULT_INSTALLED`. 손으로 적은 상수는 값만 바꾸면 통째로 공허해진다.
+- 새 한계의 항목 수는 **spec 13장 "새로 적어야 할 한계"의 불릿 수에서 뽑는다.** 문서마다
+  손으로 센 숫자를 두면 한 항목이 빠져도 아무도 알아채지 못한다.
+- `USER_DOCS`는 디스크 목록과 대조한다(다섯째 축).
+
 - [ ] **Step 2: test를 실행하여 실패를 확인**
 
-실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_script_root.py -q`
-기대: 문서 가드 FAIL
+실행: `uv run --with pytest pytest plugins/claude-sync/tests/test_user_docs.py plugins/claude-sync/tests/test_script_root.py -q`
+기대: 문서 가드 FAIL (실측 23건)
 
 - [ ] **Step 3: 구현**
 
@@ -7317,16 +7336,39 @@ settings.json에는 API 키 등 민감 정보가 포함될 수 있으므로 원�
 실행: `grep -rn "통째로 덮어쓰\|overwritten wholesale\|민감 정보 제외\|no sensitive data" README.md README.ko.md plugins/claude-sync/skills/`
 기대: **출력 없음.** 13장이 요구한 전수 확인이다.
 
+**이 grep은 정정 대상이 아닌 문장 둘과 충돌한다(실측).** `README.ko.md:93`과
+`sync-backup/SKILL.md:40`은 MCP에 대해 *"파일 통째로 덮어쓰지 않고"* 라고 **참을** 말하는데
+부분 문자열이 같아 함께 걸린다. 대비 문구였으므로(`plugins.json`이 예외라는 전제)
+`plugins.json`도 키 단위 병합이 된 지금은 필요 없다 — 뜻을 유지한 채 그 표현을 지웠다
+(`서버마다 따로 판정되므로` / `**서버 이름 키 단위 3-way 병합** 대상이다`).
+
 - [ ] **Step 4b: 변조 확인 (필수)**
 
-- `STALE_CLAIMS`에서 항목을 하나씩 지우기 → 그 문구를 되살렸을 때 가드가 통과해 버리는지 확인한다(목록이 실제로 전수인지 검증)
+- `CORRECTIONS`에서 쌍을 하나씩 지우기 → 그 문구를 되살렸을 때 가드가 통과해 버리는지 확인한다(목록이 실제로 전수인지 검증)
 - 정정한 문장 하나를 옛 문장으로 되돌리기 → 대응 가드가 FAIL해야 한다
 - **영어 README만 되돌리기** → 파라미터화된 가드가 그 파일에서 FAIL해야 한다. 한국어판만 보는 가드였다면 여기서 드러난다
+
+**하네스를 먼저 고쳐야 한다(실측).** `mutate.py`는 `plugins/`만 임시 복사본에 옮기므로
+레포 루트의 `README.md`·`README.ko.md`와 `docs/`를 읽는 테스트가 있으면 **대조군부터
+깨지고** 그 파일을 대상으로 한 변조는 아예 적용되지 않는다. `.git`·캐시를 제외하고
+레포 전체를 복사하도록 고쳤다(저장소 밖 파일이라 이 plan의 커밋에는 들어가지 않는다).
+
+**실측 결과 — 19종 중 18 CAUGHT, 1 SURVIVED. 대조군 CONTROL_OK(844 passed).**
+다섯째 축(테스트가 준 목록을 뺀다)을 다섯 자리에 돌렸다 — `CORRECTIONS`의 쌍 하나,
+`CORRECTIONS`의 문서 하나, `USER_DOCS`의 문서 하나, `LIMITS_ANCHOR`의 문서 하나,
+spec 불릿 추출기가 빈 목록을 내는 경우. 전부 CAUGHT다.
+
+**닫지 못한 SURVIVE 하나:** `CORRECTIONS`의 **옛 문구 쪽 바늘**을 아무 데도 없는 값으로
+바꾸면 아무도 잡지 못한다. 그러면 "정정 문안과 옛 문장을 **함께** 적는" 편집만 검출을
+빠져나간다(정정 문안이 사라지는 편집은 여전히 CAUGHT다 — 실측). 옛 문구를 담은 저장소 내
+원천이 정정 후에는 남지 않고, spec 13장 표의 인용문은 축약(`…`)이 섞여 있으며 2행은
+**남는** 문장을 인용하므로 진실 원천으로 쓸 수 없다. 거짓 CAUGHT보다 정직한 SURVIVED로
+남긴다 — `test_user_docs.py`의 모듈 docstring이 같은 내용을 적는다.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add README.md README.ko.md plugins/claude-sync/skills plugins/claude-sync/tests/test_script_root.py
+git add README.md README.ko.md plugins/claude-sync/skills plugins/claude-sync/tests/test_script_root.py plugins/claude-sync/tests/test_user_docs.py
 git commit -m "docs: plugins.json이 키 단위로 병합된다는 사실을 여덟 곳에 반영한다"
 ```
 
