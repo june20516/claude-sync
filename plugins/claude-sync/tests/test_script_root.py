@@ -1258,6 +1258,12 @@ SCRIPT_CONTRACT_PHRASES = [
     # 구조적으로 공집합이다(restore_plan이 값 보류 키를 value_held에 넣는 조건이
     # `name in local`이라 로컬에 값이 없는 키는 add/needs_secret으로 빠진다).
     ("sync-restore", "`add`/`needs_secret`"),
+    # 계획 JSON은 두 층인데 5-5·5-6이 섹션별 버킷과 최상위 키를 구별 없이 불렀다.
+    # 소비자가 최상위에서 `local_stale`을 찾아 없으면 **케이스 4·5·8·9가 하나도
+    # 보고되지 않는다** — 넷 다 spec 9.3.4의 안정 상태라 사용자가 고를 기회 자체가
+    # 사라진다. 층을 거는 가드가 없어 "네 버킷은 최상위에 있다"는 거짓을 넣어도
+    # 스위트가 전부 통과했다(실측).
+    ("sync-restore", "버킷은 `sections[<섹션>]` 안에 있다"),
 ]
 
 
@@ -1274,7 +1280,7 @@ def test_the_script_contract_table_did_not_shrink():
     빼는 것은 의도된 행위여야 하고, 그때 이 숫자를 함께 고치는 것이 그 표시다.
     이 단정이 말하는 것은 그것뿐이다 — 표의 **내용**이 옳은지는 재지 않는다.
     """
-    assert len(SCRIPT_CONTRACT_PHRASES) == 5
+    assert len(SCRIPT_CONTRACT_PHRASES) == 6
 
 
 # SCRIPT_CALL의 대안 목록이 SKILL.md가 실제로 쓰는 루트 변수를 전부 덮는지 대조한다.
