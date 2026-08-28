@@ -270,7 +270,7 @@ def _next_base_sections(local, repo, base, hooks, skipped, degraded, choices,
                         next_held):
     """섹션별 다음 base와 그 보고. _plan_sections와 **같은 층위의 짝**이다.
 
-    앞의 다섯 인자는 _plan_sections와 같고, 뒤의 둘만 base 경로에만 있는 입력이다 —
+    앞의 여섯 인자는 _plan_sections와 같고, 뒤의 둘만 base 경로에만 있는 입력이다 —
     사용자의 선택(choices)과 **이번 실행의** 보류 상태(next_held).
 
     **value_held를 스스로 계산해 next_base에 넘긴다.** merge 경로와 달리 여기서는
