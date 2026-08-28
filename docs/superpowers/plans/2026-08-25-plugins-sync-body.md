@@ -6675,6 +6675,12 @@ git commit -m "test: 선택지 실행 후의 교대 시나리오 여섯"
 `tests/test_script_root.py`의 표 셋을 갱신하고 가드를 더한다.
 
 ```python
+# 두 수집 단계의 실행줄은 **상수로 묶는다.** 아래 스테이징 순서 가드가 이 표의
+# **인덱스**를 딛으면, 표에서 항목 하나가 빠지거나 순서가 바뀌는 것만으로 그 가드가
+# 엉뚱한 줄을 보고 그러고도 초록이 된다.
+COLLECT_PLUGINS_CALL = 'python3 "$SYNC_SCRIPTS/collect_plugins.py" "$SYNC_REPO" "$BASE_STAGING"'
+COLLECT_MCP_CALL = 'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$BASE_STAGING"'
+
 COMPAT_WIRING = {
     "sync-backup": {
         "section": "2.5 호환성 검사",
@@ -6684,9 +6690,9 @@ COMPAT_WIRING = {
             'python3 $SYNC_SCRIPTS/reconcile_backup.py "$SYNC_REPO"',
             # extract_plugins.py를 지우면서 **앵커를 지우지 않는다** — 이 항목은
             # "호환성 검사가 이 실행줄보다 앞에 있어야 한다"를 거는 자리다.
-            'python3 "$SYNC_SCRIPTS/collect_plugins.py" "$SYNC_REPO" "$BASE_STAGING"',
+            COLLECT_PLUGINS_CALL,
             'python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"',
-            'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$BASE_STAGING"',
+            COLLECT_MCP_CALL,
             'python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"',
         ),
     },
@@ -6723,10 +6729,17 @@ DOWNGRADE_BEFORE = {
     # 수집이 레포 파일을 v2로 덮어쓰면 "레포가 옛 형식"이라는 증거가 사라진다.
     # **가장 앞선 수집 단계**를 앵커로 쓴다 — plan ③이 탐지를 plugins.json으로
     # 넓히면 그 순서가 곧 정확도가 된다.
-    "sync-backup": 'python3 "$SYNC_SCRIPTS/collect_plugins.py" "$SYNC_REPO" "$BASE_STAGING"',
+    "sync-backup": COLLECT_PLUGINS_CALL,
     "sync-restore": 'python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json"',
 }
 ```
+
+**아래 목록은 최소치다.** Task 14 실행의 두 리뷰가 실측으로 여섯을 더 요구했고 전부
+받아들여졌다 — restore 쪽 base 게이트의 두 relpath, 그 게이트에 **도달하는지**(절이
+skip 가능한 단계 안에 있으면 안 된다), backup 10단계 게이트의 `REPO_HAS_CONTENT` 축,
+스킬이 스크립트의 **어느 키를 읽는지** 적은 산문 앵커 넷, status의 용어집이 두 벌이
+되지 않는지, 그리고 이 표들이 스스로 줄어드는 것을 막는 완전성 메타가드 셋.
+**Step 4b에서 SURVIVE가 나오면 여기에 더한다** — 이 목록은 그 출발점이다.
 
 파일 끝에 가드를 더한다.
 
@@ -6739,8 +6752,7 @@ def test_backup_clears_the_shared_staging_once_before_both_collectors():
     text = read_skill("sync-backup")
     assert text.count(STAGING_CLEAR) == 1
     clear = index_of(text, STAGING_CLEAR, "sync-backup")
-    for call in (COMPAT_WIRING["sync-backup"]["before_calls"][1],
-                 COMPAT_WIRING["sync-backup"]["before_calls"][3]):
+    for call in (COLLECT_PLUGINS_CALL, COLLECT_MCP_CALL):
         assert clear < index_of(text, call, "sync-backup")
 
 
@@ -7065,12 +7077,18 @@ rm -f /tmp/claude-sync-plugins-choices.json
 `apply-base`는 `settings.json`을 **다시 읽어** 계산하므로 5-1~5-6의 CLI 실행이 **모두 끝난 뒤**에 호출해야 한다. 실패했거나 건너뛴 항목은 로컬에 없으므로 base가 자동으로 전진하지 않는다.
 ````
 
-**(g) `sync-restore/SKILL.md` 6-6.** MCP의 base 갱신 블록에서 `rm -rf`를 지우고(5절로 옮겼다) `BASE_STAGING`을 쓰며, `update_base.py` 호출을 두 relpath 루프로 바꾼다.
+**(g) `sync-restore/SKILL.md` 6-6과 새 6.5절.** MCP의 base 갱신 블록에서 `rm -rf`를 지우고(5절로 옮겼다) `BASE_STAGING`을 쓴다. 6-6에는 **MCP의 `apply-base`까지만** 남긴다.
 
 ```bash
 BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
 python3 "$SYNC_SCRIPTS/plan_mcp.py" apply-base "$SYNC_REPO/mcp-servers.json" "$BASE_STAGING" /tmp/claude-sync-mcp-choices.json
 rm -f /tmp/claude-sync-mcp-choices.json
+```
+
+**스테이징 → `base/` 이동은 `### 6` 밖으로 꺼내 독립 절로 올린다**(예: `### 6.5 base 갱신 (스테이징 → base)`, 6절과 7절 사이). **`#### 6-6` 안에 두면 안 된다** — 6절 머리가 *"`status`가 `"skipped"`면 MCP 단계 전체를 건너뛴다"*고 지시하므로, `plan_mcp.py plan`이 skipped인 실행(레포의 `mcp-servers.json`이 상위 버전 형식일 때가 1급 경로다)에서 그 절이 통째로 돌지 않고, **5절이 이미 계산해 스테이징에 써 둔 플러그인 base가 영영 옮겨지지 않는다.** 옮기는 경로가 이것 하나뿐이라 `keep_stale`·`keep_local`·`release` 선택이 조용히 무효가 되고 H3 탈출구가 완전히 죽는다 — 9.3.7이 막으려던 바로 그 상태다. 5절 5-7의 인계 문장도 그 새 절을 가리키게 적는다.
+
+```bash
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
 
 RELS=()
 for rel in plugins.json mcp-servers.json; do
@@ -7081,6 +7099,8 @@ if [ ${#RELS[@]} -gt 0 ]; then
   echo "base 갱신됨: ${RELS[*]}"
 fi
 ```
+
+**루프의 모양만 잠그면 부족하다** — 그 루프에 **도달하는지**를 재는 단정을 함께 건다(5절·6절이 각각 "단계 전체를 건너뛴다"고 적은 절 안에 루프가 없어야 한다).
 
 **(h) `extract_plugins.py` 삭제.**
 
