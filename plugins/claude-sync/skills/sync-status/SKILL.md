@@ -117,7 +117,7 @@ if [ -f "$SYNC_REPO/plugins.json" ]; then
 fi
 ```
 
-출력 JSON의 `status`가 `"skipped"`면 `settings.json`을 읽지 못했거나 레포 파일의 형식을 알아볼 수 없는 것이다. `reason`을 알리고 플러그인 비교만 생략한다 — 읽기 실패를 "0개"로 오인해 레포의 항목을 전부 `only_repo`로 보고하지 않기 위해서다.
+출력 JSON의 `status`가 `"skipped"`면 `settings.json`을 읽지 못했거나 레포 파일의 형식을 알아볼 수 없는 것이다. `reason`을 알리고 플러그인 비교만 생략한다 — 읽기 실패를 "0개"로 오인해 레포의 항목을 전부 `only_repo`로 보고하지 않기 위해서다. `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다.
 
 **최상위 `status`는 섹션 skip을 반영하지 않는다.** 그 값은 "비교를 수행했는가"이므로 섹션 둘이 접힌 실행에서도 `"ok"`다. 섹션 단위 사실은 `sections[<섹션>]["status"]`에만 있으니 **그것을 반드시 따로 읽고**, 최상위만 보고 "동일"이라고 말하지 않는다. 섹션 하나만 `"skipped"`인 경우가 있다(`auto` 판정 불가 → `enabledPlugins`·`pluginConfigs`, 보류 파일 손상 → `pluginConfigs`).
 
@@ -156,11 +156,7 @@ fi
 - **local_ahead / local_only**: 로컬이 앞섬 → backup 시 push
 - **conflict**: 양쪽 모두 base 이후 변경 → restore 시 해소 필요
 
-**플러그인과 MCP 서버의 어휘는 파일과 다르다.** 위의 "local_ahead / local_only: 로컬이 앞섬 → backup 시 push"는 그 둘에 적용되지 않는다.
-
-- **only_local**: 로컬에만 있음 — 신규이거나, 다른 기기가 삭제한 뒤 남은 것일 수 있습니다. `/sync-backup`이 판정합니다.
-- **only_repo**: 레포에만 있음 — `/sync-restore`가 이 기기에 설치합니다.
-- **changed**: 양쪽에 있으나 설정이 다름 — 어느 쪽이 앞선 것인지는 `/sync-backup`이 base를 읽어 판정합니다.
+**플러그인과 MCP 서버의 어휘는 파일과 다르다.** 위의 "local_ahead / local_only: 로컬이 앞섬 → backup 시 push"는 그 둘에 적용되지 않는다. **버킷별 문구는 2단계를 따른다 — 여기에 정의를 다시 적지 않는다.** 두 벌이 되면 요약을 만드는 이 자리의 옛 정의가 2단계의 지시를 덮어써, `unrestorable` 항목에 "restore가 설치합니다"라고 말하거나 보류 항목을 `only_local`·`changed`로 내보내게 된다 — 둘 다 spec 9.2가 금지한 문구다.
 
 status는 base를 읽지 않으므로 케이스를 확정하지 않는다. 판정의 단일 진입점은 backup의 `merge` 하나다.
 
