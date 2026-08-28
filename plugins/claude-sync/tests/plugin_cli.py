@@ -52,6 +52,10 @@ CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`·`set_manifest`�
      소속 플러그인이 전부 사라진다는 **결과**만 쟀지 소속을 무엇으로 판정하는지는 재지
      않았다. `plugin_config.marketplace_of`는 `@`가 정확히 하나일 때만 마켓플레이스를
      알아보므로 `a@b@m` 같은 id에서 두 규칙이 갈린다.
+ 11. **삭제 명령의 실패 갈래가 두 파일 어느 쪽도 건드리지 않는가**(`uninstall`·
+     `marketplace_remove`의 exit 1 갈래). 1-b #6·#8이 잰 것은 "재실행은 exit 1"까지이고
+     그때 두 파일에 무엇이 남는지는 재지 않았다. 위 2번은 성공 갈래("지우는가")라 이쪽을
+     덮지 않는다. 여기서는 아무것도 쓰지 않는다.
 
 **재현하지 않는 것(의도).** `install --scope project|local`(이 동기화는 전부 user
 스코프다 — spec 9.3.1), `plugin update`, `plugin tag`, `uninstall --keep-data`,
@@ -70,8 +74,13 @@ CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`·`set_manifest`�
 --config k=v` 형태라 등록되지 않은 마켓플레이스로는 똑같이 죽고, 그래서
 `plan_plugins._install_dependencies`가 `depends_on`에 2단계∪4단계를 싣는다).
 `test_a_blocked_marketplace_stops_the_install_and_config_steps`가 그중 **2·4단계를 직접
-잰다** — 3단계는 미측정이다(위 4번 때문에 `disable`이 미설치 id에 아무것도 쓰지 않아
-필터를 지워도 관측되지 않는다). #4에는 대역이 없다 — 없는 플러그인을 설치하려는 계획을
+잰다** — 3단계는 미측정이다. **사유는 위 4번이 아니다**(그 갈래는 이 공백과 무관하다):
+그 테스트의 픽스처가 만드는 계획은 `disable_after_install`이 **비어 있어 3단계 루프가 한
+번도 돌지 않는다**(실측). 관측하려면 레포 값이 `false`이면서 `pluginConfigs`로 candidates에
+들어오는 **이미 설치된** id가 필요하다 — 그런 id는 로컬 `enabledPlugins`에 값이 있으므로
+`disable`이 exit 0으로 **실제로 값을 쓴다**(`plan_plugins.py:208-212`가 같은 사실을 적는다.
+실측: 그 픽스처에서 3단계 필터를 지우면 값이 `False`로 바뀐다). 그런 시나리오가 아직 없다.
+#4에는 대역이 없다 — 없는 플러그인을 설치하려는 계획을
 만드는 시나리오를 쓸 때 이 자리를 먼저 고칠 것.
 """
 import json
@@ -259,7 +268,8 @@ class PluginCLI:
         1-b #6 — 활성·비활성 상태와 무관하게 키를 지우고 pluginConfigs의 같은 키도
         함께 지운다. 재실행은 exit 1(`not found in installed plugins`).
         설치 기록 삭제는 **실측 없음 — 추정**(모듈 docstring 2번).
-        실패 갈래는 두 파일 어느 쪽도 건드리지 않는다.
+        실패 갈래가 두 파일 어느 쪽도 건드리지 않는 것도 **실측 없음 — 추정**
+        (모듈 docstring 11번).
         """
         data = self.settings()
         if plugin_id not in data["enabledPlugins"]:

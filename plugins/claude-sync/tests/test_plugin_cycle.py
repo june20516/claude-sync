@@ -84,7 +84,7 @@ class Device:
         #
         # **형제 하네스와 조건이 다르다.** test_mcp_cycle.py:66은 여기에 없는
         # `report["status"] == "ok"` 축을 하나 더 갖는다. 플러그인 배선은 아직 SKILL.md에
-        # 없지만(Task 14), MCP 배선인 sync-backup/SKILL.md:400은 `REPO_HAS_CONTENT`와
+        # 없지만(Task 14), MCP 배선인 sync-backup/SKILL.md:401은 `REPO_HAS_CONTENT`와
         # 파일 존재 두 축뿐이고 그 자리 주석이 "status 값을 다시 읽을 필요가 없다"라고
         # 못 박는다. 둘을 "맞추는" 수정을 한다면 MCP 쪽을 SKILL.md에 맞출 것.
         if push and os.path.exists(staged):
@@ -116,6 +116,11 @@ class Device:
                 continue
             self.cli.disable(plugin_id)
         for plugin_id, options in (secrets or {}).items():          # 4단계
+            # 실제 흐름은 **계획이 지목한 키만** 되묻는다(`plan["config_keys"]`). 대조하지
+            # 않으면 계획이 요구하지 않은 id에도 설정이 채워져 **실제 흐름이 만들 수 없는
+            # 상태**가 되고, 이어지는 백업이 그 값을 레포로 밀어 시나리오가 초록으로
+            # 지나간다. `_apply_base`의 섹션 이름 가드와 같은 규율이다.
+            assert plugin_id in plan["config_keys"], plugin_id
             if self._blocked(plan, plugin_id, blocked):
                 continue
             self.cli.install(plugin_id, config=options)
@@ -469,9 +474,14 @@ def test_a_blocked_marketplace_stops_the_install_and_config_steps(tmp_path):
     `plan_plugins._install_dependencies`가 `depends_on`에 2단계 ∪ 4단계를 싣는다.
 
     아래 `ok` 절반이 이 단정을 공허하지 않게 만든다 — 같은 픽스처에서 등록이 성공하면
-    두 단계가 실제로 값을 만든다. 3단계는 이 테스트가 재지 않는다(에뮬레이터의
-    `disable`이 미설치 id에 아무것도 쓰지 않아 필터를 지워도 관측되지 않는다 —
-    plugin_cli 모듈 docstring 4번).
+    두 단계가 실제로 값을 만든다.
+
+    **3단계는 이 테스트가 재지 않는다** — 사유는 `disable`의 미설치 갈래가 아니다.
+    BLOCKED_REPO의 `enabledPlugins`가 둘 다 `True`라 `value_command`가 `"disable"`을 내지
+    않고, 그래서 이 계획의 `disable_after_install`이 **비어 3단계 루프가 한 번도 돌지
+    않는다**(실측 — 아래 단정이 그 사실을 고정한다). 관측하려면 레포 값이 `false`이면서
+    `pluginConfigs`로 candidates에 들어오는 **이미 설치된** id가 필요하다 — 그때는 로컬에
+    값이 있으므로 `disable`이 실제로 쓴다. 그런 시나리오가 아직 없다.
     """
     dev = _blocked_device(tmp_path, "blocked")
     plan = dev.restore(secrets={"p@m": {"token": "s3cr3t"}}, fail_marketplaces={"m"})
@@ -479,6 +489,7 @@ def test_a_blocked_marketplace_stops_the_install_and_config_steps(tmp_path):
     assert plan["install"] == ["q@m"]                       # 2단계 대상
     assert plan["skipped_already_installed"] == ["p@m"]     # 2단계 대상이 아니다
     assert plan["config_keys"] == {"p@m": ["token"]}        # 4단계 대상
+    assert plan["disable_after_install"] == []              # 3단계 루프가 돌지 않는다
     assert plan["depends_on"] == {"p@m": "m", "q@m": "m"}
     assert dev.cli.settings()["extraKnownMarketplaces"] == {}   # 등록이 실제로 실패했다
     assert "q@m" not in dev.cli.settings()["enabledPlugins"]    # 2단계가 막혔다
@@ -488,6 +499,22 @@ def test_a_blocked_marketplace_stops_the_install_and_config_steps(tmp_path):
     ok.restore(secrets={"p@m": {"token": "s3cr3t"}})
     assert ok.cli.settings()["enabledPlugins"]["q@m"] is True
     assert ok.cli.settings()["pluginConfigs"]["p@m"]["options"] == {"token": "s3cr3t"}
+
+
+def test_restore_rejects_a_secret_the_plan_did_not_ask_for(tmp_path):
+    """계획이 되묻지 않은 id의 설정은 조용히 채워지지 않는다 (9.3.1 4단계).
+
+    실제 흐름은 `plan["config_keys"]`가 지목한 키만 사용자에게 되묻는다. 하네스가 아무
+    id나 받으면 **실제 흐름이 만들 수 없는 상태**를 만들고, 이어지는 백업이 그 값을
+    레포로 밀어 시나리오가 초록으로 지나간다. 정상 id가 통과하는 절반을 함께 두어 이
+    단정이 "언제나 죽는다"가 아님을 잰다.
+    """
+    ok = _blocked_device(tmp_path, "ok")
+    assert ok.restore(secrets={"p@m": {"token": "s3cr3t"}})["status"] == "ok"
+    stray = _blocked_device(tmp_path, "stray")
+    with pytest.raises(AssertionError):
+        # q@m은 2단계(install) 대상이지 4단계 대상이 아니다.
+        stray.restore(secrets={"q@m": {"token": "s3cr3t"}})
 
 
 def test_restore_rejects_an_unknown_choice_section(tmp_path):
