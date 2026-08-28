@@ -6787,12 +6787,26 @@ def test_restore_never_executes_marketplace_remove():
     assert not any("marketplace remove" in block for block in bash_blocks(sec))
 
 
+# spec 12장이 **보존을 지시한** 자기 업데이트 두 줄이 같은 절의 bash 블록에 있고
+# --scope user를 갖지 않는다. 그래서 "claude plugin으로 시작하는 모든 줄"을 훑는 형태는
+# **성립 불가**다(Task 14 실행에서 실측). 그 둘만 **명령 전문**으로 제외한다 —
+# 동사(`update `)로 제외하면 5-2의 install을 `claude plugin update <id>`로 바꾼 줄까지
+# 함께 빠져나가고(실측), 허용 목록(설치·활성화 동사)으로 적으면 목록에서 동사 하나를
+# 빼는 것만으로 그 명령이 검사를 조용히 빠져나간다.
+RESTORE_SELF_UPDATE_COMMANDS = (
+    "claude plugin marketplace update claude-sync",
+    "claude plugin update claude-sync",
+)
+
+
 def test_restore_plugin_commands_carry_scope_user_and_never_dash_y():
     """14.1 — --scope user가 없으면 복원된 플러그인이 settings.json에 나타나지 않아
     backup이 못 보고 status가 only_repo를 영구 보고한다(I6). -y는 D2 위반이다."""
-    blocks = bash_blocks(plugin_restore_section())
-    commands = [line.strip() for block in blocks for line in block.splitlines()
-                if line.strip().startswith("claude plugin")]
+    prefix = "claude plugin "
+    commands = [line.strip() for block in bash_blocks(plugin_restore_section())
+                for line in block.splitlines()
+                if line.strip().startswith(prefix)
+                and line.strip() not in RESTORE_SELF_UPDATE_COMMANDS]
     assert commands
     for command in commands:
         assert "--scope user" in command, command
@@ -6917,7 +6931,8 @@ fi
 - `only_repo` — 레포에만 있음. `/sync-restore`가 이 기기에 설치합니다. **다만 `unrestorable`에 있는 항목은 "이 기기에서는 복원할 수 없습니다"로 말한다**
 - `changed` — 양쪽에 있으나 값이 다름. **켬/끔 변경이 여기 포함된다.** 값이 확장 포맷이면 "버전 제약"으로 말한다. **방향과 값은 `changed_detail[<키>]["local"]`·`["repo"]`에서 읽는다** — 레포 파일을 다시 파싱하면 status 경로에 파서가 두 벌이 되어 결함 B가 되살아난다. 값은 이미 정규화돼 있어 비밀은 마스킹된 채로 온다
 - `held.auto` / `held.local_marketplace` / `held.extended_value` / `held.declined` — 종류별 문구로 보고하거나 침묵한다. **`only_local`·`changed`로 말하지 않는다** — 백업하지 않는 항목을 "backup 시 추가"라고 하면 거짓이고 사용자가 해소할 수도 없다
-- `absent_locally` — 보류 키 중 **로컬 섹션 문서에 값이 없는** 것. 여기 있는 항목에 "레포 값을 보존합니다"만 말하면 거짓이다(보존할 로컬 값이 없다). **"미설치"라고는 말하지 않는다** — compare는 설치 여부를 알 수 없다(`installed_plugins.json`에서 읽는 것은 auto 집합뿐이고, `enabledPlugins`의 키 부재는 매니페스트 기본값 위임이지 미설치가 아니다). 9.2의 "설치됨/미설치" 문구를 글자 그대로 쓰려면 설치 집합 전체를 읽어야 하며, **그럴지 말지는 이 task에서 정한다**
+- `absent_locally` — 보류 키 중 **로컬 섹션 문서에 값이 없는** 것. 여기 있는 항목에 "레포 값을 보존합니다"만 말하면 거짓이다(보존할 로컬 값이 없다). **이 목록 자체는 "미설치"가 아니다** — auto 의존성은 `installed_plugins.json`에 있으므로 **설치되어 있으면서** `settings.json`에는 값이 없고, `enabledPlugins`의 키 부재는 매니페스트 기본값 위임이지 미설치가 아니다
+- `not_installed` — **9.2의 "설치됨/미설치"를 이 필드로 말한다**(이 task에서 정한 결론). `compare_plugins.py`가 이미 싣고 있다 — `absent_locally`의 부분집합이며 `enabledPlugins`·`pluginConfigs` 두 섹션에만 실린다(마켓플레이스 이름은 설치 집합과 이름 공간이 다르다). *"compare는 설치 여부를 알 수 없다"* 는 앞 판의 서술은 **거짓이었다** — 그 스크립트는 `installed_ids`를 읽는다
 
 status는 아무것도 바꾸지 않는다. base를 읽지도 갱신하지도 않는다.
 ````
@@ -7016,7 +7031,7 @@ claude plugin install <id> --config <key>=<value> --scope user
 
 > "설치했습니다. 다만 이 기기는 버전 제약을 표현할 수 없어 레포의 값을 보존합니다."
 
-`absent_locally`에 있는 항목에는 "보존합니다"만 말하지 않는다 — 보존할 로컬 값이 없으면 거짓이 된다.
+**로컬에 값이 없는 보류 항목은 이 버킷에 오지 않는다.** `restore_plan`이 값 보류 키를 `value_held`에 넣는 조건이 `name in local`이라, 로컬에 값이 없는 보류 키는 `add`/`needs_secret`(복원 불가면 `unrestorable`)으로 빠진다 — 그쪽 항목에 "레포의 값을 보존합니다"라고 말하면 **보존할 로컬 값이 없어 거짓**이다. **`absent_locally`를 여기서 가리키면 안 된다** — 그것은 `compare_plugins.py`(status)만 내는 필드이고 계획 JSON에는 없다(앞 판의 결함. 결론은 맞고 근거가 틀렸던 (b) 양식이다).
 
 **탈출구**: "버전 제약을 포기하고 이 기기 값으로 통일한다"를 고르면 그 id를 `release`에 넣는다. 다음 백업이 이 기기의 값을 push해 레포 값이 불리언이 되고 보류가 자연 해제된다.
 
@@ -7104,7 +7119,10 @@ git rm plugins/claude-sync/skills/sync-backup/scripts/extract_plugins.py
 
 - `rm -rf "$BASE_STAGING"`을 6단계로 옮기기 → 순서 가드가 잡아야 한다
 - 10단계 루프에서 `plugins.json`을 빼기 → 두 relpath 가드가 잡아야 한다
-- `update_base.py "$BASE_STAGING"`을 `"$SYNC_REPO"`로 바꾸기 → **어떤 테스트도 잡지 못한다.** `test_plugin_cycle.py`에 "base가 레포 파일 바이트와 같지 않다"를 거는 단정을 하나 더할지 판단한다
+- `update_base.py "$BASE_STAGING"`을 `"$SYNC_REPO"`로 바꾸기 → **잡힌다(실측으로 앞 판의 예측이 반증됐다).** backup 쪽은 `test_backup_base_gate_covers_both_relpaths`의 `'"$BASE_STAGING" "${RELS[@]}"' in block`이, restore 쪽은 `before_calls` 앵커의 `index_of`가 부재를 실패로 만든다. 하네스 모형의 같은 오사용(`Device.backup`의 source_root)도 기존 시나리오 둘이 잡는다 — **따라서 `test_plugin_cycle.py`에 단정을 더하지 않는다.** 이 plan에서 "어떤 테스트도 잡지 못한다"류의 예측이 실측에 반증된 **일곱 번째**다
+- **restore 6-6의 두 relpath 루프도 함께 뒤집을 것** — backup 판만 지목했던 앞 판에서 그쪽이 무가드로 남았다(실측 SURVIVED). 그렇게 되면 restore 경로의 `base/plugins.json`이 전진하지 않아 `keep_stale`·`keep_local`·`release` 선택이 조용히 무효가 된다(9.3.7)
+- 10단계 게이트에서 `[ "$REPO_HAS_CONTENT" = "1" ]` 축을 빼기 → 파일 존재 축만으로는 **푸시 실패 실행의 base 전진**을 막지 못한다. 두 축을 다 걸 것
+- 5절의 자기 업데이트 bash 블록을 통째로 지우기 → 절 전체에서 문자열을 찾는 가드는 **같은 문구를 쓴 산문**으로 충족된다. `bash_blocks(...)` 안에서 찾을 것
 - restore 5-2의 `--scope user`를 지우기 / `-y`를 붙이기 → 명령 가드가 잡아야 한다
 - 5-5의 `marketplace remove`를 bash 블록 안으로 옮기기 → 실행 금지 가드가 잡아야 한다
 - `check_status.py`의 플러그인 블록을 되살리기 → status 가드가 잡아야 한다
@@ -7300,8 +7318,9 @@ git commit -m "docs: plugins.json이 키 단위로 병합된다는 사실을 여
 - [ ] **`PLAN_SHA`를 정한다** — 이 plan 문서를 커밋한 지점의 sha다. `git log --oneline -1 -- docs/superpowers/plans/2026-08-25-plugins-sync-body.md`로 확인한다. `main..HEAD`를 쓰면 안 된다 — 이 테스트 파일들이 `main`에 없어 전부 신규 추가로 잡힌다
 - [ ] `git diff --stat $PLAN_SHA..HEAD -- plugins/claude-sync/tests/test_mcp_cycle.py` → **출력 없음.** MCP 교대 시나리오는 이 plan이 건드리지 않는다
 - [ ] `git diff --stat $PLAN_SHA..HEAD -- plugins/claude-sync/tests/test_mcp_config.py` → Task 1의 원자성 테스트 **하나만** 추가돼 있다. 그 외 변경이 있으면 어댑터 계약이 바뀐 것이다
-- [ ] `grep -rn "extract_plugins" plugins/claude-sync/` → **출력 없음**
-- [ ] `grep -rn "MCP_STAGING" plugins/claude-sync/` → **출력 없음** (`BASE_STAGING`으로 통일됐다)
+- [ ] `grep -rn "extract_plugins" plugins/claude-sync/skills/` → **출력 없음**
+- [ ] `grep -rn "MCP_STAGING" plugins/claude-sync/skills/` → **출력 없음** (`BASE_STAGING`으로 통일됐다)
+- [ ] 위 둘의 범위가 `skills/`인 것은 실수가 아니다 — `tests/`에는 **부재를 거는 가드**(`test_extract_plugins_is_gone_everywhere`, `'[ -f "$MCP_STAGING/mcp-servers.json" ]' not in ...`)가 그 이름을 적어야 하므로, 저장소 전체를 범위로 삼으면 Task 14 Step 1이 지시한 테스트와 **논리적으로 양립 불가**다
 - [ ] `python3 -c "import sys; sys.path.insert(0,'plugins/claude-sync/lib'); import plugin_config as p, keyed_sync as k; assert p.UnknownBackupSchema is k.UnknownBackupSchema"` → 조용히 종료
 - [ ] `test_mcp_state_machine.py`의 판정표 시나리오가 **어댑터 셋**으로 돈다 (`-v`로 `[mcp]`·`[plugins:extraKnownMarketplaces]`·`[plugins:pluginConfigs]` 확인)
 - [ ] `test_recognize_adapter_list_covers_every_keyed_sync_importer`가 `plugin_config`를 포함한 채 통과한다
@@ -7319,7 +7338,6 @@ git commit -m "docs: plugins.json이 키 단위로 병합된다는 사실을 여
 | 다운그레이드 3선택지 대화 문단 셋(`sync-backup:262-278`·`sync-restore:142·144·331-338`·`sync-status:96`) | spec 13장 |
 | 2.x 배포 순서 경고 **네 곳** — 전부 `mcp-servers.json` 전용이다 | spec 13장 두 번째 표 |
 | 실환경 스모크 — 확장 포맷의 의도된 형태, 객체 평탄화의 성격, `install`의 기본 스코프 | spec 14.5 |
-| **`update_base.py "$BASE_STAGING"` 오사용을 잡는 테스트가 없다** | Task 14 Step 4b에서 확인된 구멍 |
 | **`reconcile_restore.py:108-111·126-129`의 비원자적 로컬 쓰기** — `open(local,"wb")`가 선-truncate한다. ENOSPC로 중간에 죽으면 `~/.claude/agents/foo.md`가 **잘린 채** 남고, 예외가 traceback으로 서서 `write_base`가 실행되지 않아 base는 옛 값 그대로다. 다음 판정이 `L≠S, R==S` → `local_ahead` → **다음 백업이 잘린 로컬을 레포의 온전한 사본 위에 push한다.** Task 1이 막은 것과 같은 계열이다. `ks.dump_bytes`가 생겼으므로 두 곳 다 한 줄 교체다 | Task 1 quality review I3 |
 | 고정 `.tmp` 이름은 동시 실행에서 원자성이 무력화된다. 코드베이스에 락이 하나도 없어(전수 grep 0건) 동시 실행을 전제하지 않는 설계와는 일관된다. `mkstemp`로 바꾸면 잔존 파일 이름이 무작위가 되어 `.gitignore` 대응이 어려워지는 역효과가 있다 | Task 1 quality review M3 |
 | `sync_state.write_base`의 `data is None` 삭제 분기가 `<path>.tmp`를 지우지 않는다. base 디렉토리를 walk하는 코드가 없어 현재 영향은 없다 | Task 1 quality review M4 |
