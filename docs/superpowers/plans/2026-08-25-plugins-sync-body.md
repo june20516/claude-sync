@@ -116,7 +116,7 @@ plan ①의 실행에서 Task 2~7 **매번** SURVIVE가 나왔고 대부분 plan
 | **I/O 층** | `open` 모드(`"rb"`→`"r"`), `except FileNotFoundError`→`except OSError`, 파일 부재를 예외로/예외를 부재로, `os.replace` 제거 |
 | **입력 축** | **테스트가 준 입력을 뺀다** — 선택 인자(`choices`의 한 항목·`secrets`), 픽스처 값(레포 값을 확장 포맷→불리언, options를 비움), 회차(backup 2회→1회), 에뮬레이터가 만드는 **상태**(의존성 자식을 넣지 않음), 에뮬레이터 명령의 **규약**(멱등성·exit code·값의 모양 — "상태"가 이것을 덮지 않는다) |
 
-**다섯째 축은 Task 13 품질 리뷰의 발견이다(실측).** 앞의 넷은 전부 **프로덕션 가드**를 뒤집는데, 그 축에서는 *"테스트가 준 입력이 단정을 좌우하지 않는다"*는 결함이 **원리적으로 나오지 않는다.** 이 축을 돌려야만 드러나는 SURVIVE가 Task 13 초판에 **다섯** 있었다(그 밖에 의도적으로 남긴 회차 카나리아 SURVIVE가 따로 있다 — 아래 셋째 항목). 다섯 중 둘은 시나리오가 자기 주제(spec 6.3의 부분 입력)를 하나도 재지 않는데도 초록이었고, 하나는 에뮬레이터가 인용한 **실측 행**(N1)이 저장소 어디에도 고정되지 않은 자리였다.
+**다섯째 축은 Task 13 품질 리뷰의 발견이다(실측).** 앞의 넷은 전부 **프로덕션 가드**를 뒤집는데, 그 축에서는 *"테스트가 준 입력이 단정을 좌우하지 않는다"*는 결함이 **원리적으로 나오지 않는다.** 이 축을 돌려야만 드러나는 SURVIVE가 Task 13 초판에 **다섯** 있었다(그 밖에 의도적으로 남긴 회차 카나리아 SURVIVE가 **셋** 따로 있다 — 아래 셋째 항목). 다섯 중 둘은 시나리오가 자기 주제(spec 6.3의 부분 입력)를 하나도 재지 않는데도 초록이었고, 하나는 에뮬레이터가 인용한 **실측 행**(N1)이 저장소 어디에도 고정되지 않은 자리였다.
 
 **한 줄로 줄이면 이렇다: 시나리오를 적을 때 "이 입력을 빼면 단정이 죽는가"를 물어야 하고, 그 물음은 Step 1의 코드를 적는 단계에서 한 번, Step 4b에서 다시 한 번 물어야 한다.** 죽지 않는다면 그 시나리오는 자기 이름이 약속한 것을 재지 않는다.
 
@@ -5892,7 +5892,12 @@ def test_prune_removes_orphaned_auto_entries(tmp_path):
 # --- 14.2 #1 부트스트랩 / #6 레포 쓰기 실패 ---
 
 def test_backup_bootstraps_the_base_blob_with_three_sections(tmp_path):
-    """7.4의 배선 결함을 잡는 유일한 테스트 — base가 영영 생성되지 않으면 삭제 전파가 죽는다."""
+    """7.4의 배선 결함을 잡는 유일한 테스트 — base가 영영 생성되지 않으면 삭제 전파가 죽는다.
+
+    **단 `Device` 모형의 배선이지 SKILL.md의 배선이 아니다.** 실제 배선의 같은 계열
+    오사용(`update_base.py "$BASE_STAGING"` → `"$SYNC_REPO"`)은 어떤 테스트도 잡지
+    못한다 — Task 14 Step 4b가 그 자리를 다룬다.
+    """
     dev = make_device(tmp_path)
     dev.cli.marketplace_add("m", "o/r")
     dev.cli.install("p@m")
@@ -6314,7 +6319,12 @@ COMPARE = os.path.abspath(os.path.join(SKILLS, "sync-status", "scripts", "compar
 # --- 14.2 #2 선택지 실행 후 2회 백업 ---
 
 def test_case4_keep_brings_the_plugin_back_and_stabilizes(tmp_path):
-    """9.3.4 케이스 4의 "유지" — 레포로 되돌아간 뒤 부활·소멸이 반복되지 않는다."""
+    """9.3.4 케이스 4의 "유지" — 레포로 되돌아간 뒤 부활·소멸이 반복되지 않는다.
+
+    복원 뒤 두 backup을 한 회차로 줄여도 아래 단정은 참이다(실측 777 passed).
+    전방 카나리아이고, 이 파일의 다른 2회차들과 같은 지위다. 하중을 지는 것은
+    `set_repo` 앞의 최초 백업이다 — 그것을 지우면 CAUGHT다(실측).
+    """
     dev = make_device(tmp_path)
     dev.cli.marketplace_add("m", "o/r")
     dev.cli.install("X@m")
@@ -7099,6 +7109,7 @@ git rm plugins/claude-sync/skills/sync-backup/scripts/extract_plugins.py
 - 5-5의 `marketplace remove`를 bash 블록 안으로 옮기기 → 실행 금지 가드가 잡아야 한다
 - `check_status.py`의 플러그인 블록을 되살리기 → status 가드가 잡아야 한다
 - 4.5단계를 다시 5.5로 되돌리기 → 탐지 순서 가드가 잡아야 한다
+- **입력 축.** 이 task에는 에뮬레이터 픽스처가 없지만 축은 적용된다 — 위에서 단정을 더하기로 했다면, 그 단정이 딛고 선 **테스트 쪽 입력**(`COMPAT_WIRING`의 앵커, `test_plugin_cycle.py`의 픽스처)을 하나씩 빼고 그 단정이 죽는지 확인한다. 죽지 않으면 그 단정은 자기 이름이 약속한 것을 재지 않는다
 
 - [ ] **Step 5: Commit**
 

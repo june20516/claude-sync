@@ -207,7 +207,12 @@ def make_device(tmp_path, repo_init=None):
 # --- 14.2 #1 부트스트랩 / #6 레포 쓰기 실패 ---
 
 def test_backup_bootstraps_the_base_blob_with_three_sections(tmp_path):
-    """7.4의 배선 결함을 잡는 유일한 테스트 — base가 영영 생성되지 않으면 삭제 전파가 죽는다."""
+    """7.4의 배선 결함을 잡는 유일한 테스트 — base가 영영 생성되지 않으면 삭제 전파가 죽는다.
+
+    **단 `Device` 모형의 배선이지 SKILL.md의 배선이 아니다.** 실제 배선의 같은 계열
+    오사용(`update_base.py "$BASE_STAGING"` → `"$SYNC_REPO"`)은 어떤 테스트도 잡지
+    못한다 — Task 14 Step 4b가 그 자리를 다룬다.
+    """
     dev = make_device(tmp_path)
     dev.cli.marketplace_add("m", "o/r")
     dev.cli.install("p@m")
@@ -423,7 +428,12 @@ def test_restore_rejects_an_unknown_choice_section(tmp_path):
 # --- 14.2 #2 선택지 실행 후 2회 백업 ---
 
 def test_case4_keep_brings_the_plugin_back_and_stabilizes(tmp_path):
-    """9.3.4 케이스 4의 "유지" — 레포로 되돌아간 뒤 부활·소멸이 반복되지 않는다."""
+    """9.3.4 케이스 4의 "유지" — 레포로 되돌아간 뒤 부활·소멸이 반복되지 않는다.
+
+    복원 뒤 두 backup을 한 회차로 줄여도 아래 단정은 참이다(실측 777 passed).
+    전방 카나리아이고, 이 파일의 다른 2회차들과 같은 지위다. 하중을 지는 것은
+    `set_repo` 앞의 최초 백업이다 — 그것을 지우면 CAUGHT다(실측).
+    """
     dev = make_device(tmp_path)
     dev.cli.marketplace_add("m", "o/r")
     dev.cli.install("X@m")
