@@ -173,6 +173,15 @@ class Device:
         return plan
 
 
+# `plan_plugins.py plan`의 최상위 필드 전부. **삭제 단계가 없다**는 사실을 이름이 아니라
+# 집합으로 고정한다(9.3.5). 계획에 단계가 늘면 여기서 먼저 걸린다.
+PLAN_TOP_LEVEL_KEYS = {
+    "status", "sections", "marketplace_add", "skipped_always_known", "install",
+    "skipped_already_installed", "disable_after_install", "config_keys",
+    "repo_values", "local_values", "depends_on", "unrestorable_reasons",
+}
+
+
 def repo_doc(repo):
     return pc.load_backup(os.path.join(repo, pc.BACKUP_RELPATH))
 
@@ -440,8 +449,12 @@ def test_marketplace_keep_returns_it_without_running_remove(tmp_path):
     plan = dev.restore(choices={"extraKnownMarketplaces": {"keep_stale": ["m"]}})
     # 계획에 **삭제 단계 자체가 없다**(9.3.5 — 연쇄 삭제가 소속 플러그인까지 지우므로
     # 자동 실행하지 않는다). 이 줄이 없으면 아래 로컬 단정은 "하네스가 remove를 부르지
-    # 않는다"를 되풀이할 뿐이고, 계획에 삭제 단계가 생기는 날 아무도 말하지 않는다.
-    assert [key for key in plan if "remove" in key] == []
+    # 않는다"를 되풀이할 뿐이다.
+    # **이름으로 거르지 않고 화이트리스트로 잰다.** "remove가 들어간 키가 없다"는
+    # uninstall·prune·purge나 다른 이름을 놓치고, 그러면 주석이 코드보다 넓어진다.
+    # 여기서는 최상위 필드 집합을 통째로 고정하므로 **이름과 무관하게** 새 단계가 생기면
+    # 말한다. 늘어난 필드가 정당하면 이 목록에 더하면서 그 단계가 삭제인지 확인하면 된다.
+    assert set(plan) == PLAN_TOP_LEVEL_KEYS
     dev.backup()
     assert "m" in repo_doc(dev.repo)["extraKnownMarketplaces"]
     assert "m" in dev.local()["extraKnownMarketplaces"]
@@ -449,19 +462,24 @@ def test_marketplace_keep_returns_it_without_running_remove(tmp_path):
 
 # --- 14.2 #3 보류 후 침묵 ---
 
-def test_declined_config_silences_status_until_the_repo_value_changes(tmp_path):
-    """6.4 — 보류를 고른 뒤 status가 조용해야 하고, 레포 값이 바뀌면 다시 보고해야 한다."""
-    repo_init = {"enabledPlugins": {"delta@m": True},
+# 아래 두 시나리오가 **문자 그대로 같은** 픽스처를 쓴다. 같은 파일의 BLOCKED_REPO와 같은
+# 규율이다 — 한 쌍이 공유하는 리터럴은 상수로 올린다. 셋 이상으로 늘릴 때가 아니라
+# **둘이 문자 그대로 같아진 순간**이 기준이다(갈리면 한쪽만 다른 케이스로 미끄러진다).
+DECLINED_REPO = {"enabledPlugins": {"delta@m": True},
                  "extraKnownMarketplaces": {"m": GH},
                  "pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}}
-    dev = make_device(tmp_path, repo_init=repo_init)
+
+
+def test_declined_config_silences_status_until_the_repo_value_changes(tmp_path):
+    """6.4 — 보류를 고른 뒤 status가 조용해야 하고, 레포 값이 바뀌면 다시 보고해야 한다."""
+    dev = make_device(tmp_path, repo_init=DECLINED_REPO)
     dev.restore(choices={"pluginConfigs": {"declined": ["delta@m"]}})
     assert dev.held()["pluginConfigs"]["delta@m"]
     section = dev.status()["sections"]["pluginConfigs"]
     assert section["only_repo"] == [] and section["changed"] == []
     assert section["held"]["declined"] == ["delta@m"]
 
-    changed = json.loads(json.dumps(repo_init))
+    changed = json.loads(json.dumps(DECLINED_REPO))
     changed["pluginConfigs"]["delta@m"]["options"]["extra"] = pc.SENTINEL
     set_repo(dev.repo, changed)
     assert dev.status()["sections"]["pluginConfigs"]["only_repo"] == ["delta@m"]
@@ -479,13 +497,14 @@ def test_declined_config_keeps_the_repo_entry_across_two_backups(tmp_path):
     거는 이유는 6.4가 지목하는 초판의 형태(apply-base가 레포 값을 base에 그대로 기록)가
     그 두 겹을 **함께** 우회하고, 그때 다음 백업이 케이스 3(삭제)으로 착지하기 때문이다.
     """
-    repo_init = {"enabledPlugins": {"delta@m": True},
-                 "extraKnownMarketplaces": {"m": GH},
-                 "pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}}
-    dev = make_device(tmp_path, repo_init=repo_init)
+    dev = make_device(tmp_path, repo_init=DECLINED_REPO)
     dev.restore(choices={"pluginConfigs": {"declined": ["delta@m"]}})
     assert "delta@m" not in dev.base()["pluginConfigs"]
     dev.backup()
+    # 14.2 #3이 요구하는 2회차다. **오늘은 1회차와 같은 상태를 낸다** — 두 회차를 한 회차로
+    # 줄여도 아래 단정은 참이다(실측). 그래도 남기는 것은 전방 카나리아이기 때문이다:
+    # 보류가 회차 사이에 풀리는 형태의 회귀는 2회차에서만 드러난다. 시나리오 1
+    # (test_case4_keep…)의 2회차는 이와 달리 **실제로 값을 바꾸는** 회차다.
     dev.backup()
     assert repo_doc(dev.repo)["pluginConfigs"]["delta@m"]["options"] == {
         "apiKey": pc.SENTINEL}
@@ -495,7 +514,20 @@ def test_declined_config_keeps_the_repo_entry_across_two_backups(tmp_path):
 
 
 def test_partially_entered_config_does_not_drop_the_other_keys(tmp_path):
-    """14.1 — 세 키 중 두 개만 입력해도 레포의 세 번째 키가 사라지지 않는다 (6.3)."""
+    """14.1 — 세 키 중 두 개만 입력해도 레포의 세 번째 키가 사라지지 않는다 (6.3).
+
+    **"사라지지 않음"만 재면 이 시나리오의 두 입력 중 어느 것도 단정을 좌우하지 않는다**
+    (실측 — `declined`만 빼도, `secrets`만 빼도 스위트가 그대로 통과했다). 보류가 없으면
+    그 항목은 `conflicts.repo_kept`로 떨어지는데 **그때도 레포 값은 보존되기** 때문이다.
+    두 경로가 실제로 갈리는 곳은 다음 실행의 침묵이다 —
+
+      [declined 있음] status: changed == []
+      [declined 없음] status: changed == ["p@m"]  ← 영원히 다시 묻는다
+
+    spec 6.3이 부분 입력에 보류를 요구하는 **이유 자체**가 그것이고, 14.2 #5가 경고한
+    형태("사라지지 않음만 보므로 영원히 다시 묻는 실패를 통과시킨다")의 pluginConfigs
+    판이다. enabledPlugins와 달리 그것을 대신 잡는 형제 시나리오가 없으므로 여기서 잰다.
+    """
     repo_init = {"enabledPlugins": {"p@m": True},
                  "extraKnownMarketplaces": {"m": GH},
                  "pluginConfigs": {"p@m": {"options": {k: pc.SENTINEL
@@ -503,9 +535,15 @@ def test_partially_entered_config_does_not_drop_the_other_keys(tmp_path):
     dev = make_device(tmp_path, repo_init=repo_init)
     dev.restore(secrets={"p@m": {"a": "1", "b": "2"}},
                 choices={"pluginConfigs": {"declined": ["p@m"]}})
+    # 입력한 두 키만 로컬에 들어간다 (N2 — `install --config`는 부분 병합이다).
+    # 이 줄이 secrets를 단정에 싣는 유일한 자리다.
+    assert dev.local()["pluginConfigs"]["p@m"]["options"] == {"a": "1", "b": "2"}
+    assert dev.held()["pluginConfigs"]["p@m"]                       # 6.3 → 보류로 기록된다
     dev.backup()
     dev.backup()
     assert sorted(repo_doc(dev.repo)["pluginConfigs"]["p@m"]["options"]) == ["a", "b", "c"]
+    # **위 줄만으로는 두 경로가 갈리지 않는다**(위 docstring). 갈리는 곳이 여기다.
+    assert dev.status()["sections"]["pluginConfigs"]["changed"] == []
 
 
 # --- 14.2 #4 보류 진입 → 이탈 ---
@@ -525,6 +563,12 @@ def test_auto_dependency_round_trip_keeps_the_entry_in_the_repo(tmp_path):
     dev.cli.uninstall("z@m")
     dev.cli.set_manifest("p@m", ["z@m"])
     dev.cli.install("p@m")                              # z가 auto로 다시 들어온다
+    # **주석이 약속한 사실을 확인한다.** 자식이 로컬에 들어오지 않으면 아래가 재는 것은
+    # "레포에만 있고 auto로 표시된 키가 보류된다"이지 14.2 #4/H1이 요구하는 **로컬에
+    # 되살아난 auto 의존성**이 아니다(실측 — 이 줄이 없으면 에뮬레이터가 자식을 넣지
+    # 않게 만드는 변조가 스위트 전체에서 살아남았다). N1의 계약 자체는
+    # test_plugin_cli.py가 잰다.
+    assert dev.local()["enabledPlugins"]["z@m"] is True
     report = dev.backup()
     assert report["sections"]["enabledPlugins"]["held"]["auto"] == ["z@m"]
     assert report["sections"]["enabledPlugins"]["deleted"] == []
@@ -552,8 +596,10 @@ def test_local_directory_marketplace_never_reaches_the_repo(tmp_path):
     dev.cli.install("q@gh")
     dev.backup()
     doc = repo_doc(dev.repo)
-    assert doc["extraKnownMarketplaces"] == {"gh": {"source": {"source": "github",
-                                                               "repo": "o/r"}}}
+    # 값의 **모양**은 여기서 다시 적지 않는다 — `marketplace_add`가 무엇을 쓰는지는
+    # 에뮬레이터의 계약이고 test_plugin_cli.py가 잰다(추정 6번). 여기서 재는 것은
+    # "directory 것만 빠지고 github 것은 그대로 올라간다"뿐이다.
+    assert doc["extraKnownMarketplaces"] == {"gh": GH}
     assert doc["enabledPlugins"] == {"q@gh": True}
     assert dev.backup()["sections"]["enabledPlugins"]["deleted"] == []
 
@@ -612,15 +658,20 @@ def test_blocked_install_is_recovered_by_the_next_restore(tmp_path):
 
 # --- 14.2 #8 H3 탈출구 왕복 ---
 
+# 아래 두 시나리오가 **문자 그대로 같은** 픽스처를 쓴다(DECLINED_REPO와 같은 규율).
+# 레포 값이 확장 포맷이라는 것이 H3의 술어이므로, 이 값이 불리언으로 미끄러지면 두
+# 시나리오가 **동시에** 주제를 잃는다 — 한 자리에 두면 그 미끄러짐이 한 번만 일어난다.
+EXTENDED_REPO = {"enabledPlugins": {"p@m": ["1.0.0"]},
+                 "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}}
+
+
 def test_extended_value_escape_hatch_round_trip(tmp_path):
     """7.3 — 탈출구 실행 → backup 2회 → 레포 값이 true → 그 뒤 uninstall이 케이스 3으로 전파.
 
     #4·#5 어느 것도 이 경로를 덮지 않는다. "지우려면 먼저 불리언화"가 실제로 성립하는지가
     여기서 판정된다.
     """
-    dev = make_device(tmp_path, repo_init={
-        "enabledPlugins": {"p@m": ["1.0.0"]},
-        "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}})
+    dev = make_device(tmp_path, repo_init=EXTENDED_REPO)
     plan = dev.restore()
     assert plan["sections"]["enabledPlugins"]["add"] == ["p@m"]     # 설치는 한다
     assert dev.local()["enabledPlugins"]["p@m"] is True
@@ -654,10 +705,15 @@ def test_uninstall_before_the_escape_hatch_does_not_propagate(tmp_path):
 
     삭제가 전파되지 않고 다음 restore가 다시 설치한다. 안내 문구가 "먼저 불리언화"를
     적어야 하는 이유이고, 이 성질이 깨지면 그 안내가 거짓이 된다.
+
+    **`deleted == []`는 오늘 두 겹으로 참이다** — H3가 그 키를 값 보류로 잡아 판정표를
+    아예 타지 않는 것과, 그 보류가 base에서도 그 키를 빼 두어(next_base) 케이스 3의
+    입력인 "base에 있다"가 성립하지 않는 것. 어느 한쪽만 뒤집어도 참이 유지되므로
+    **단일 변조로는 잡히지 않는다.** 그런데도 거는 이유는 이 시나리오가 재는 것이 그 둘의
+    **조합**이기 때문이다 — 7.3의 약속("지우려면 먼저 불리언화")은 두 겹이 함께 설 때만
+    참이고, 뒤따르는 두 단정(레포 값 보존·다음 restore의 재설치)이 그 조합을 잰다.
     """
-    dev = make_device(tmp_path, repo_init={
-        "enabledPlugins": {"p@m": ["1.0.0"]},
-        "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}})
+    dev = make_device(tmp_path, repo_init=EXTENDED_REPO)
     dev.restore()
     dev.backup()
     dev.cli.uninstall("p@m")
