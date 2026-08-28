@@ -62,6 +62,10 @@ EMPTY_HELD = {"pluginConfigs": {}, "release": {"enabledPlugins": []}}
 # CLI가 이 파일을 v3으로 올리면 여기도 올려야 한다 — 그때까지 **모든 기기에서 동시에**
 # enabledPlugins·pluginConfigs 백업이 멈춘다. 가시적이고 되돌릴 수 있는 정지이므로
 # fail-closed 자체는 옳다(반대편은 N6, 되돌릴 수 없다). 갱신 의무만 잊지 말 것.
+# **`scope` 키의 존재도 이 게이트와 같은 전제다.** read_installed는 `scope` 부재를
+# "user 스코프 아님"으로 통과시키므로, 그 키를 달지 않는 CLI 판이 나오면 예외가 아니라
+# installed_ids와 auto_ids가 **함께 0개**가 된다 — 버전 게이트와 달리 조용하다.
+# 스키마를 확인할 때 이 키의 존재도 함께 실측할 것.
 INSTALLED_SCHEMA_VERSION = 2
 
 # 사용자에게 reason으로 그대로 나가는 문구의 꼬리. 같은 함수 안에서 갈래마다 다르면
@@ -766,7 +770,14 @@ def held_kinds(section, keys, *, auto_ids, directory_names, held_configs, repo_n
 
     한 키가 여러 종류에 걸칠 수 있으므로 첫 종류에서 멈추지 않는다.
     **어느 종류에도 걸리지 않는 키가 있으면 ValueError다** — 조용히 빠뜨리면 그 키가
-    사용자 보고에서 통째로 사라진다(불변식 6). 스크립트가 그 섹션을 skipped로 접는다.
+    사용자 보고에서 통째로 사라진다(불변식 6).
+
+    **접히는 것은 섹션이 아니라 문서 전체다.** 이 함수는 섹션 루프 안에서 try 없이
+    불리고, 예외는 collect()/compare()를 빠져나가 main()의 except 튜플에 걸린다 —
+    dump_backup이 같은 ValueError에 대해 적은 것과 같은 갈래다. 실측: 최상위
+    status="skipped", **sections 키 자체가 없고**, 레포 파일은 갱신되지 않는다.
+    결과는 안전하지만(fail-closed) 값매김이 다르다 — "한 섹션만 접히는 경미한 버그"가
+    아니라 **그 기기의 플러그인 백업/상태 단계 전체가 멈춘다.**
     """
     kinds = {name: [] for name in HELD_KINDS[section]}
     for key in sorted(keys):
@@ -791,7 +802,8 @@ def held_context(local, repo, *, auto_ids, held_state):
     """hold 훅과 held_kinds가 **같은 입력에서 같은 값**을 보게 하는 컨텍스트.
 
     두 곳이 각자 계산하면 "보류로 판정했는데 보고에서는 종류를 못 찾는" 상태가 생기고,
-    held_kinds가 그것을 ValueError로 막으므로 섹션이 통째로 skipped가 된다.
+    held_kinds가 그것을 ValueError로 막으므로 **플러그인 단계 전체가 skipped가 된다**
+    (섹션 하나가 아니다 — held_kinds의 docstring).
     호출부(스크립트)는 이 함수를 한 번 불러 hold와 held_kinds 양쪽에 같은 값을 넘긴다.
 
     키 이름은 _make_hold와 held_kinds의 **키워드 인자 이름과 같다** — 양쪽 다
@@ -813,7 +825,9 @@ def held_context(local, repo, *, auto_ids, held_state):
 # extraKnownMarketplaces에 없어도 "아는 이름"으로 치는 다섯. **이 파일이 정하는 것은
 # 목록과 그 두 쓰임뿐이다** — _plugin_restorable(레포에 소스가 없어도 복원 가능)과
 # orphaned(고아가 아니다). 이 다섯을 **등록 명령에서 빼는 처리는 여기 없다**; 그것은
-# restore 스크립트의 몫이고 아직 존재하지 않는다.
+# restore 스크립트의 몫이고 `plan_plugins`의 to_register·skipped_always_known이 그것이다
+# (앞 판은 "아직 존재하지 않는다"고 적었는데 후기 task가 그것을 만들었다 — 이 상수를
+# 줄이거나 개명하면 등록 단계의 제외 목록이 함께 움직인다).
 # claude-plugins-official은 이미 자동 설치되어 등록이 무의미하고, 나머지 넷은
 # 마켓플레이스가 아닌 **의사 출처**라 등록이 실패한다.
 ALWAYS_KNOWN = frozenset({
@@ -825,8 +839,10 @@ PSEUDO_SOURCES = ALWAYS_KNOWN - {"claude-plugins-official"}
 # 제3자가 쓸 수 없는 예약 이름. **이 파일은 목록만 정하고 어디서도 쓰지 않는다** —
 # restorable도 orphaned도 이 집합을 보지 않는다. 미리 거르지 않는 것이 8.3이고(정당한
 # 소유자일 수 있다), 등록을 시도해 실패했을 때 "예약된 이름이라 거부되었다"로 갈래를
-# 구별해 보고하는 것은 **restore 스크립트가 할 일이다**(10.2). 그 소비자가 생기기
-# 전까지 이 상수의 사용처는 열거형 대조 테스트뿐이다.
+# 구별해 보고하는 것은 **restore 스크립트가 할 일이다**(10.2). **오늘의 소비자는
+# `plan_plugins.marketplace_add`의 `"reserved"` 불리언이다** — 앞 판은 "사용처가 열거형
+# 대조 테스트뿐"이라 적었는데 후기 task가 그 소비자를 만들었다. 아직 없는 것은 등록
+# **실패 후** 갈래를 구별하는 처리뿐이다(10.2의 나머지).
 # always-known 판정이 우선한다 — claude-plugins-official은 ALWAYS_KNOWN에서 먼저
 # 걸러지므로 이 갈래에 도달하지 않는다.
 RESERVED_MARKETPLACE_NAMES = frozenset({
@@ -1037,9 +1053,12 @@ def hooks_and_context(local, repo, *, auto_ids, held_state):
 
     스크립트가 build_hooks와 held_context를 따로 부르면 두 입력이 같다는 보장이
     호출부의 규율뿐이다. 어긋나면 hold가 보류한 키를 held_kinds가 분류하지 못해
-    ValueError가 나고 그 섹션이 통째로 skipped가 된다 — 무엇도 잘못되지 않았는데
-    타 기기 항목이 pass-through로만 남는다. 세 스크립트가 같은 두 줄을 각자 쓰는
-    대신 이것을 부르면 (local, repo)를 한 번만 받으므로 갈릴 자리가 없다.
+    ValueError가 나고 **그 기기의 플러그인 단계 전체가 skipped가 된다** — 섹션 하나가
+    아니다(held_kinds의 docstring). 무엇도 잘못되지 않았는데 레포는 갱신되지 않고
+    보고에는 sections 자체가 없다. **호출부는 둘이다** — collect_plugins와
+    compare_plugins. plan_plugins는 held_kinds를 쓰지 않으므로 build_hooks만 부르고,
+    그것이 옳다. 셋이 같은 두 줄을 각자 쓰는 대신 이것을 부르면 (local, repo)를 한
+    번만 받으므로 갈릴 자리가 없다.
 
     컨텍스트는 **한 번만** 만들어 build_hooks에 _context로 건네고 그대로 돌려준다 —
     훅이 닫는 세 값(auto_ids·directory_names·held_configs)이 여기서 돌려주는 dict의

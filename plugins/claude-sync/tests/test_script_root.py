@@ -945,6 +945,10 @@ def test_status_reports_plugin_sections_through_the_new_script():
     assert "enabledPlugins" not in source
     assert "plugins.json" not in source
     assert "import json" not in source
+    # **"모두 동기화 상태"가 전칭으로 읽히면 안 된다.** 이 스크립트가 열거하는 것은
+    # agents·skills·CLAUDE.md뿐인데, 범위를 적는 절이 사라지면 소비자가 그 한 줄을
+    # "전부 동일"로 요약해 플러그인·MCP의 차이가 조용히 사라진다.
+    assert "따로 보고합니다" in source
 
 
 def test_extract_plugins_is_gone_everywhere():

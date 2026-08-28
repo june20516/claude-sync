@@ -58,6 +58,11 @@ for key, label in labels:
             print("  " + f)
 
 if not any(buckets[k] for k in buckets if k != "in_sync"):
-    print("\n모든 파일이 동기화 상태입니다.")
+    # **전칭으로 읽히면 안 된다.** iter_synced_relpaths가 열거하는 것은 agents·skills·
+    # CLAUDE.md뿐이고 플러그인·MCP의 두 백업 파일은 여기 포함되지 않는다 — 그 둘은
+    # 2단계의 compare_plugins·compare_mcp가 따로 판정한다. 범위를 적지 않으면 소비자가
+    # 이 한 줄을 "전부 동일"로 요약해, 플러그인·MCP의 차이가 조용히 사라진다.
+    print("\n파일(에이전트·스킬·CLAUDE.md)은 모두 동기화 상태입니다."
+          " 플러그인·MCP 서버는 따로 보고합니다.")
 
 print()
