@@ -5756,6 +5756,10 @@ class Device:
                 continue
             self.cli.disable(plugin_id)
         for plugin_id, options in (secrets or {}).items():          # 4단계
+            # 실제 흐름은 **계획이 지목한 키만** 되묻는다. 대조하지 않으면 계획이
+            # 요구하지 않은 id에도 설정이 채워져 실제 흐름이 만들 수 없는 상태가 되고,
+            # 이어지는 백업이 그 값을 레포로 민다(r2 리뷰 m12).
+            assert plugin_id in plan["config_keys"], plugin_id
             if self._blocked(plan, plugin_id, blocked):
                 continue
             self.cli.install(plugin_id, config=options)
@@ -5861,7 +5865,8 @@ def test_marketplace_remove_cascades_to_member_plugins(tmp_path):
 def test_dependency_install_marks_auto_and_explicit_install_clears_it(tmp_path):
     """N6 — 명시적 설치는 auto 표식을 **되돌릴 수 없게** 지운다."""
     cli = PluginCLI(str(tmp_path))
-    cli.install("parent@m", dependencies=["child@m"])
+    cli.set_manifest("parent@m", ["child@m"])
+    cli.install("parent@m")
     assert pc.read_auto_ids(cli.installed_path) == frozenset({"child@m"})
     cli.install("child@m")
     assert pc.read_auto_ids(cli.installed_path) == frozenset()
@@ -5869,7 +5874,8 @@ def test_dependency_install_marks_auto_and_explicit_install_clears_it(tmp_path):
 
 def test_prune_removes_orphaned_auto_entries(tmp_path):
     cli = PluginCLI(str(tmp_path))
-    cli.install("parent@m", dependencies=["child@m"])
+    cli.set_manifest("parent@m", ["child@m"])
+    cli.install("parent@m")
     cli.uninstall("parent@m")
     cli.prune()
     assert "child@m" not in cli.settings()["enabledPlugins"]
@@ -5980,7 +5986,11 @@ def test_a_blocked_marketplace_stops_the_install_and_config_steps(tmp_path):
 
 **규정 정정 여섯째(P6) — `test_install_flattens_an_existing_object_value`의 "실측"은 미측정 칸이었다.** 브리프 C1과 spec 1.2의 표는 **네 행뿐이고**(배열/미설치·배열/재실행·객체/미설치·건드리지 않음) **객체/재실행 행이 없다.** 그런데 같은 규정의 Step 3이 `set_enabled`에 `_mark_installed`를 함께 부르게 했으므로 이 픽스처가 만드는 것은 객체/**재실행**이다 — 규정 안에서 닫힌 모순이고, 실측된 객체 행(미설치)에는 도달할 수 없다. 결론(`true`가 된다)은 맞고 **근거가 추정**이므로 그렇게 적는다. 같은 이유로 C1 1행(배열/미설치)도 이 픽스처로는 표현할 수 없다.
 
-**3단계는 이 테스트가 재지 않는다.** 에뮬레이터의 `disable`이 미설치 id에 아무것도 쓰지 않아(Step 3의 `_set_value`) 3단계 필터를 지워도 관측되지 않는다 — 필터를 세 곳에 다 두는 근거는 관측이 아니라 9.3.2다.
+**규정 정정 여덟째(P8) — 초판이 3단계에 붙인 "미측정" 사유가 실측으로 거짓이었다.** 초판은 *"에뮬레이터의 `disable`이 미설치 id에 아무것도 쓰지 않아(Step 3의 `_set_value`) 3단계 필터를 지워도 관측되지 않는다"*라고 적었다. **결론(미측정)은 맞고 사유가 두 겹으로 틀리다.** ㉠ 위 `_blocked_device`가 만드는 계획은 `disable_after_install`이 **비어 있다** — `BLOCKED_REPO`의 `enabledPlugins`가 둘 다 `true`라 `value_command`가 `"disable"`을 내지 않기 때문이다. 즉 3단계 루프가 **한 번도 돌지 않아서** 관측되지 않는 것이지 `disable`이 무력해서가 아니다(실측). ㉡ 그리고 그 사유는 일반적으로도 거짓이다 — `pluginConfigs` 경로로 candidates에 들어온 **이미 설치된** id는 로컬 `enabledPlugins`에 값이 있으므로 `disable`이 **exit 0으로 값을 쓴다**(`plan_plugins.py:208-212`가 같은 사실을 적는다). 실측: 레포를 `{"enabledPlugins": {"p@m": false}, "pluginConfigs": {"p@m": {"options": {"token": …}}}}`로 두고 로컬에 `p@m`을 설치하면 계획이 `disable_after_install: ["p@m"]`을 내고, 3단계 필터가 있으면 `p@m`이 `true`로 남지만 **필터를 지우면 `false`로 바뀐다.**
+
+**그러므로 3단계가 미측정인 것은 구조적 한계가 아니라 시나리오의 부재다.** 관측하려면 레포 값이 `false`이면서 `pluginConfigs`로 candidates에 들어오는 **이미 설치된** id를 세우면 된다 — 14.2 #7("부분 실패 후 재실행 수렴")이 정확히 그 모양이다. 필터를 세 곳에 다 두는 근거는 여전히 관측이 아니라 9.3.2다. 아래 Step 4b의 열두째 변조가 이 공백을 목록에 드러내 둔다.
+
+**규정 정정 아홉째(P9) — Step 1 코드 블록이 `install`의 옛 시그니처를 남겨 두었다.** 위 P7이 `install(..., dependencies=())`를 `set_manifest`로 옮겼는데, 그 정정이 **산문에만 반영되고 Step 1 코드 블록은 동기화되지 않았다.** 실제 시그니처는 `install(self, plugin_id, config=None)`이므로 옛 블록을 그대로 옮기면 `TypeError`로 죽는다. Task 12의 두 자리(`test_dependency_install_marks_auto_and_explicit_install_clears_it`·`test_prune_removes_orphaned_auto_entries`)와 **Task 13 Step 1의 `test_auto_dependency_round_trip_keeps_the_entry_in_the_repo`** 한 자리를 `set_manifest` → `install` 두 줄로 고쳤다 — Task 13 절은 산문이 이미 `set_manifest`를 지시하고 있어 **한 규정 안에서 산문과 코드가 모순이었다.**
 
 권한 기반 테스트에는 `from marks import requires_permission_bits`를 붙인다(`test_base_does_not_advance_when_the_repo_file_cannot_be_written`).
 
@@ -6196,6 +6206,8 @@ class PluginCLI:
 - `Device.backup`의 `shutil.rmtree(self.staging, ignore_errors=True)`를 지우기 → **잡혀야 한다.** 바로 위 일곱째를 등가로 판정하는 근거 전체가 이 한 줄에 걸려 있다 — rmtree가 없으면 (ii)가 실재하는 상태가 되고, `status "skipped"`인데도 옛 staged 내용이 base를 덮는다. 관측하려면 **base가 빈 채로 staged만 남은 시점**을 만들어야 한다: `backup(push=False)` → `settings.json` 제거 → `backup()` → `base() is None`. 두 번째 백업이 skipped라 새 staged가 생기지 않으므로, rmtree가 있으면 게이트가 끝내 닫히고 없으면 `update_base`가 옛 파일을 올린다. (규정 초판은 이 변조를 지시하지 않았고, 그 결과 rmtree를 지워도 **757 passed**였다 — 실측)
 - **실패 갈래가 다른 파일에 남기는 부작용** 둘 → **잡혀야 한다.** 위 아홉은 전부 **성공 갈래**만 건드린다. ① `uninstall`이 exit 1로 죽는 자리에서도 `_forget_installed`를 부르게 하기 ② `_set_value`가 미설치 id에 exit 1을 내면서 `_mark_installed`는 부르게 하기. 두 파일 중 한쪽만 갱신되면 갈린다는 것이 이 파일의 핵심 위험인데, 실패 갈래의 단정이 전부 `settings()`만 보면 둘 다 조용하다(초판대로면 **758 passed로 둘 다 살아남는다** — 실측). ①은 "설치 기록만 있고 `enabledPlugins`에는 없는 id"가 필요한데 공개 API로는 만들 수 없으므로 파일을 직접 심는다(스코프 테스트와 같은 방식).
 - **`_apply_base`가 알 수 없는 선택지 섹션 이름을 삼키기**(`assert section in pc.SECTIONS`를 `setdefault`로 되돌리기) → **잡혀야 한다.** `plan_plugins`의 `choice_list`가 모르는 섹션을 그냥 무시하므로, 삼키면 **선택을 하나도 적용하지 않은 restore**가 초록으로 지나간다. 정상 이름이 통과하는 절반을 함께 두어 "언제나 죽는다"가 아님을 잰다(초판대로면 SURVIVED — 실측).
+- **restore 3단계의 `blocked` 필터를 지우기** → **오늘은 SURVIVED다(실측). 그것이 이 항목을 목록에 넣는 이유다.** 위 P8이 잰 대로 `_blocked_device`의 계획은 `disable_after_install`이 비어 3단계 루프가 돌지 않으므로, 오늘 이 필터를 지워도 잡는 단정이 하나도 없다. 2·4단계의 같은 변조는 CAUGHT다(실측) — **3단계만 무방비다.** 숨기지 말고 SURVIVED로 보고할 것. 레포 값이 `false`이면서 `pluginConfigs`로 candidates에 들어오는 **이미 설치된** id를 세우는 시나리오(14.2 #7의 모양)가 생기면 이 자리가 CAUGHT로 뒤집힌다.
+- **`Device.restore`의 4단계 가드**(`assert plugin_id in plan["config_keys"]`)를 지우기 → **잡혀야 한다.** 없으면 계획이 되묻지 않은 id에도 설정이 채워져 **실제 흐름이 만들 수 없는 상태**가 만들어지고, 이어지는 백업이 그 값을 레포로 민다 — Task 13이 여섯 시나리오에서 `secrets`를 쓰므로 그때 조용한 fail-open이 된다. 정상 id가 통과하는 절반을 함께 두어 "언제나 죽는다"가 아님을 잰다.
 
 - [ ] **Step 5: Commit**
 
@@ -6221,6 +6233,7 @@ git commit -m "test: CLI 에뮬레이터와 교대 하네스, 부트스트랩·r
 - **`test_base_does_not_advance_when_the_repo_file_cannot_be_written`을 복제할 때 `Device.backup()`으로 바꾸지 말 것.** 그 테스트는 직전 백업이 남긴 스테이징 파일을 마지막 단정에서 읽으려고 `dev._run(COLLECT, ...)`를 직접 부른다. `Device.backup()`은 앞에서 `rmtree`를 돌리므로 그 파일이 사라져 단정이 `FileNotFoundError`로 죽는다(조용하지는 않다).
 - **의존성은 `install`의 인자가 아니라 `set_manifest`로 심는다**(N1 — `dependencies`는 `plugin.json`의 배열이다). 그래서 `Device.restore`의 2단계 `install(plugin_id)`로도 자식이 따라온다(9.3.1). 14.2 #4의 H1 시나리오는 이 픽스처를 먼저 부를 것.
 - **선택지 섹션 이름 오타는 `AssertionError`로 죽는다**(`Device._apply_base`). `plan_plugins`의 `choice_list`가 모르는 섹션을 무시하므로 그 가드가 없으면 "선택을 하나도 적용하지 않은 restore"가 초록으로 지나간다. 9.3.4의 세 선택지를 섹션별로 쓸 때 이 가드가 먼저 말한다.
+- **`set_directory_marketplace`에는 호출자가 하나도 없다**(Task 12 종료 시점, 스위트 전체 grep 0건 — 실측). 그래서 그 값의 모양(Task 12 추정 7번, 실측 없음)을 **지금 어떤 테스트도 고정하지 않고**, 그 자리를 github 모양으로 바꾸는 변조가 **SURVIVED**다(실측). H2 시나리오 `test_local_directory_marketplace_never_reaches_the_repo`가 **첫 소비자**다. url·git 갈래에는 "그 자리를 먼저 고칠 것"이 세 곳에 적혀 있으나 directory 갈래에는 그 안내가 없었다.
 - **`test_plugin_cycle.py`는 이미 책임이 둘이다** — (A) 14.3 에뮬레이터 계약(`PluginCLI`만 쓴다, 서브프로세스를 부르지 않는다)과 (B) `Device` 하네스 시나리오. 이 task가 여섯 시나리오를 얹어 (B)가 크게 늘면 (A)를 `test_plugin_cli.py`로 떼는 것을 권한다.
 
 **Files:**
@@ -6343,7 +6356,8 @@ def test_auto_dependency_round_trip_keeps_the_entry_in_the_repo(tmp_path):
     assert repo_doc(dev.repo)["enabledPlugins"]["z@m"] is True
 
     dev.cli.uninstall("z@m")
-    dev.cli.install("p@m", dependencies=["z@m"])        # z가 auto로 다시 들어온다
+    dev.cli.set_manifest("p@m", ["z@m"])
+    dev.cli.install("p@m")                              # z가 auto로 다시 들어온다
     report = dev.backup()
     assert report["sections"]["enabledPlugins"]["held"]["auto"] == ["z@m"]
     assert report["sections"]["enabledPlugins"]["deleted"] == []
