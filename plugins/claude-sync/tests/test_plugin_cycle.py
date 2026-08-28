@@ -25,6 +25,7 @@ SKILLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills"
 COLLECT = os.path.abspath(os.path.join(SKILLS, "sync-backup", "scripts", "collect_plugins.py"))
 UPDATE_BASE = os.path.abspath(os.path.join(SKILLS, "sync-backup", "scripts", "update_base.py"))
 PLAN = os.path.abspath(os.path.join(SKILLS, "sync-restore", "scripts", "plan_plugins.py"))
+COMPARE = os.path.abspath(os.path.join(SKILLS, "sync-status", "scripts", "compare_plugins.py"))
 GH = {"source": {"source": "github", "repo": "o/r"}}
 
 
@@ -47,6 +48,15 @@ class Device:
 
     def held(self):
         return pc.read_held_state(self.cli.held_path)
+
+    def status(self):
+        """읽기 전용 비교. 아무것도 바꾸지 않는다.
+
+        backup·restore와 달리 base를 읽지도 갱신하지도 않는다(compare_plugins의 계약).
+        보류가 status에서도 조용한지는 이 경로로만 잴 수 있다 — backup의 보고는 merge를
+        거치므로 같은 사실을 다른 버킷 이름으로 말한다.
+        """
+        return json.loads(self._run(COMPARE, os.path.join(self.repo, pc.BACKUP_RELPATH)))
 
     # --- 스크립트 호출 ---
     def _run(self, *args, check=True):
@@ -395,3 +405,288 @@ def test_restore_rejects_an_unknown_choice_section(tmp_path):
     typo = _blocked_device(tmp_path, "typo")
     with pytest.raises(AssertionError):
         typo.restore(choices={"enabledPlugin": {"keep_local": ["q@m"]}})
+
+
+# --- 14.2 #2 선택지 실행 후 2회 백업 ---
+
+def test_case4_keep_brings_the_plugin_back_and_stabilizes(tmp_path):
+    """9.3.4 케이스 4의 "유지" — 레포로 되돌아간 뒤 부활·소멸이 반복되지 않는다."""
+    dev = make_device(tmp_path)
+    dev.cli.marketplace_add("m", "o/r")
+    dev.cli.install("X@m")
+    dev.cli.install("y@m")
+    dev.backup()
+    set_repo(dev.repo, {"enabledPlugins": {"y@m": True},
+                        "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}})
+    assert dev.backup()["sections"]["enabledPlugins"]["local_stale"] == ["X@m"]
+    dev.restore(choices={"enabledPlugins": {"keep_stale": ["X@m"]}})
+    assert "X@m" not in dev.base()["enabledPlugins"]
+    dev.backup()
+    assert sorted(repo_doc(dev.repo)["enabledPlugins"]) == ["X@m", "y@m"]
+    report = dev.backup()
+    assert report["sections"]["enabledPlugins"]["local_stale"] == []
+    assert report["sections"]["enabledPlugins"]["deleted"] == []
+    assert sorted(repo_doc(dev.repo)["enabledPlugins"]) == ["X@m", "y@m"]
+
+
+def test_marketplace_keep_returns_it_without_running_remove(tmp_path):
+    """9.3.5 — 마켓플레이스는 삭제를 자동 실행하지 않지만 "유지"는 반드시 효과가 있어야 한다."""
+    dev = make_device(tmp_path)
+    dev.cli.marketplace_add("m", "o/r")
+    dev.backup()
+    set_repo(dev.repo, {"enabledPlugins": {}, "extraKnownMarketplaces": {},
+                        "pluginConfigs": {}})
+    dev.backup()
+    plan = dev.restore(choices={"extraKnownMarketplaces": {"keep_stale": ["m"]}})
+    # 계획에 **삭제 단계 자체가 없다**(9.3.5 — 연쇄 삭제가 소속 플러그인까지 지우므로
+    # 자동 실행하지 않는다). 이 줄이 없으면 아래 로컬 단정은 "하네스가 remove를 부르지
+    # 않는다"를 되풀이할 뿐이고, 계획에 삭제 단계가 생기는 날 아무도 말하지 않는다.
+    assert [key for key in plan if "remove" in key] == []
+    dev.backup()
+    assert "m" in repo_doc(dev.repo)["extraKnownMarketplaces"]
+    assert "m" in dev.local()["extraKnownMarketplaces"]
+
+
+# --- 14.2 #3 보류 후 침묵 ---
+
+def test_declined_config_silences_status_until_the_repo_value_changes(tmp_path):
+    """6.4 — 보류를 고른 뒤 status가 조용해야 하고, 레포 값이 바뀌면 다시 보고해야 한다."""
+    repo_init = {"enabledPlugins": {"delta@m": True},
+                 "extraKnownMarketplaces": {"m": GH},
+                 "pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}}
+    dev = make_device(tmp_path, repo_init=repo_init)
+    dev.restore(choices={"pluginConfigs": {"declined": ["delta@m"]}})
+    assert dev.held()["pluginConfigs"]["delta@m"]
+    section = dev.status()["sections"]["pluginConfigs"]
+    assert section["only_repo"] == [] and section["changed"] == []
+    assert section["held"]["declined"] == ["delta@m"]
+
+    changed = json.loads(json.dumps(repo_init))
+    changed["pluginConfigs"]["delta@m"]["options"]["extra"] = pc.SENTINEL
+    set_repo(dev.repo, changed)
+    assert dev.status()["sections"]["pluginConfigs"]["only_repo"] == ["delta@m"]
+
+
+def test_declined_config_keeps_the_repo_entry_across_two_backups(tmp_path):
+    """6.4 — 초판의 "base에 레포 값 기록"이 케이스 3으로 착지시켰던 자리다.
+
+    기기 B가 "이 기기에서는 안 쓴다"고 말했을 뿐인데 기기 A가 백업해 둔 설정 키 목록이
+    레포에서 사라지면 안 된다.
+
+    **아래 base 단정은 오늘 두 겹으로 참이다** — next_base가 값 보류 키를 base에서 빼는
+    것(H4)과, 그 앞의 "로컬이 동의한 키만 전진"이 로컬에 없는 키를 애초에 올리지 않는
+    것. 어느 한쪽만 뒤집어도 참이 유지되므로 **단일 변조로는 잡히지 않는다.** 그런데도
+    거는 이유는 6.4가 지목하는 초판의 형태(apply-base가 레포 값을 base에 그대로 기록)가
+    그 두 겹을 **함께** 우회하고, 그때 다음 백업이 케이스 3(삭제)으로 착지하기 때문이다.
+    """
+    repo_init = {"enabledPlugins": {"delta@m": True},
+                 "extraKnownMarketplaces": {"m": GH},
+                 "pluginConfigs": {"delta@m": {"options": {"apiKey": pc.SENTINEL}}}}
+    dev = make_device(tmp_path, repo_init=repo_init)
+    dev.restore(choices={"pluginConfigs": {"declined": ["delta@m"]}})
+    assert "delta@m" not in dev.base()["pluginConfigs"]
+    dev.backup()
+    dev.backup()
+    assert repo_doc(dev.repo)["pluginConfigs"]["delta@m"]["options"] == {
+        "apiKey": pc.SENTINEL}
+    # 보류 선택은 backup을 거쳐도 살아 있어야 한다 — 소유자가 apply-base 하나뿐이라는
+    # 계약(write_held_state)이 여기서도 걸린다. 사라지면 다음 restore가 다시 묻는다.
+    assert dev.held()["pluginConfigs"]["delta@m"]
+
+
+def test_partially_entered_config_does_not_drop_the_other_keys(tmp_path):
+    """14.1 — 세 키 중 두 개만 입력해도 레포의 세 번째 키가 사라지지 않는다 (6.3)."""
+    repo_init = {"enabledPlugins": {"p@m": True},
+                 "extraKnownMarketplaces": {"m": GH},
+                 "pluginConfigs": {"p@m": {"options": {k: pc.SENTINEL
+                                                       for k in ("a", "b", "c")}}}}
+    dev = make_device(tmp_path, repo_init=repo_init)
+    dev.restore(secrets={"p@m": {"a": "1", "b": "2"}},
+                choices={"pluginConfigs": {"declined": ["p@m"]}})
+    dev.backup()
+    dev.backup()
+    assert sorted(repo_doc(dev.repo)["pluginConfigs"]["p@m"]["options"]) == ["a", "b", "c"]
+
+
+# --- 14.2 #4 보류 진입 → 이탈 ---
+
+def test_auto_dependency_round_trip_keeps_the_entry_in_the_repo(tmp_path):
+    """14.2 #4의 H1 — z를 손으로 설치 → 백업 → z가 의존성이 됨 → 백업 →
+    부모 제거 + prune → 백업. **z가 레포에 남아 있어야 한다.**
+
+    1·2·3은 held가 유지되는 동안만 확인하므로 이 결함을 하나도 잡지 못한다.
+    """
+    dev = make_device(tmp_path)
+    dev.cli.marketplace_add("m", "o/r")
+    dev.cli.install("z@m")
+    dev.backup()
+    assert repo_doc(dev.repo)["enabledPlugins"]["z@m"] is True
+
+    dev.cli.uninstall("z@m")
+    dev.cli.set_manifest("p@m", ["z@m"])
+    dev.cli.install("p@m")                              # z가 auto로 다시 들어온다
+    report = dev.backup()
+    assert report["sections"]["enabledPlugins"]["held"]["auto"] == ["z@m"]
+    assert report["sections"]["enabledPlugins"]["deleted"] == []
+    assert repo_doc(dev.repo)["enabledPlugins"]["z@m"] is True
+
+    dev.cli.uninstall("p@m")
+    dev.cli.prune()
+    report = dev.backup()
+    assert report["sections"]["enabledPlugins"]["deleted"] == ["p@m"]
+    assert repo_doc(dev.repo)["enabledPlugins"]["z@m"] is True
+    assert dev.backup()["sections"]["enabledPlugins"]["deleted"] == []
+    assert repo_doc(dev.repo)["enabledPlugins"]["z@m"] is True
+
+
+def test_local_directory_marketplace_never_reaches_the_repo(tmp_path):
+    """H2 — 마켓플레이스와 **그 소속 플러그인**이 둘 다 올라가지 않아야 한다.
+
+    플러그인 키만 올라가면 기기 B의 restore가 매번 "먼저 마켓플레이스를 등록해야
+    합니다"를 내는데, 기기 B에는 등록할 소스 자체가 없다.
+    """
+    dev = make_device(tmp_path)
+    dev.cli.set_directory_marketplace("mylocal", "/tmp/x")
+    dev.cli.install("p@mylocal")
+    dev.cli.marketplace_add("gh", "o/r")
+    dev.cli.install("q@gh")
+    dev.backup()
+    doc = repo_doc(dev.repo)
+    assert doc["extraKnownMarketplaces"] == {"gh": {"source": {"source": "github",
+                                                               "repo": "o/r"}}}
+    assert doc["enabledPlugins"] == {"q@gh": True}
+    assert dev.backup()["sections"]["enabledPlugins"]["deleted"] == []
+
+
+# --- 14.2 #5 선택 후 고정점 ---
+
+def test_keep_choice_is_not_asked_again(tmp_path):
+    """14.2 #5 — #2는 "사라지지 않음"만 보므로 **영원히 다시 묻는** 실패를 통과시킨다."""
+    dev = make_device(tmp_path)
+    dev.cli.marketplace_add("m", "o/r")
+    dev.cli.install("X@m")
+    dev.backup()
+    set_repo(dev.repo, {"enabledPlugins": {}, "extraKnownMarketplaces": {"m": GH},
+                        "pluginConfigs": {}})
+    dev.backup()
+    dev.restore(choices={"enabledPlugins": {"keep_stale": ["X@m"]}})
+    dev.backup()
+    dev.backup()
+    plan = dev.restore()
+    assert plan["sections"]["enabledPlugins"]["local_stale"] == []
+    assert plan["sections"]["enabledPlugins"]["in_sync"] == ["X@m"]
+
+
+# --- 14.2 #7 부분 실패 후 재실행 수렴 ---
+
+def test_blocked_install_is_recovered_by_the_next_restore(tmp_path):
+    """9.3.2 — 등록이 실패한 마켓플레이스의 플러그인은 시도하지 않는다.
+
+    시도하면 CLI가 "플러그인이 없다"와 똑같은 문구로 실패해 거짓 실패를 양산한다.
+    원인을 없애고 다시 돌리면 남은 항목이 복원되어야 한다.
+
+    **규정이 예상한 SURVIVE는 실측으로 반증됐다.** 규정은 "`Device.restore`의 `blocked`
+    검사를 지우면 에뮬레이터가 실패하지 않으므로 이 시나리오가 통과해 버린다"고 적었으나,
+    2단계의 필터를 지우는 변조도 그 필터가 읽는 `depends_on`을 비우는 변조도 둘 다 이
+    시나리오가 FAIL로 잡았다 — 등록이 실패했는데도 **p@m이 설치돼 버리는 것**이 아래
+    로컬 단정에 걸리기 때문이다. 실패를 흉내낼 수단이 없다는 것과 잘못된 성공을 잴 수
+    없다는 것은 다른 말이었다.
+
+    그런데도 `depends_on` 단정을 따로 두는 것은 층이 다르기 때문이다 — 그 필터가 딛고 선
+    **프로덕션 쪽 입력**이 비면 필터가 무엇을 하든 아무것도 막지 못하고, 그때 실패
+    메시지가 증상(설치됐다)이 아니라 원인(계획이 의존을 싣지 않았다)을 가리킨다.
+    """
+    dev = make_device(tmp_path, repo_init={
+        "enabledPlugins": {"p@m": True, "q@other": True},
+        "extraKnownMarketplaces": {"m": GH, "other": {"source": {"source": "github",
+                                                                 "repo": "o/o"}}},
+        "pluginConfigs": {}})
+    plan = dev.restore(fail_marketplaces=["m"])
+    assert plan["depends_on"] == {"p@m": "m", "q@other": "other"}
+    assert "p@m" not in dev.local()["enabledPlugins"]
+    assert dev.local()["enabledPlugins"]["q@other"] is True
+    assert "p@m" not in (dev.base() or {}).get("enabledPlugins", {})   # 10.4
+    dev.restore()
+    assert dev.local()["enabledPlugins"]["p@m"] is True
+
+
+# --- 14.2 #8 H3 탈출구 왕복 ---
+
+def test_extended_value_escape_hatch_round_trip(tmp_path):
+    """7.3 — 탈출구 실행 → backup 2회 → 레포 값이 true → 그 뒤 uninstall이 케이스 3으로 전파.
+
+    #4·#5 어느 것도 이 경로를 덮지 않는다. "지우려면 먼저 불리언화"가 실제로 성립하는지가
+    여기서 판정된다.
+    """
+    dev = make_device(tmp_path, repo_init={
+        "enabledPlugins": {"p@m": ["1.0.0"]},
+        "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}})
+    plan = dev.restore()
+    assert plan["sections"]["enabledPlugins"]["add"] == ["p@m"]     # 설치는 한다
+    assert dev.local()["enabledPlugins"]["p@m"] is True
+    dev.backup()
+    assert repo_doc(dev.repo)["enabledPlugins"]["p@m"] == ["1.0.0"]  # 값은 밀지 않는다
+
+    dev.restore(choices={"enabledPlugins": {"release": ["p@m"]}})    # 탈출구
+    dev.backup()
+    assert repo_doc(dev.repo)["enabledPlugins"]["p@m"] is True
+    dev.backup()
+    assert repo_doc(dev.repo)["enabledPlugins"]["p@m"] is True
+    # **정리하는 것은 backup이 아니라 apply-base다.** 규정 초안은 두 backup 뒤에 곧바로
+    # []를 기대했으나 실측은 ['p@m']이었다 — plugins-held.json의 소유자는
+    # plan_plugins.py apply-base **하나뿐이고**(write_held_state의 계약: 소유자가 둘이면
+    # backup이 사용자의 선택을 덮어쓴다), collect_plugins는 그 파일을 읽기만 한다.
+    # 그러므로 "조건이 사라졌다"는 사실만으로 항목이 사라지지 않는다. 아래 두 줄이
+    # 그 순서를 그대로 잰다 — 위가 없으면 아래는 "restore가 지웠다"가 아니라 "언젠가
+    # 지워졌다"만 말한다.
+    assert dev.held()["release"]["enabledPlugins"] == ["p@m"]        # backup은 손대지 않는다
+    dev.restore()
+    assert dev.held()["release"]["enabledPlugins"] == []             # 조건이 사라져 정리됨
+
+    dev.cli.uninstall("p@m")
+    report = dev.backup()
+    assert report["sections"]["enabledPlugins"]["deleted"] == ["p@m"]
+    assert "p@m" not in repo_doc(dev.repo)["enabledPlugins"]
+
+
+def test_uninstall_before_the_escape_hatch_does_not_propagate(tmp_path):
+    """7.3 — H3의 조건은 **레포 값**이므로 로컬에서 지워도 보류가 유지된다.
+
+    삭제가 전파되지 않고 다음 restore가 다시 설치한다. 안내 문구가 "먼저 불리언화"를
+    적어야 하는 이유이고, 이 성질이 깨지면 그 안내가 거짓이 된다.
+    """
+    dev = make_device(tmp_path, repo_init={
+        "enabledPlugins": {"p@m": ["1.0.0"]},
+        "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}})
+    dev.restore()
+    dev.backup()
+    dev.cli.uninstall("p@m")
+    report = dev.backup()
+    assert report["sections"]["enabledPlugins"]["deleted"] == []
+    assert repo_doc(dev.repo)["enabledPlugins"]["p@m"] == ["1.0.0"]
+    assert dev.restore()["sections"]["enabledPlugins"]["add"] == ["p@m"]
+
+
+# --- 주기 고정점 ---
+
+def test_two_cycles_reach_a_fixed_point(tmp_path):
+    """backup→restore를 반복하면 2주기째부터 레포·base·보고가 변하지 않는다.
+
+    1주기째는 restore가 케이스 2의 항목을 실제로 설치하므로 2주기와 다를 수 있다 —
+    그 설치는 정당한 상태 변화다.
+    """
+    dev = make_device(tmp_path)
+    dev.cli.marketplace_add("m", "o/r")
+    dev.cli.install("X@m")
+    dev.cli.install("x@m")
+    dev.backup()
+    set_repo(dev.repo, {"enabledPlugins": {"x@m": False, "z@m": True},
+                        "extraKnownMarketplaces": {"m": GH}, "pluginConfigs": {}})
+    snapshots = []
+    for _ in range(3):
+        report = dev.backup()
+        plan = dev.restore()
+        snapshots.append((repo_doc(dev.repo), dev.base(), report,
+                          plan["sections"]["enabledPlugins"]))
+    assert snapshots[1] == snapshots[2], "2주기와 3주기가 다르다 — 고정점이 아니다"
+    assert snapshots[2][2]["sections"]["enabledPlugins"]["local_stale"] == ["X@m"]
