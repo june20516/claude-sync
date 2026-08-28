@@ -30,16 +30,16 @@ Claude 설정 파일들을 Git 레포에 백업하는 스킬이다.
 | `~/.claude/agents/` | `agents/` | 커스텀 에이전트 정의 |
 | `~/.claude/skills/` | `skills/` | 범용 스킬들 |
 | `~/.claude/CLAUDE.md` | `CLAUDE.md` | 글로벌 규칙 |
-| `~/.claude/settings.json` → 추출 | `plugins.json` | 플러그인/마켓플레이스 목록만 |
+| `~/.claude/settings.json` → 추출 | `plugins.json` | 플러그인·마켓플레이스·설정 키 (설정 값은 마스킹) |
 | `~/.claude.json` (user 스코프) → 추출 | `mcp-servers.json` | MCP 서버 설정 (비밀 값은 마스킹) |
 
-settings.json에는 API 키 등 민감 정보가 포함될 수 있으므로, `enabledPlugins`와 `extraKnownMarketplaces` 필드만 추출하여 `plugins.json`으로 관리한다. settings.json 원본은 레포에 올리지 않는다.
+settings.json에는 API 키 등 민감 정보가 포함될 수 있으므로 원본은 레포에 올리지 않는다. `enabledPlugins`, `extraKnownMarketplaces`(별칭 `additionalMarketplaces`도 읽는다), `pluginConfigs` 세 필드를 추출하고 `pluginConfigs`의 값은 `<REDACTED>`로 마스킹한다. 의존성으로 자동 설치된 플러그인을 가려내기 위해 `~/.claude/plugins/installed_plugins.json`의 `auto` 플래그도 읽는다(값의 원천으로는 쓰지 않는다).
 
 MCP 서버는 `~/.claude.json`의 top-level `mcpServers`(user 스코프)만 대상으로 한다. 계정 레벨 커넥터(`claude.ai *`), 플러그인이 제공하는 서버(`plugin:*`), project(`.mcp.json`)·local 스코프 서버는 애초에 그 객체에 없으므로 자동으로 제외된다. `headers`와 `env`의 **값만** `<REDACTED>`로 마스킹하고 키 이름은 보존한다.
 
-`mcp-servers.json`은 파일 통째로 덮어쓰지 않고 **서버 이름 키 단위 3-way 병합** 대상이다. 다른 기기가 추가·변경한 서버는 이 기기의 백업으로 사라지지 않는다.
+`mcp-servers.json`은 **서버 이름 키 단위 3-way 병합** 대상이다. 다른 기기가 추가·변경한 서버는 이 기기의 백업으로 사라지지 않는다.
 
-반면 `plugins.json`은 여전히 매 백업마다 통째로 새로 생성되어 덮어쓰인다(reconcile 대상이 아니다). 여러 기기에서 서로 다른 플러그인을 쓰면 마지막에 백업한 기기의 목록이 남는다.
+`plugins.json`도 **섹션별 키 단위 3-way 병합** 대상이다. 다른 기기가 추가·변경한 플러그인·마켓플레이스·설정 키는 이 기기의 백업으로 사라지지 않는다.
 
 `~/.claude/.sync-state/`는 기기별 로컬 상태(merge-base)이므로 백업/복원 대상이 아니며 레포에 올리지 않는다.
 
