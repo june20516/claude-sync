@@ -59,11 +59,15 @@ class Device:
         return json.loads(self._run(COMPARE, os.path.join(self.repo, pc.BACKUP_RELPATH)))
 
     # --- 스크립트 호출 ---
-    def _run(self, *args, check=True):
+    def _run(self, *args):
+        """스크립트를 서브프로세스로 부르고 stdout을 돌려준다.
+
+        **0이 아닌 종료를 삼키지 않는다.** 삼키면 실패한 실행의 빈 stdout이 json 파싱에서
+        죽거나 "항목 0개"로 접혀, 상태 기계가 그것을 삭제로 읽는다.
+        """
         proc = subprocess.run([sys.executable, *args], capture_output=True, text=True,
                               env=dict(os.environ, HOME=self.home))
-        if check:
-            assert proc.returncode == 0, proc.stderr
+        assert proc.returncode == 0, proc.stderr
         return proc.stdout
 
     @property
