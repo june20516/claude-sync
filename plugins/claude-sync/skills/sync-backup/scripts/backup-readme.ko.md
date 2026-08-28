@@ -32,7 +32,7 @@ Claude Code에서:
 - `skills/` — 범용 스킬
 - `CLAUDE.md` — 글로벌 규칙
 - `plugins.json` — 플러그인 목록·마켓플레이스·설정 키 이름 (settings.json에서 추출, 설정 값은 마스킹), 키 단위 병합
-- `sync-metadata.json` — 파일별 내용 해시 (3-way 충돌 감지용)
+- `sync-metadata.json` — 버전 표식과, 이 백업에 담긴 파일별 내용 해시. 그 해시는 기록일 뿐 판정 입력이 아닙니다 — 충돌 판정은 이 파일이 아니라 기기마다 자기 `.sync-state/` base와 대조합니다. 되읽히는 것은 `min_reader_version`이며, 이 백업을 이해하지 못하는 낮은 버전 기기를 막습니다.
 - `mcp-servers.json` — `~/.claude.json`(user 스코프)의 MCP 서버 설정, 서버 이름 키 단위 병합
 - `bootstrap.sh` — 새 기기용 복원 스크립트
 

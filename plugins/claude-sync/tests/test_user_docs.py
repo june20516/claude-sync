@@ -97,8 +97,15 @@ CORRECTIONS = {
         # 13장 표에 **없는** 자리. generate_metadata.py:1이 "mtime 미사용"이라 적고
         # README.md:87도 같은 말을 하는데 백업 레포에 복사되는 이 파일만 반대를
         # 말하고 있었다 — 사용자가 클론했을 때 처음 읽는 문서다(quality review I3).
+        # **정정 문안의 뒤 절반이 다시 거짓이었다.** "3-way 충돌 감지용"은 실측으로
+        # 틀렸다 — `files` 맵을 읽는 프로덕션 코드가 하나도 없고(쓰는 쪽
+        # generate_metadata.py뿐), 3-way의 실제 입력은 기기별 base다. 이 저장소의
+        # 리뷰 체계가 스스로 만든 거짓을 이 표가 정답으로 잠그고 있었다.
+        # 바늘을 **두 절반에 걸치도록** 잡아 어느 쪽을 되돌려도 죽게 한다.
+        # 무엇이 참인지는 test_no_production_code_reads_the_metadata_files_map이 잰다.
         ("Per-file modification timestamps",
-         "Per-file content hashes (for 3-way conflict detection)"),
+         "a per-file content hash of what this backup contained. Those hashes are "
+         "a record, not an input"),
         # 5행
         ("(no sensitive data)",
          "plugin config key names (extracted from settings.json; config values masked)"),
@@ -108,7 +115,7 @@ CORRECTIONS = {
     ),
     "backup-readme.ko.md": (
         ("파일별 수정 시각",
-         "파일별 내용 해시 (3-way 충돌 감지용)"),
+         "이 백업에 담긴 파일별 내용 해시. 그 해시는 기록일 뿐 판정 입력이 아닙니다"),
         ("민감 정보 미포함",
          "설정 키 이름 (settings.json에서 추출, 설정 값은 마스킹)"),
         ("반면 `plugins.json`은 매 백업마다 새로 생성되어 덮어쓰입니다.",
@@ -406,3 +413,90 @@ def test_skill_table_matches_the_conflict_behavior_the_same_file_describes(name)
     bullets = [line for line in text.splitlines()
                if line.startswith("- ") and phrase in line]
     assert bullets, "%s: 충돌 문단이 %r를 말하지 않는다 — 바늘이 낡았다" % (name, phrase)
+
+
+# --- `sync-metadata.json`이 실제로 무엇에 쓰이는가 (진실 쪽 단정) ---
+
+LIB_DIR = os.path.join(ROOT, "plugins", "claude-sync", "lib")
+SKILLS_DIR = os.path.join(ROOT, "plugins", "claude-sync", "skills")
+
+
+def production_sources():
+    """lib/과 세 스킬의 scripts/에 있는 프로덕션 .py 전체. (경로, 소스)."""
+    dirs = [LIB_DIR] + [os.path.join(SKILLS_DIR, n, "scripts")
+                        for n in sorted(os.listdir(SKILLS_DIR))
+                        if os.path.isdir(os.path.join(SKILLS_DIR, n, "scripts"))]
+    out = []
+    for d in dirs:
+        for name in sorted(os.listdir(d)):
+            if not name.endswith(".py"):
+                continue
+            with open(os.path.join(d, name), encoding="utf-8") as f:
+                out.append((os.path.join(d, name), f.read()))
+    assert len(out) >= 10, "프로덕션 소스를 못 찾았다 — 디렉토리 구조가 바뀌었다"
+    return out
+
+
+def test_no_production_code_reads_the_metadata_files_map():
+    """`sync-metadata.json`의 `files` 맵은 **쓰기만 하고 아무도 읽지 않는다.**
+
+    이 단정이 있는 이유는 문서가 아니라 **가드의 실패 이력**이다. plan ②의 최종
+    리뷰가 옛 거짓("파일별 수정 시각")을 고치면서 *"3-way 충돌 감지용"* 이라는 새
+    거짓을 넣었고, 위 CORRECTIONS가 그것을 **정정 문안으로 등록**해 거짓이 정답으로
+    잠겼다. 문안만 바꾸면 같은 일이 반복되므로, 문서가 말하는 것을 **코드에서** 잰다.
+
+    `backup-readme*.md`는 사용자의 백업 레포로 복사되는 파일이다 — 레포를 클론한
+    사람이 처음 읽는 문서가 동작 모델을 틀리게 말하면 안 된다.
+
+    여기가 빨개졌다면 `files` 맵에 소비자가 생긴 것이니, 위 두 파일의
+    `sync-metadata.json` 줄("기록일 뿐 판정 입력이 아니다")을 **함께** 고친다.
+    """
+    writers = [path for path, src in production_sources() if '"files"' in src]
+    assert [os.path.basename(p) for p in writers] == ["generate_metadata.py"], writers
+    src = open(writers[0], encoding="utf-8").read()
+    assert 'metadata = {"files"' in src, "generate_metadata.py가 더 이상 쓰는 쪽이 아니다"
+
+
+def test_the_only_metadata_reader_reads_the_version_markers():
+    """표식 파일을 **여는** 프로덕션 코드는 compat 하나이고, 거기서 읽는 것은 버전 표식뿐.
+
+    `min_reader_version`이 게이트이고 `written_by_version`은 메시지용이다. 파일
+    해시는 어느 쪽도 아니다 — 그것이 backup-readme가 말해야 하는 사실이다.
+    """
+    readers = [os.path.basename(path) for path, src in production_sources()
+               if "load_metadata(" in src]
+    assert sorted(readers) == ["compat.py"], readers
+    with open(os.path.join(LIB_DIR, "compat.py"), encoding="utf-8") as f:
+        fields = set(re.findall(r'meta\.get\("([a-z_]+)"', f.read()))
+    assert fields == {"min_reader_version", "written_by_version"}, fields
+
+
+THREE_WAY_CONSUMERS = {
+    "sync-status": "check_status.py",
+    "sync-restore": "reconcile_restore.py",
+    "sync-backup": "reconcile_backup.py",
+}
+
+
+@pytest.mark.parametrize("skill", sorted(THREE_WAY_CONSUMERS))
+def test_three_way_input_is_the_per_device_base(skill):
+    """3-way 판정의 실제 입력은 기기별 base 블롭이다 — 세 스크립트가 전부 base_hash를 쓴다.
+
+    위 두 단정은 "표식이 아니다"를 말할 뿐이라, 그것만으로는 문서가 대신 무엇을
+    적어야 하는지가 비어 있다. 여기가 그 자리를 채운다.
+    """
+    path = os.path.join(SKILLS_DIR, skill, "scripts", THREE_WAY_CONSUMERS[skill])
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    assert "base_hash(" in src, path
+    assert "sync-metadata" not in src, "%s가 표식 파일을 읽는다" % path
+
+
+@pytest.mark.parametrize("name", ["backup-readme.md", "backup-readme.ko.md"])
+def test_backup_readme_points_at_the_sync_state_base(name):
+    """백업 레포 README가 3-way의 입력을 **이름으로** 지목해야 한다.
+
+    "이 파일이 아니다"만 적으면 클론한 사람은 그럼 무엇인지 알 수 없고, 위
+    CORRECTIONS의 바늘은 그 절반을 재지 않는다.
+    """
+    assert ".sync-state/" in read_doc(name), name

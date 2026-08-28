@@ -32,7 +32,7 @@ Then in Claude Code:
 - `skills/` — General-purpose skills
 - `CLAUDE.md` — Global rules
 - `plugins.json` — Plugin list, marketplaces, and plugin config key names (extracted from settings.json; config values masked), merged key by key
-- `sync-metadata.json` — Per-file content hashes (for 3-way conflict detection)
+- `sync-metadata.json` — Version markers plus a per-file content hash of what this backup contained. Those hashes are a record, not an input: conflict detection compares against each machine's own `.sync-state/` base, not this file. What does get read back is `min_reader_version` — it blocks a machine too old to understand this backup.
 - `mcp-servers.json` — MCP server configs from `~/.claude.json` (user scope), merged per server name
 - `bootstrap.sh` — Restore script for new devices
 
