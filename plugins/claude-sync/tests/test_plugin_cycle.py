@@ -507,8 +507,12 @@ def test_declined_config_keeps_the_repo_entry_across_two_backups(tmp_path):
     dev.backup()
     # 14.2 #3이 요구하는 2회차다. **오늘은 1회차와 같은 상태를 낸다** — 두 회차를 한 회차로
     # 줄여도 아래 단정은 참이다(실측). 그래도 남기는 것은 전방 카나리아이기 때문이다:
-    # 보류가 회차 사이에 풀리는 형태의 회귀는 2회차에서만 드러난다. 시나리오 1
-    # (test_case4_keep…)의 2회차는 이와 달리 **실제로 값을 바꾸는** 회차다.
+    # 보류가 회차 사이에 풀리는 형태의 회귀는 2회차에서만 드러난다.
+    # **같은 파일 `test_case4_keep…`의 2회차도 오늘 관측되지 않는다(실측 — 그쪽도 한
+    # 회차로 줄이면 777 passed다).** 이 파일의 2회차는 전부 같은 지위다. 앞 판은 그쪽이
+    # "실제로 값을 바꾸는 회차"라고 적었는데 거짓이었다 — 값을 바꾸는 것은 그 시나리오의
+    # **1회차**이고(그 직후 레포에 X@m이 처음 나타난다), 하중을 지는 것은 `set_repo`
+    # **앞의** 최초 백업이다(그것을 지우면 CAUGHT다).
     dev.backup()
     assert repo_doc(dev.repo)["pluginConfigs"]["delta@m"]["options"] == {
         "apiKey": pc.SENTINEL}
@@ -543,6 +547,8 @@ def test_partially_entered_config_does_not_drop_the_other_keys(tmp_path):
     # 이 줄이 secrets를 단정에 싣는 유일한 자리다.
     assert dev.local()["pluginConfigs"]["p@m"]["options"] == {"a": "1", "b": "2"}
     assert dev.held()["pluginConfigs"]["p@m"]                       # 6.3 → 보류로 기록된다
+    # 아래 2회차도 **오늘 관측되지 않는다**(실측 — 한 회차로 줄여도 777 passed).
+    # 전방 카나리아이고, 이 파일의 다른 2회차들과 같은 지위다(위 declined 시나리오 참조).
     dev.backup()
     dev.backup()
     assert sorted(repo_doc(dev.repo)["pluginConfigs"]["p@m"]["options"]) == ["a", "b", "c"]
@@ -569,9 +575,11 @@ def test_auto_dependency_round_trip_keeps_the_entry_in_the_repo(tmp_path):
     dev.cli.install("p@m")                              # z가 auto로 다시 들어온다
     # **주석이 약속한 사실을 확인한다.** 자식이 로컬에 들어오지 않으면 아래가 재는 것은
     # "레포에만 있고 auto로 표시된 키가 보류된다"이지 14.2 #4/H1이 요구하는 **로컬에
-    # 되살아난 auto 의존성**이 아니다(실측 — 이 줄이 없으면 에뮬레이터가 자식을 넣지
-    # 않게 만드는 변조가 스위트 전체에서 살아남았다). N1의 계약 자체는
-    # test_plugin_cli.py가 잰다.
+    # 되살아난 auto 의존성**이 아니다. **초판에서는** 이 줄이 없어 에뮬레이터가 자식을
+    # 넣지 않게 만드는 변조가 스위트 전체에서 살아남았다(그 시점의 실측). 지금은 같은
+    # 변조를 계약 파일도 잡으므로 이 줄만 지워도 CAUGHT다(실측) — 그래도 남기는 이유는
+    # 층이 다르기 때문이다: 계약 파일은 N1의 규약을, 이 줄은 **이 시나리오가 딛고 선
+    # 상태**를 잰다. N1의 계약 자체는 test_plugin_cli.py가 잰다.
     assert dev.local()["enabledPlugins"]["z@m"] is True
     report = dev.backup()
     assert report["sections"]["enabledPlugins"]["held"]["auto"] == ["z@m"]
@@ -600,9 +608,12 @@ def test_local_directory_marketplace_never_reaches_the_repo(tmp_path):
     dev.cli.install("q@gh")
     dev.backup()
     doc = repo_doc(dev.repo)
-    # 값의 **모양**은 여기서 다시 적지 않는다 — `marketplace_add`가 무엇을 쓰는지는
-    # 에뮬레이터의 계약이고 test_plugin_cli.py가 잰다(추정 6번). 여기서 재는 것은
-    # "directory 것만 빠지고 github 것은 그대로 올라간다"뿐이다.
+    # 값의 **계약**은 test_plugin_cli.py가 지고(추정 6·7번), 여기서는 그것을 상수 `GH`로
+    # **참조만 한다** — 리터럴을 다시 적지 않는다는 뜻이지 모양을 재지 않는다는 뜻이
+    # 아니다. 실제로 에뮬레이터의 값 모양을 미끄러뜨리면 계약 테스트와 이 시나리오가
+    # **함께** FAIL한다(실측: github→url, directory→dir 둘 다). **그것이 정상이다** —
+    # 공유 상수를 거쳐 같은 사실에 걸리는 것이지 계약이 이 파일에 있다는 뜻이 아니다.
+    # 이 시나리오의 주제는 "directory 것만 빠지고 github 것은 그대로 올라간다"다.
     assert doc["extraKnownMarketplaces"] == {"gh": GH}
     assert doc["enabledPlugins"] == {"q@gh": True}
     assert dev.backup()["sections"]["enabledPlugins"]["deleted"] == []
@@ -710,12 +721,24 @@ def test_uninstall_before_the_escape_hatch_does_not_propagate(tmp_path):
     삭제가 전파되지 않고 다음 restore가 다시 설치한다. 안내 문구가 "먼저 불리언화"를
     적어야 하는 이유이고, 이 성질이 깨지면 그 안내가 거짓이 된다.
 
-    **`deleted == []`는 오늘 두 겹으로 참이다** — H3가 그 키를 값 보류로 잡아 판정표를
-    아예 타지 않는 것과, 그 보류가 base에서도 그 키를 빼 두어(next_base) 케이스 3의
-    입력인 "base에 있다"가 성립하지 않는 것. 어느 한쪽만 뒤집어도 참이 유지되므로
-    **단일 변조로는 잡히지 않는다.** 그런데도 거는 이유는 이 시나리오가 재는 것이 그 둘의
-    **조합**이기 때문이다 — 7.3의 약속("지우려면 먼저 불리언화")은 두 겹이 함께 설 때만
-    참이고, 뒤따르는 두 단정(레포 값 보존·다음 restore의 재설치)이 그 조합을 잰다.
+    **`deleted == []`는 세 겹으로 참이다(실측한 행렬이다).** 겹치는 가드는 셋이다 —
+      ⓐ `merge`의 값 보류 스킵(그 키가 판정표를 아예 타지 않는다)
+      ⓑ `next_base`의 값 보류 스킵(base에서 그 키를 뺀다)
+      ⓒ `next_base`의 **값 동의 규칙**("로컬이 동의한 키만 전진")
+
+    셋 중 **하나만** 뒤집어도(ⓐ·ⓑ·ⓒ 각각) 이 시나리오는 통과하고, **둘을 함께**
+    뒤집어도(ⓐⓑ·ⓑⓒ·ⓐⓒ) 통과한다. **셋을 함께 뒤집을 때 비로소 FAIL한다** — 그때
+    레포의 `p@m`이 실제로 사라진다(프로브: `deleted: ['p@m']`, `REPO: {}`). 일곱 조합을
+    전부 재서 얻은 표다.
+
+    **ⓑ가 이 시나리오에서 일하지 않는다는 것도 실측이다.** ⓑ만 지우고 base를 찍으면
+    복원 후에도 백업 후에도 `{}`다 — `p@m`을 막고 있는 것은 ⓑ가 아니라 ⓒ다(로컬은
+    `True`, merged는 `["1.0.0"]`이라 `same()`이 거짓이고, 이전 base에도 그 키가 없다).
+    이 문단의 앞 판은 겹을 둘로 적고 그 둘째를 ⓑ로 지목했는데 **둘 다 틀렸다.**
+
+    그러므로 **이 시나리오가 재는 것은 그 겹들의 조합이 아니다.** 재는 것은 7.3의 안내
+    문구가 참이라는 것 — 뒤따르는 두 단정(레포 값 보존·다음 restore의 재설치)이 그것이고,
+    그 성질을 **단일·이중 변조로 깨는 방법은 아직 찾지 못했다.**
     """
     dev = make_device(tmp_path, repo_init=EXTENDED_REPO)
     dev.restore()
