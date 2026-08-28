@@ -5992,8 +5992,9 @@ def test_a_blocked_marketplace_stops_the_disable_step(tmp_path):
     4번의 갈래로 떨어진다) ④ **그 마켓플레이스의 1단계 등록이 실패함**(_blocked는
     depends_on이 blocked에 있을 때만 참이다).
 
-    **④가 놓치기 쉽다.** 등록이 성공하면 3단계의 disable을 4단계의 install --config가
-    곧바로 되돌려(값이 배열이 아니면 true) 필터 유무가 값에 나타나지 않는다(실측).
+    **④가 놓치기 쉽다.** 등록이 성공하면 blocked가 비어 필터가 애초에 동작하지 않고,
+    그 id에 secret까지 주어지면 3단계의 disable을 4단계의 install --config가 곧바로
+    되돌린다(값이 배열이 아니면 true). 어느 쪽이든 필터 유무가 값에 나타나지 않는다(실측).
     같은 이유로 두 번째 복원에는 secrets를 주지 않는다.
     """
     dev = make_device(tmp_path, repo_init={
@@ -6270,7 +6271,7 @@ git commit -m "test: CLI 에뮬레이터와 교대 하네스, 부트스트랩·r
 
 **에뮬레이터의 `marketplace add`는 언제나 github 모양의 값을 만든다(Task 12의 추정 — 실측 없음).** url·git 출처 시나리오를 쓰려면 **그 자리를 먼저 고쳐야 한다.** 고치지 않고 쓰면 시나리오가 조용히 github를 검증하고, `restorable`·`marketplace_arg`의 출처별 갈래는 하나도 타지 않는다. **결과는 "차이가 드러난다"보다 무겁다** — github는 왕복이 닫히지만(`marketplace_arg`가 `repo` 필드를 내고 에뮬레이터가 같은 필드에 되쓴다), url·git은 `marketplace_arg`가 URL 문자열을 내는데 에뮬레이터가 그것을 **github 값의 `repo` 필드**에 담는다(`_SOURCE_ARG_FIELDS = {"github": ("repo",), "url": ("url",), "git": ("url", "repo")}`). 복원 직후 로컬 값이 레포 값과 다르므로 `_next_base_sections`의 "로컬과 merged가 같은 값인 키만 전진"에 걸려 그 키는 base에 실리지 않고, 다음 백업이 같은 차이를 다시 보고한다 — **수렴 자체가 깨진다.** (코드를 따라간 귀결이고 끝까지 돌려 본 실측은 없다. 그런 시나리오가 아직 없기 때문이다.)
 
-**`Device.restore`의 소비자는 Task 12가 넷 세워 두었다** — `test_a_blocked_marketplace_stops_the_install_and_config_steps`(9.3.2 blocked의 2·4단계), `test_a_blocked_marketplace_stops_the_disable_step`(같은 9.3.2의 3단계 — `fail_marketplaces`와 재실행 수렴을 함께 쓰는 유일한 자리다), `test_restore_rejects_a_secret_the_plan_did_not_ask_for`(4단계 `config_keys` 가드), `test_restore_rejects_an_unknown_choice_section`(선택지 섹션 이름). 앞의 둘은 `fail_marketplaces`를, 셋째는 `secrets`를 쓴다. **`choices`가 실제로 값을 바꾸는 갈래는 아직 아무도 타지 않는다** — `keep_stale`·`keep_local`에 실제 키를 넣고 그 효과를 재는 것은 이 task가 처음이다. 그때까지 그 갈래의 변조는 전부 살아남는 상태이므로, 여기서 도입하는 시나리오가 그 가드를 함께 세운다.
+**`Device.restore`의 소비자는 Task 12가 넷 세워 두었다** — `test_a_blocked_marketplace_stops_the_install_and_config_steps`(9.3.2 blocked의 2·4단계), `test_a_blocked_marketplace_stops_the_disable_step`(같은 9.3.2의 3단계 — `fail_marketplaces`와 재실행 수렴을 함께 쓰는 유일한 자리다), `test_restore_rejects_a_secret_the_plan_did_not_ask_for`(4단계 `config_keys` 가드), `test_restore_rejects_an_unknown_choice_section`(선택지 섹션 이름). 첫·둘째가 `fail_marketplaces`를, 첫·셋째가 `secrets`를, 넷째가 `choices`를(값을 바꾸지 않는 형태로) 쓴다. **`choices`가 실제로 값을 바꾸는 갈래는 아직 아무도 타지 않는다** — `keep_stale`·`keep_local`에 실제 키를 넣고 그 효과를 재는 것은 이 task가 처음이다. 그때까지 그 갈래의 변조는 전부 살아남는 상태이므로, 여기서 도입하는 시나리오가 그 가드를 함께 세운다.
 
 **Task 12 품질 리뷰가 남긴 나머지 지뢰(전부 실측·코드 확인).**
 - **한 HOME에 `PluginCLI` 인스턴스를 둘 만들지 말 것.** 생성자가 `settings.json`·`installed_plugins.json`을 초기화하므로 이전 상태가 지워진다(클래스 docstring에 경고가 있다). **두 기기 시나리오는 HOME을 갈라야 한다** — `Device` 하나에 HOME 하나다.
