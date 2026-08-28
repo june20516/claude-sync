@@ -20,16 +20,19 @@
 실제 ~/.claude는 건드리지 않는다. HOME을 픽스처 트리로 바꿔 실행한다.
 
 **이 파일은 관심사를 둘 담는다.** 위 문단은 첫째(0단계 루트 해석, 아래 절반의 앞쪽)만
-설명한다. 둘째는 **세 SKILL.md의 배선 계약**이고 분량으로는 그쪽이 더 크다 —
+설명한다. 둘째는 **세 SKILL.md의 계약**이고 분량으로는 그쪽이 더 크다 —
 호환성 검사의 위치와 그것이 앞서야 할 실행줄, 다운그레이드 탐지 순서, 공유 스테이징을
 비우는 횟수와 순서, base 게이트의 두 축, restore 명령의 스코프 정책, 스킬이 스크립트의
-어느 키를 읽는지를 적은 산문 앵커, 선택 결과 JSON의 스키마, 그리고 그 표들이 스스로
-줄어드는 것을 막는 완전성 메타가드. 그 계약을 재려면 프로덕션 어댑터의 상수가 필요해서
-이 파일은 `plugin_config`를 import한다(선택 JSON의 섹션 이름과 보류 종류의 진실 원천).
+어느 키를 읽는지를 적은 산문 앵커, `## 동기화 대상` 절이 말하는 추출 필드, 선택 결과
+JSON의 스키마, 그리고 그 표들이 스스로 줄어드는 것을 막는 완전성 메타가드. 그 계약을
+재려면 프로덕션 어댑터의 상수가 필요해서 이 파일은 `plugin_config`를 import한다
+(선택 JSON의 섹션 이름, 보류 종류, 추출 필드 이름의 진실 원천).
 
 첫째는 SKILL.md의 bash를 **실행해서** 재고, 둘째는 SKILL.md를 **읽어서** 잰다.
-둘을 파일로 가르는 것이 다음 정리이나, 문서 전용 task가 같은 파일을 건드리는 동안에는
-미룬다.
+둘을 파일로 가르는 것이 다음 정리다.
+
+**사용자 문서(README·backup-readme)는 여기가 아니라 `test_user_docs.py`에 있다** —
+스킬도 스크립트도 아니어서 이 파일의 두 관심사 어느 쪽에도 속하지 않는다.
 """
 import json
 import os
@@ -213,6 +216,42 @@ def subsection(skill, heading):
     i = text.index("#### " + heading)
     m = re.compile(r"\n#{3,4} ").search(text, i + 1)
     return text[i:m.start() if m else len(text)]
+
+
+def sync_target_section():
+    """sync-backup SKILL.md의 `## 동기화 대상` 절. section()은 `### `만 자른다."""
+    text = read_skill("sync-backup")
+    i = text.index("## 동기화 대상")
+    m = re.compile(r"\n## ").search(text, i + 1)
+    return text[i:m.start() if m else len(text)]
+
+
+def test_backup_skill_lists_all_three_fields_and_the_auto_source():
+    """`## 동기화 대상` 절 — "두 필드만 추출"·"통째로 덮어쓰인다"는 이제 거짓이다 (13장).
+
+    이 절은 5단계의 배선과 **같은 파일 안에서** 자기모순이 될 수 있는 자리다. 5단계는
+    세 섹션을 키 단위로 병합하는데 이 절만 두 필드를 말하면, 사용자와 다음 구현자가
+    읽는 것은 앞머리 쪽이다.
+
+    **토큰을 손으로 적지 않고 어댑터에서 뽑는다.** 상수로 두면 아무 문자열로 바꾸는
+    것만으로 존재 단정이 통째로 공허해진다 — 이 파일이 FOREIGN_MCP_CALL에서 닫은
+    성질이고, `not in` 가드는 애초에 바늘이 틀리면 초록이다.
+    """
+    sec = sync_target_section()
+    for field in pc.SECTIONS:                    # 추출하는 세 필드 = 세 섹션
+        assert "`%s`" % field in sec, field
+    for alias in pc.MARKETPLACE_ALIASES:         # 별칭 키도 읽는다는 사실
+        assert "`%s`" % alias in sec, alias
+    # auto 플래그의 출처. 경로도 어댑터에서 뽑는다 — expanduser를 되돌려 문서 표기와 맞춘다.
+    auto_source = pc.DEFAULT_INSTALLED.replace(os.path.expanduser("~"), "~", 1)
+    assert auto_source.startswith("~/"), auto_source
+    assert "`%s`" % auto_source in sec, auto_source
+    assert "`auto`" in sec
+    assert pc.SENTINEL in sec, pc.SENTINEL
+    assert "두 필드만" not in sec
+    assert "통째로 새로 생성되어 덮어쓰" not in sec
+    # 정정 문안 쪽도 함께 건다 — 부재만 보는 검사는 문단이 통째로 지워져도 초록이다.
+    assert "`plugins.json`도 **섹션별 키 단위 3-way 병합** 대상이다" in sec
 
 
 def test_backup_documents_marker_fields():
