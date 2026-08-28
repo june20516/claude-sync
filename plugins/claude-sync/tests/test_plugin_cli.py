@@ -43,12 +43,24 @@ def test_install_flattens_an_existing_object_value(tmp_path):
 
 
 def test_enable_and_disable_are_not_idempotent(tmp_path):
-    """이미 그 상태면 exit 1 — 이 성질이 없으면 "현재 상태와 다를 때만"이 무의미해진다."""
+    """이미 그 상태면 exit 1 — 이 성질이 없으면 "현재 상태와 다를 때만"이 무의미해진다.
+
+    **14.3 3행의 요구는 둘이다** — exit code 규약과 *"키를 유지한 채 값만 true↔false로
+    바꾼다"*(1-b #5). 초판은 exit code만 쟀고, 그래서 `_set_value`가 값을 바꾸는 대신
+    **키를 지우도록** 만드는 변조가 이 파일을 통과했다(실측 — 그때 잡은 것은 교대
+    시나리오 하나뿐이었다). 키가 사라지면 그 항목은 로컬에 "없는" 상태가 되어 다음
+    백업이 케이스 3(삭제)이나 케이스 2로 오독한다 — 값이 `false`인 것과 의미가 반대다
+    (`value_command`의 *"로컬의 부재는 false가 아니다"*가 같은 사실을 반대편에서 쓴다).
+    """
     cli = PluginCLI(str(tmp_path))
     cli.install("p@m")
     assert cli.enable("p@m") == 1
     assert cli.disable("p@m") == 0
+    # **값만 바뀌고 키는 남는다.** exit code만 재면 이 절반이 빠진다.
+    assert cli.settings()["enabledPlugins"]["p@m"] is False
     assert cli.disable("p@m") == 1
+    assert cli.enable("p@m") == 0
+    assert cli.settings()["enabledPlugins"]["p@m"] is True
 
 
 def test_enable_and_disable_reject_an_unknown_plugin(tmp_path):
