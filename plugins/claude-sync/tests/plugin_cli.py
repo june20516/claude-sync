@@ -73,13 +73,16 @@ CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`·`set_manifest`�
 2·3단계뿐 아니라 **4단계에도** 걸린다(9.3.2: 4단계도 `plugin install <id@marketplace>
 --config k=v` 형태라 등록되지 않은 마켓플레이스로는 똑같이 죽고, 그래서
 `plan_plugins._install_dependencies`가 `depends_on`에 2단계∪4단계를 싣는다).
-`test_a_blocked_marketplace_stops_the_install_and_config_steps`가 그중 **2·4단계를 직접
-잰다** — 3단계는 미측정이다. **사유는 위 4번이 아니다**(그 갈래는 이 공백과 무관하다):
-그 테스트의 픽스처가 만드는 계획은 `disable_after_install`이 **비어 있어 3단계 루프가 한
-번도 돌지 않는다**(실측). 관측하려면 레포 값이 `false`이면서 `pluginConfigs`로 candidates에
-들어오는 **이미 설치된** id가 필요하다 — 그런 id는 로컬 `enabledPlugins`에 값이 있으므로
-`disable`이 exit 0으로 **실제로 값을 쓴다**(`plan_plugins.py:208-212`가 같은 사실을 적는다.
-실측: 그 픽스처에서 3단계 필터를 지우면 값이 `False`로 바뀐다). 그런 시나리오가 아직 없다.
+`test_a_blocked_marketplace_stops_the_install_and_config_steps`가 그중 **2·4단계를**,
+`test_a_blocked_marketplace_stops_the_disable_step`이 **3단계를** 잰다. 3단계가 두 번째
+테스트를 따로 요구하는 것은 첫 테스트의 픽스처에서 `disable_after_install`이 비어 **3단계
+루프가 한 번도 돌지 않기** 때문이다(실측). 3단계를 관측하려면 **네 조건이 함께** 필요하다 —
+레포 값이 `false` · `pluginConfigs`로 candidates에 들어옴 · **이미 설치됨** · **그
+마켓플레이스의 1단계 등록이 실패함**. 넷째가 빠지면 3단계가 낸 `disable`을 4단계의
+`install --config`가 곧바로 되돌려 필터 유무가 값에 나타나지 않는다(실측).
+셋째는 **위 4번에서 나온다** — 미설치 id에는 `disable`이 exit 1로 아무것도 쓰지 않으므로
+로컬에 값이 있는 id라야 한다(`plan_plugins.py:208-212`가 그 상황을 적는다). 즉 4번은 이
+관측의 **조건**이지, 첫 테스트가 3단계를 재지 못하는 **사유**가 아니다.
 #4에는 대역이 없다 — 없는 플러그인을 설치하려는 계획을
 만드는 시나리오를 쓸 때 이 자리를 먼저 고칠 것.
 """
@@ -303,6 +306,8 @@ class PluginCLI:
         비대화형에서 확인 프롬프트 없이 즉시 수행된다. 재실행은 exit 1.
         pluginConfigs 연쇄는 **실측 없음 — 추정**(모듈 docstring 1번).
         소속 판정 규칙(`endswith`)도 **실측 없음 — 추정**(모듈 docstring 10번).
+        실패 갈래가 두 파일 어느 쪽도 건드리지 않는 것도 **실측 없음 — 추정**
+        (모듈 docstring 11번).
         """
         data = self.settings()
         if name not in data["extraKnownMarketplaces"]:

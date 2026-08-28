@@ -479,9 +479,8 @@ def test_a_blocked_marketplace_stops_the_install_and_config_steps(tmp_path):
     **3단계는 이 테스트가 재지 않는다** — 사유는 `disable`의 미설치 갈래가 아니다.
     BLOCKED_REPO의 `enabledPlugins`가 둘 다 `True`라 `value_command`가 `"disable"`을 내지
     않고, 그래서 이 계획의 `disable_after_install`이 **비어 3단계 루프가 한 번도 돌지
-    않는다**(실측 — 아래 단정이 그 사실을 고정한다). 관측하려면 레포 값이 `false`이면서
-    `pluginConfigs`로 candidates에 들어오는 **이미 설치된** id가 필요하다 — 그때는 로컬에
-    값이 있으므로 `disable`이 실제로 쓴다. 그런 시나리오가 아직 없다.
+    않는다**(실측 — 아래 단정이 그 사실을 고정한다). 3단계는 바로 아래
+    `test_a_blocked_marketplace_stops_the_disable_step`이 **네 조건을 함께 세워** 잰다.
     """
     dev = _blocked_device(tmp_path, "blocked")
     plan = dev.restore(secrets={"p@m": {"token": "s3cr3t"}}, fail_marketplaces={"m"})
@@ -501,6 +500,49 @@ def test_a_blocked_marketplace_stops_the_install_and_config_steps(tmp_path):
     assert ok.cli.settings()["pluginConfigs"]["p@m"]["options"] == {"token": "s3cr3t"}
 
 
+def test_a_blocked_marketplace_stops_the_disable_step(tmp_path):
+    """9.3.2 — 등록 실패는 2·4단계뿐 아니라 **3단계도** 막는다.
+
+    위 테스트가 3단계를 재지 못하는 것은 그 픽스처의 `disable_after_install`이 비어서다.
+    3단계를 관측하려면 **네 조건이 함께** 필요하다(실측 — 하나라도 빠지면 필터 유무가
+    값에 나타나지 않는다).
+
+      ① 레포 값이 `false`다 — 그래야 `value_command`가 `"disable"`을 낸다.
+      ② `pluginConfigs`로 candidates에 들어온다 — `enabledPlugins` 경로의 키는 정의상
+         로컬에 없으므로 이미 설치된 id는 이 경로로만 candidates에 온다
+         (`plan_plugins.py:208-212`).
+      ③ **이미 설치돼 있다** — 로컬 `enabledPlugins`에 값이 있어야 `disable`이 exit 0으로
+         실제로 쓴다. 없으면 추정 4번의 갈래(exit 1, 아무것도 쓰지 않음)로 떨어진다.
+      ④ **그 마켓플레이스의 1단계 등록이 실패한다** — `_blocked`는 `depends_on`이 blocked에
+         있을 때만 참이므로 이것 없이는 필터가 애초에 동작하지 않는다.
+
+    **④가 특히 놓치기 쉽다.** 등록이 성공하면 3단계가 `disable`을 낸 직후 4단계의
+    `install --config`가 그 값을 되돌려(`PluginCLI.install` — 값이 배열이 아니면 `True`)
+    필터가 있든 없든 최종 값이 `True`가 된다(실측). 같은 이유로 **아래 두 번째 복원에는
+    `secrets`를 주지 않는다** — 주면 4단계가 3단계를 되돌려 수렴 단정이 거짓으로 죽는다.
+
+    두 번째 복원이 이 단정을 공허하지 않게 만든다 — 원인을 없애면 3단계가 실제로 값을
+    바꾼다. 이것은 9.3.2의 3단계 판이고, 14.2 #7("부분 실패 후 재실행 수렴")의 2단계 판은
+    Task 13의 `test_blocked_install_is_recovered_by_the_next_restore`가 따로 잰다 — 그
+    픽스처로는 3단계가 관측되지 않는다(실측: 레포 값이 둘 다 `true`이고 `pluginConfigs`가
+    비어 `disable_after_install`이 언제나 `[]`다).
+    """
+    dev = make_device(tmp_path, repo_init={
+        "enabledPlugins": {"p@m": False},                       # ①
+        "extraKnownMarketplaces": {"m": GH},
+        "pluginConfigs": {"p@m": {"options": {"token": pc.SENTINEL}}}})   # ②
+    dev.cli.install("p@m")                                      # ③
+    plan = dev.restore(fail_marketplaces={"m"})                 # ④
+    # 픽스처가 의도한 계획인지 먼저 확인한다 — 아니면 아래 단정이 공허해진다.
+    assert plan["disable_after_install"] == ["p@m"]             # ①②가 성립했다
+    assert plan["skipped_already_installed"] == ["p@m"]         # ③이 성립했다
+    assert plan["depends_on"] == {"p@m": "m"}                   # ④가 걸릴 자리가 있다
+    assert dev.local()["enabledPlugins"]["p@m"] is True         # 3단계가 막혔다
+
+    dev.restore()                                               # 원인 제거 (secrets 없이)
+    assert dev.local()["enabledPlugins"]["p@m"] is False        # 3단계가 실제로 값을 바꾼다
+
+
 def test_restore_rejects_a_secret_the_plan_did_not_ask_for(tmp_path):
     """계획이 되묻지 않은 id의 설정은 조용히 채워지지 않는다 (9.3.1 4단계).
 
@@ -512,7 +554,9 @@ def test_restore_rejects_a_secret_the_plan_did_not_ask_for(tmp_path):
     ok = _blocked_device(tmp_path, "ok")
     assert ok.restore(secrets={"p@m": {"token": "s3cr3t"}})["status"] == "ok"
     stray = _blocked_device(tmp_path, "stray")
-    with pytest.raises(AssertionError):
+    # match를 거는 것은 이 파일에 AssertionError를 내는 자리가 셋이기 때문이다
+    # (Device._run의 returncode 단정 · _apply_base의 섹션 가드 · 이 가드).
+    with pytest.raises(AssertionError, match="q@m"):
         # q@m은 2단계(install) 대상이지 4단계 대상이 아니다.
         stray.restore(secrets={"q@m": {"token": "s3cr3t"}})
 
