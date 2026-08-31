@@ -6,6 +6,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -251,6 +252,95 @@ def test_a_broken_repo_document_is_a_document_level_skip_from_the_cli(tmp_path, 
     assert "sections" not in out
     assert "구문이 깨졌다" in out["reason"]
     assert pc.BACKUP_RELPATH in out["reason"]
+
+
+# --- 레포 문서의 **부재** = 4.4 탈출구가 만드는 상태 (6차 개정 ①) --------------
+
+BACKUP_ROUNDS = 3
+
+
+def backup_rounds(tmp_path, repo, base_dir, rounds=BACKUP_ROUNDS):
+    """collect를 rounds회 돌리며 매 회차 스테이징을 base로 옮긴다 (6.5절의 update_base).
+
+    **회차가 이 픽스처의 입력이다.** 한 회차만 돌리면 아래 "스스로 회복하지 않는다"를
+    재지 못한다 — 첫 회차의 결과는 회복 가능한 상태와 구별되지 않기 때문이다.
+    """
+    staging = str(tmp_path / "staging")
+    out = []
+    for _ in range(rounds):
+        result = collect_plugins.collect(
+            repo, staging,
+            settings_path=write_settings(tmp_path, **DEVICE_A_LOCAL),
+            installed_path=write_installed(tmp_path),
+            held_path=str(tmp_path / "none-held.json"),
+            base_dir=base_dir)
+        shutil.copyfile(os.path.join(staging, pc.BACKUP_RELPATH),
+                        os.path.join(base_dir, pc.BACKUP_RELPATH))
+        out.append((repo_doc(repo)["enabledPlugins"],
+                    result["sections"]["enabledPlugins"]["local_stale"]))
+    return out
+
+
+@pytest.mark.parametrize("repo_state", ["present", "absent"])
+def test_deleting_the_repo_document_is_not_a_reset(tmp_path, repo_state):
+    """4.4 — `git rm plugins.json`은 초기화가 아니라 삭제다. 그 대가를 실측으로 고정한다.
+
+    파일 부재는 인식 실패가 아니라 `{}`("이력이 비어 있었다")로 읽히므로(load_backup)
+    base가 있는 기기의 다음 백업이 **모든 키를 케이스 4**로 판정한다. 그리고 next_base가
+    로컬이 동의하지 않은 키를 전진시키지 않으므로 base에 그 키가 남아, **회차를 거듭해도
+    같은 판정이 반복된다** — 레포가 빈 채로 고정된다.
+
+    두 갈래가 같은 픽스처를 공유한다. `present`가 대조군이다 — 같은 입력에서 정상 문서는
+    세 회차 내내 두 항목을 지키고 `local_stale`에 **레포가 실제로 지운 dropped@m만** 낸다.
+    그 대조가 없으면 `absent`의 단정이 "케이스 4가 원래 그렇다"와 구별되지 않는다.
+
+    **이 테스트는 프로덕션 동작을 바꾸라고 요구하지 않는다.** 부재의 `{}`는 의도된
+    설계다(5차 개정이 명시적으로 유지했다). 고정하는 것은 **그 설계의 대가**이고, 4.4가
+    그 대가를 근거로 "지우기는 마지막 수단"이라고 적는다 — 근거가 저장소 밖에 있으면
+    다음 개정이 조용히 되돌린다.
+    """
+    repo = write_repo(tmp_path, TWO_DEVICE_REPO if repo_state == "present" else None)
+    base_dir = write_base_blob(tmp_path, DEVICE_A_BASE)
+    rounds = backup_rounds(tmp_path, repo, base_dir)
+
+    if repo_state == "present":
+        assert rounds == [({"mine@m": True, "theirs@m": True}, ["dropped@m"])] * 3
+        return
+
+    # 회차 목록을 통째로 비교한다 — 회차를 줄이면 길이가 달라 죽는다(입력 축).
+    assert rounds == [({}, ["dropped@m", "mine@m"])] * 3
+    # 레포에만 있던 theirs@m은 첫 회차에 사라졌고 어떤 회차도 되돌리지 않는다.
+    assert "theirs@m" not in open(os.path.join(repo, pc.BACKUP_RELPATH),
+                                  encoding="utf-8").read()
+    # 그 사이 restore는 이 기기의 mine@m을 "다른 기기가 지웠다"로 내고, 9.3.3이 그것을
+    # uninstall 제안으로 렌더링한다 — 사용자가 승인하면 되돌릴 수 없다.
+    plan = plan_plugins.build_plan(
+        os.path.join(repo, pc.BACKUP_RELPATH),
+        settings_path=write_settings(tmp_path, **DEVICE_A_LOCAL),
+        installed_path=write_installed(tmp_path),
+        held_path=str(tmp_path / "none-held.json"),
+        base_dir=base_dir)
+    assert plan["sections"]["enabledPlugins"]["local_stale"] == ["dropped@m", "mine@m"]
+
+    # 4.4가 지시하는 복구: 기기마다 `keep_stale`을 고른 **뒤에** 백업해야 되올라간다.
+    plan_plugins.apply_base(
+        os.path.join(repo, pc.BACKUP_RELPATH), str(tmp_path / "restore-staging"),
+        {"enabledPlugins": {"keep_stale": ["mine@m", "dropped@m"],
+                            "keep_local": [], "release": []},
+         "extraKnownMarketplaces": {"keep_stale": [], "keep_local": []},
+         "pluginConfigs": {"keep_stale": [], "keep_local": [],
+                           "declined": [], "configured": []}},
+        settings_path=write_settings(tmp_path, **DEVICE_A_LOCAL),
+        installed_path=write_installed(tmp_path),
+        held_path=str(tmp_path / "none-held.json"),
+        base_dir=base_dir)
+    shutil.copyfile(os.path.join(str(tmp_path / "restore-staging"), pc.BACKUP_RELPATH),
+                    os.path.join(base_dir, pc.BACKUP_RELPATH))
+    recovered = backup_rounds(tmp_path, repo, base_dir, rounds=1)
+    assert recovered[0][0] == {"mine@m": True, "dropped@m": True}
+    # **그래도 theirs@m은 돌아오지 않는다** — 되밀 로컬 사본이 어느 기기에도 없다.
+    assert "theirs@m" not in open(os.path.join(repo, pc.BACKUP_RELPATH),
+                                  encoding="utf-8").read()
 
 
 def test_collect_reports_value_change_not_just_key_set(tmp_path):

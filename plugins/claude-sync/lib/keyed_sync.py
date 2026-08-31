@@ -176,6 +176,12 @@ def load_backup(path, recognize):
 
     호출부는 두 예외를 **문서 단위 skip**으로 접는다: 그 문서의 레포 파일도 base도
     손대지 않고, 다른 백업 문서와 파일 동기화는 그대로 진행한다(spec 9.1.2·9.3.6).
+
+    **부재의 {}에는 대가가 있다.** base가 있는 기기의 다음 백업이 그 문서의 모든 키를
+    케이스 4(다른 기기가 지웠다)로 판정하고, next_base가 그 키를 붙들어 **회차를 거듭해도
+    회복되지 않는다**(실측 — tests/test_plugin_scripts.py::test_deleting_the_repo_document_is_not_a_reset).
+    그래서 *"레포에서 그 파일을 지우세요"* 는 초기화 안내가 아니다 — spec 4.4가 조건과
+    순서와 대가를 적는다.
     """
     try:
         with open(path, "rb") as f:
