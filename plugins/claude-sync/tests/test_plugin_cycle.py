@@ -133,6 +133,7 @@ class Device:
             return plan
         self.commands = []
         blocked = set()
+        failed = set()
         for entry in plan["marketplace_add"]:                       # 1단계
             if entry["name"] in fail_marketplaces:
                 blocked.add(entry["name"])
@@ -142,19 +143,26 @@ class Device:
         for plugin_id in plan["install"]:                           # 2단계
             if self._blocked(plan, plugin_id, blocked):
                 continue
-            self._record("install", plugin_id, self.cli.install(plugin_id))
+            exit_code = self._record("install", plugin_id, self.cli.install(plugin_id))
+            if exit_code != 0:
+                # **2단계가 실패한 id는 3·4단계를 건너뛴다**(9.3.2). 특히 3단계가
+                # 위험하다 — 미설치 id에 `disable`은 exit 1이 아니라 exit 0으로
+                # `{id: false}` **유령 키**를 만들고(2026-08-29 스모크 2장), 레포 값도
+                # `false`이므로 다음 백업이 그것을 in_sync로 읽어 base를 전진시킨다.
+                # 그러면 그 id는 다시 `add` 버킷에 오지 않아 **영영 설치되지 않는다.**
+                failed.add(plugin_id)
         for plugin_id, options in (secrets or {}).items():          # 4단계
             # 실제 흐름은 **계획이 지목한 키만** 되묻는다(`plan["config_keys"]`). 대조하지
             # 않으면 계획이 요구하지 않은 id에도 설정이 채워져 **실제 흐름이 만들 수 없는
             # 상태**가 되고, 이어지는 백업이 그 값을 레포로 밀어 시나리오가 초록으로
             # 지나간다. `_apply_base`의 섹션 이름 가드와 같은 규율이다.
             assert plugin_id in plan["config_keys"], plugin_id
-            if self._blocked(plan, plugin_id, blocked):
+            if self._blocked(plan, plugin_id, blocked) or plugin_id in failed:
                 continue
             self._record("config", plugin_id,
                          self.cli.install(plugin_id, config=options))
         for entry in self.value_commands(plan):                     # 3단계 — 마지막
-            if self._blocked(plan, entry["id"], blocked):
+            if self._blocked(plan, entry["id"], blocked) or entry["id"] in failed:
                 continue
             self._record(entry["command"], entry["id"],
                          getattr(self.cli, entry["command"])(entry["id"]))
@@ -575,6 +583,60 @@ def test_the_value_step_marks_an_assumed_judgement(tmp_path):
     assert dev.value_commands(plan) == [
         {"id": "p@m", "command": "disable", "assumed": True},
         {"id": "q@m", "command": "disable", "assumed": False}]
+
+
+def test_a_failed_install_does_not_leave_a_ghost_key(tmp_path):
+    """9.3.2 — 2단계가 **실패한** id는 3단계의 대상이 아니다. 유령 키가 생기지 않는다.
+
+    `blocked` 필터는 **1단계 등록 실패**만 거른다. 설치 자체가 다른 사유로 실패한 id
+    (1-b #4 — 없는 플러그인)는 그 필터를 통과하므로, 3단계가 그대로 `disable`을 낸다.
+    실제 CLI는 그때 exit 1이 아니라 **exit 0으로 `{id: false}` 키를 만든다**
+    (2026-08-29 스모크 2장 — 옛 추정 4번을 뒤집은 자리). 설치 기록이 없는 그 키가
+    **유령 키**다.
+
+    **이것은 레포 오염도 데이터 손실도 아니다** — 값은 레포와 같고 base 전진도 그
+    값에 대해서는 옳다. 잃는 것은 **실패의 흔적**이다: 다음 백업이 로컬 `false`를
+    레포 `false`와 같다고 읽어 base를 전진시키면, 그 id는 더 이상 `add` 버킷에 오지 않아
+    **영영 설치되지 않는다.** 실패한 항목의 base가 전진하지 않는 규칙(10.4)이 노리는
+    "다음 회차에 다시 보인다"를 유령 키가 우회한다.
+
+    **실패 주입이 없으면 이 갈래를 재현할 수 없다.** `PluginCLI.install`이 언제나 exit 0이던
+    동안에는 "2단계가 실패한 id"라는 상태 자체를 만들 수 없었다(`set_install_failure`가
+    그래서 생겼다). 그 인자를 빼면 아래 단정이 전부 뒤집힌다 — p@m이 정상 설치되어
+    base가 전진하고 두 번째 계획의 `install`이 비므로, 이 시나리오를 지탱하는 입력이다.
+
+    `q@m` 절반이 대조군이다 — 실패는 심은 id 하나에만 걸리고, 성공한 항목의 base는
+    정상적으로 전진한다. 없으면 "base가 통째로 얼어붙은" 구현도 이 테스트를 통과한다.
+    """
+    dev = make_device(tmp_path, repo_init={
+        "enabledPlugins": {"p@m": False, "q@m": True},
+        "extraKnownMarketplaces": {"m": GH},
+        "pluginConfigs": {"p@m": {"options": {"token": pc.SENTINEL}}}})
+    dev.cli.set_install_failure("p@m")
+    plan = dev.restore(secrets={"p@m": {"token": "s3cr3t"}})
+    # 픽스처가 의도한 계획인지 먼저 확인한다 — p@m이 2·3·4단계 **모두**의 대상이어야
+    # 두 필터가 걸릴 자리가 있다.
+    assert plan["install"] == ["p@m", "q@m"]
+    assert plan["disable_after_install"] == ["p@m"]
+    assert plan["config_keys"] == {"p@m": ["token"]}
+    # 유령 키가 없다. 3·4단계 명령이 둘 다 나가지 않았다 — 4단계 쪽은 다시 실패해
+    # 사용자에게 같은 실패를 두 번 보이는 것을 막는다(값에는 나타나지 않는다).
+    assert "p@m" not in dev.cli.settings()["enabledPlugins"]
+    attempted = [(step, name) for step, name, _ in dev.commands]
+    assert ("disable", "p@m") not in attempted
+    assert ("config", "p@m") not in attempted
+    assert dev.cli.settings()["enabledPlugins"]["q@m"] is True      # 대조군
+
+    dev.backup()
+    # 실패한 항목의 base는 전진하지 않는다 (10.4). 성공한 항목은 전진한다.
+    assert "p@m" not in dev.base()["enabledPlugins"]
+    assert dev.base()["enabledPlugins"]["q@m"] is True
+    # 그래서 다음 회차에 다시 보이고, 원인을 없애면 실제로 복원된다 (14.2 #7).
+    assert dev.restore()["install"] == ["p@m"]
+    dev.cli.set_install_failure("p@m", failing=False)
+    dev.restore(secrets={"p@m": {"token": "s3cr3t"}})
+    assert dev.local()["enabledPlugins"]["p@m"] is False
+    assert dev.cli.settings()["pluginConfigs"]["p@m"]["options"] == {"token": "s3cr3t"}
 
 
 def test_restore_rejects_a_secret_the_plan_did_not_ask_for(tmp_path):

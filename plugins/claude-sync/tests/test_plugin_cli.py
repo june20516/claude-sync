@@ -141,8 +141,11 @@ def test_enable_and_disable_on_an_unknown_plugin_create_a_ghost_key(tmp_path):
     그 뒤로는 그 id가 add 버킷에 오지 않아 **영영 설치되지 않는다.** spec 10.4의
     *"실패한 항목은 로컬에 없으니 자동으로 빠진다"*가 이 갈래에서는 참이 아니다.
 
-    이 테스트는 그 갈래를 고치지 않는다. 고정하는 것은 **CLI가 무엇을 하는가**이고,
-    하네스가 그 위험을 무해한 no-op으로 흉내 내지 못하게 막는 것이다.
+    **그 갈래는 이제 막혀 있다** — 2단계가 실패한 id는 3·4단계를 건너뛴다(9.3.2,
+    sync-restore/SKILL.md 5-2). `test_plugin_cycle`의
+    `test_a_failed_install_does_not_leave_a_ghost_key`가 그 방어를 잰다. 이 파일이 고정하는
+    것은 방어가 아니라 **CLI가 무엇을 하는가**이고, 하네스가 그 위험을 무해한 no-op으로
+    흉내 내지 못하게 막는 것이다.
     """
     cli = PluginCLI(str(tmp_path))
     assert cli.disable("ghost@m") == 0

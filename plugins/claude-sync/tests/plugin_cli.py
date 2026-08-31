@@ -230,8 +230,9 @@ class PluginCLI:
         self._manifests[plugin_id] = {"dependencies": list(dependencies),
                                       "defaultEnabled": bool(default_enabled)}
 
-    def set_install_failure(self, plugin_id):
-        """이 id의 `install`이 실패하게 만든다. CLI 명령이 아니라 픽스처다.
+    def set_install_failure(self, plugin_id, failing=True):
+        """이 id의 `install`이 실패하게 만든다(`failing=False`면 되돌린다).
+        CLI 명령이 아니라 픽스처다.
 
         재현하는 것은 1-b #3(미등록 마켓플레이스)·#4(없는 플러그인)의 **공통 결과**다 —
         exit 1이고 **두 파일 어느 쪽도 건드리지 않는다**(**실측**, 모듈 docstring 13번).
@@ -241,8 +242,14 @@ class PluginCLI:
         **이 픽스처가 없으면 유령 키 갈래를 만들 수 없다.** `install`이 언제나 exit 0이면
         3단계는 언제나 설치된 id에만 나가고, 미설치 id에 `disable`이 나가는 상태가
         저장소 안에서 **원리적으로 재현되지 않는다.**
+
+        **되돌릴 수 있어야 한다** — "실패했던 항목이 다음 회차에 실제로 복원된다"(14.2 #7)를
+        재려면 원인을 없앤 뒤 같은 기기로 다시 복원해야 하기 때문이다.
         """
-        self._install_failures.add(plugin_id)
+        if failing:
+            self._install_failures.add(plugin_id)
+        else:
+            self._install_failures.discard(plugin_id)
 
     def set_directory_marketplace(self, name, path):
         """로컬 디렉토리 출처를 심는다 (H2). CLI 명령이 아니라 픽스처다.
