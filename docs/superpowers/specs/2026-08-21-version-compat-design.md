@@ -944,7 +944,7 @@ restore에서 `compat.py` 호출 한 줄씩을 지웠을 때 367개가 전부 �
 | 스킬 | 검사 절 | 절의 앞 경계 | 절의 뒤 경계 | 호출이 앞서야 하는 실행줄 |
 |---|---|---|---|---|
 | backup | 2.5 | 2. 레포 준비 | 3. Git User 설정 | `reconcile_backup` · `extract_plugins` · `detect_downgrade` · `collect_mcp` · `generate_metadata` |
-| status | 1.5 | 1. 설정 확인 및 레포 준비 | 2. 메타데이터 기반 상태 분석 | `check_status` · `compare_mcp` |
+| status | 1.5 | 1. 설정 확인 및 레포 준비 | 2. 로컬과 레포의 차이 분석 | `check_status` · `compare_mcp` |
 | restore | 2.5 | 2. 레포에서 최신 상태 가져오기 | 3. 파일별 reconcile | `reconcile_restore` · `plan_mcp` · `update_base` |
 
 - 호출이 **정확히 한 번**, **지정된 절 안에** 있어야 한다. 파일 어딘가에 있기만 하면 되는

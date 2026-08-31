@@ -6833,7 +6833,7 @@ COMPAT_WIRING = {
     "sync-status": {
         "section": "1.5 호환성 검사",
         "after_section": "### 1. 설정 확인 및 레포 준비",
-        "before_section": "### 2. 메타데이터 기반 상태 분석",
+        "before_section": "### 2. 로컬과 레포의 차이 분석",
         "before_calls": (
             'python3 $SYNC_SCRIPTS/check_status.py "$SYNC_REPO"',
             'python3 "$SYNC_SCRIPTS/compare_plugins.py" "$SYNC_REPO/plugins.json"',
@@ -6961,7 +6961,7 @@ def test_restore_plugin_commands_carry_scope_user_and_never_dash_y():
 
 def test_status_reports_plugin_sections_through_the_new_script():
     """결함 B — check_status.py의 키 집합 비교를 지우고 새 스크립트를 부른다."""
-    sec = section("sync-status", "2. 메타데이터 기반 상태 분석")
+    sec = section("sync-status", "2. 로컬과 레포의 차이 분석")
     assert '"$SYNC_SCRIPTS/compare_plugins.py"' in sec
     assert "skipped" in sec
     source = open(os.path.join(SKILLS_DIR, "sync-status", "scripts", "check_status.py"),

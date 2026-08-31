@@ -337,7 +337,7 @@ def test_status_step2_says_the_report_honours_syncignore():
     다음 사람이 "일관성"을 이유로 union 전체에 필터를 걸어 restore와 보고를 어긋나게
     만든다.
     """
-    sec = section("sync-status", "2. 메타데이터 기반 상태 분석")
+    sec = section("sync-status", "2. 로컬과 레포의 차이 분석")
     assert ".syncignore" in sec
     assert "syncignore.py" in sec, "매칭 규칙이 어디 한 벌로 있는지를 적지 않았다"
     assert "레포에도 있는 제외 파일" in sec, "레포 쪽을 거르지 않는 비대칭을 적지 않았다"
@@ -470,7 +470,7 @@ COMPAT_WIRING = {
     "sync-status": {
         "section": "1.5 호환성 검사",
         "after_section": "### 1. 설정 확인 및 레포 준비",
-        "before_section": "### 2. 메타데이터 기반 상태 분석",
+        "before_section": "### 2. 로컬과 레포의 차이 분석",
         "before_calls": (
             'python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"',
             'python3 $SYNC_SCRIPTS/check_status.py "$SYNC_REPO"',
@@ -1273,7 +1273,7 @@ def test_status_step2_does_not_promise_a_metadata_branch():
     assert "sync-metadata" not in source, "check_status.py가 표식 파일을 읽는다"
     assert "base_hash(" in source
 
-    sec = section("sync-status", "2. 메타데이터 기반 상태 분석")
+    sec = section("sync-status", "2. 로컬과 레포의 차이 분석")
     assert "`sync-metadata.json`은 읽지 않는다" in sec
     assert ".sync-state/base" in sec
     # 옛 거짓이 되살아나는 것을 막는다. 바늘의 값은 위 docstring이 축자로 인용한다.
@@ -1619,7 +1619,7 @@ UPDATE_GUIDANCE = ("claude plugin marketplace update claude-sync"
                    " && claude plugin update claude-sync")
 UPDATE_GUIDANCE_SITES = [
     ("sync-backup", "5. plugins.json 생성 (키 단위 3-way 병합)", 1),
-    ("sync-status", "2. 메타데이터 기반 상태 분석", 2),   # 플러그인 + MCP
+    ("sync-status", "2. 로컬과 레포의 차이 분석", 2),   # 플러그인 + MCP
     ("sync-restore", "5. 플러그인 복원", 1),
 ]
 

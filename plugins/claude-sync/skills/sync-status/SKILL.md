@@ -99,11 +99,11 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 `candidate`가 있으면 그 커밋의 날짜와 서버 수도 함께 보여준다. status는 복구하지 않는다.
 
-### 2. 메타데이터 기반 상태 분석
+### 2. 로컬과 레포의 차이 분석
 
 로컬 `~/.claude`와 레포를 **파일 내용의 sha256으로** 비교한다. mtime은 쓰지 않는다. 판정의 기준선(merge base)은 이 기기의 `~/.claude/.sync-state/base`다.
 
-**여기서 `sync-metadata.json`은 읽지 않는다** — 이 절의 "메타데이터"는 그 파일이 아니라 base 스냅샷을 가리킨다. 표식 파일을 보는 곳은 1.5단계의 호환성 검사 하나이고 거기서 읽는 것은 버전 표식이다. `check_status.py`에는 표식 유무로 갈리는 **분기가 없다** — 언제나 같은 base 해시 경로를 탄다.
+**여기서 `sync-metadata.json`은 읽지 않는다.** 그 파일을 보는 곳은 1.5단계의 호환성 검사 하나이고, 거기서 읽는 것은 `min_reader_version`·`written_by_version` 둘뿐이다 — `schema`와 `files` 맵을 읽는 곳은 프로덕션에 없다(실측). `check_status.py`에는 표식 유무로 갈리는 **분기가 없다** — 언제나 같은 base 해시 경로를 탄다.
 
 아직 base가 없는 파일은 로컬과 레포가 다르면 `conflict`로 분류된다. 어느 쪽이 앞선 것인지 판단할 근거가 없기 때문이며, 이것도 분기가 아니라 같은 3-way 분류의 결과다.
 
