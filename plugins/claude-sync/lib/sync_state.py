@@ -122,10 +122,14 @@ def iter_synced_relpaths(root):
 
     **`.syncignore`를 적용하지 않는다(의도).** 이 함수는 레포 쪽 트리에도 쓰이는데
     제외 목록은 `~/.claude` 안에 있어 root 하나로는 어느 쪽 규칙인지 정할 수 없다.
-    그래서 필터는 **소비자가 건다** — 로컬 열거에 거는 곳이 sync-status의
-    check_status.py이고, 규칙 한 벌은 lib/syncignore.py다. 나머지 두 소비자는 걸지
-    않는다: reconcile_backup.py는 걸어도 결과가 같고(4단계 bash가 레포에서 지운다),
-    reconcile_restore.py는 복원 방향이라 "제외를 존중할 것인가"가 아직 정해지지 않았다.
+    그래서 필터는 **소비자가 건다** — 규정의 정본과 세 소비자의 유도는
+    lib/syncignore.py 모듈 docstring에 있다. 요약하면 `.syncignore`는 "올리지 않는다"
+    하나이고 backup 방향 전용이라:
+    - check_status.py(sync-status)는 **로컬 열거에만** 건다. 레포에도 있는 제외 파일은
+      `excluded_in_repo`로 따로 보고한다.
+    - reconcile_backup.py는 걸어도 결과가 같다 — 4단계 bash가 레포에서 지운다.
+    - reconcile_restore.py는 **걸지 않는다(결정).** 복원 방향에서 존중하면 다른 기기가
+      올린 같은 경로 파일을 영영 받지 못한다.
     """
     for name in SYNCED_DIRS:
         d = os.path.join(root, name)

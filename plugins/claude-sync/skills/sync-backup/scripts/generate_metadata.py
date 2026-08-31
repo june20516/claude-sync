@@ -6,6 +6,11 @@
 사용자가 제외한 파일의 **이름과 sha256이 푸시되는 표식 파일에 남는다.** 매칭 규칙은
 lib/syncignore.py 한 곳에 있다 — 4단계의 `find -path`와 같은 규칙이다.
 
+표식은 **푸시되는 산출물**이므로 여기서 거르는 것이 곧 규정 그대로다 —
+`.syncignore`의 뜻은 "올리지 않는다"이고 backup 방향 전용이다(정본: lib/syncignore.py
+모듈 docstring). 복원 쪽은 이 필터와 무관하다 — reconcile_restore.py는 제외 목록을
+보지 않는다.
+
 표식 세 필드의 성격이 다르다:
 - written_by_version: 정보. 판정에 쓰지 않는다.
 - min_reader_version: **판정 근거.** 이것 하나가 backup 게이트다.

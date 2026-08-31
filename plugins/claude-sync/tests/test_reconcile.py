@@ -152,6 +152,11 @@ def test_update_base_multiple_files(tmp_path):
 # 보고된다 — 백업은 그것을 push하지 않으므로 **보고만 어긋난다**(누수가 아니다).
 # 매칭 규칙 한 벌은 lib/syncignore.py이고, 4단계 bash와 같은지는 test_script_root.py의
 # test_python_syncignore_matches_the_skill_bash가 두 구현을 함께 돌려 잰다.
+#
+# 제외 대상이 **레포에도 있으면** 로컬 필터로는 사라지지 않는다. 그 자리의 문구는
+# `excluded_in_repo`이고, 왜 셋 중 어느 것도 아닌지는 check_status.py의 주석과
+# lib/syncignore.py의 정본에 있다. 아래 넷이 그것을 고정한다 — 머리말이 push가 아닐 것,
+# 대조군을 삼키지 말 것, restore 쪽 절반을 함께 적을 것, 침묵하지 말 것.
 
 def run_check_status(home, repo):
     script = os.path.join(
@@ -194,16 +199,88 @@ def test_without_syncignore_the_same_file_is_reported(tmp_path):
     assert "agents/keep.md" in out
 
 
-def test_an_excluded_file_that_is_also_in_the_repo_is_still_reported(tmp_path):
-    """**레포 쪽 열거는 거르지 않는다(의도).**
+def section_of(out, rel):
+    """`rel`이 **어느 머리말 아래** 실렸는지. 못 찾으면 None.
 
-    reconcile_restore.py는 `.syncignore`를 보지 않으므로 레포에 있는 항목은 제외
-    대상이라도 restore가 실제로 건드린다. 여기서 함께 걸러 버리면 이 보고가 restore와
-    어긋난다 — 그 비대칭이 의도라는 것을 이 테스트가 고정한다. 필터를 union 전체에
-    거는 회귀는 여기서 죽는다.
+    파일 이름만 grep하는 검사는 그 파일이 다른 묶음으로 옮겨가도, 심지어 "backup 시
+    push"라는 거짓 머리말 아래 실려도 초록이다 — 이 절이 고치려던 결함이 바로
+    그것이었으므로 머리말과 짝지어 잰다.
+    """
+    head = None
+    for line in out.splitlines():
+        if line.endswith("개):"):
+            head = line
+        elif line.strip() == rel:
+            return head
+    return None
+
+
+def excluded_in_repo_fixture(tmp_path):
+    """제외 대상이 **레포에도 있는** 상태. 대조군 `keep.md`는 로컬에만 있다."""
+    home, repo = status_fixture(tmp_path)
+    (home / ".claude" / ".syncignore").write_text("agents/internal-*.md\n")
+    (repo / "agents" / "internal-secret.md").write_text("다른 기기가 올린 것")
+    return home, repo
+
+
+def test_an_excluded_file_that_is_also_in_the_repo_is_not_called_a_push(tmp_path):
+    """**레포 쪽 열거는 거르지 않는다(의도)** — 다만 "backup 시 push"로 부르지 않는다.
+
+    셋 중 참인 문구가 없다: push는 거짓이고(4단계가 레포에서 지운다), 침묵도
+    거짓이며(레포에 있으니 restore가 건드린다), "restore 시 내려옴"도 거짓이다
+    (`in_sync`는 skip, `local_ahead`는 keep). 남는 참은 backup 방향 하나다.
+    필터를 union 전체에 거는 회귀도, 이 파일을 push 묶음으로 되돌리는 회귀도 여기서 죽는다.
+    """
+    home, repo = excluded_in_repo_fixture(tmp_path)
+    out = run_check_status(home, repo).stdout
+    head = section_of(out, "agents/internal-secret.md")
+    assert head is not None, "제외 파일이 어느 묶음에도 실리지 않았다:\n%s" % out
+    assert "push" not in head, head
+    assert ".syncignore" in head and "삭제" in head, head
+
+
+def test_the_excluded_bucket_does_not_swallow_the_ordinary_file(tmp_path):
+    """대조군 — 새 묶음이 전부를 삼키면 위 단정은 아무것도 재지 않는다.
+
+    `keep.md`는 로컬에만 있으므로 `local_only`("backup 시 push")여야 하고, 제외
+    파일과는 **다른** 머리말 아래 있어야 한다.
+    """
+    home, repo = excluded_in_repo_fixture(tmp_path)
+    out = run_check_status(home, repo).stdout
+    keep = section_of(out, "agents/keep.md")
+    assert keep is not None and "push" in keep, keep
+    assert keep != section_of(out, "agents/internal-secret.md")
+
+
+def test_the_excluded_bucket_says_what_backup_and_restore_do(tmp_path):
+    """머리말은 backup 쪽 절반만 말한다 — 나머지 절반이 함께 있어야 한다.
+
+    restore가 `.syncignore`를 무시한다는 것을 적지 않으면 사용자는 "곧 사라지니
+    신경 쓸 것 없다"로 읽는데, 지워지기 전에 복원하면 그 파일이 로컬에 적용될 수 있다.
+    **대조군과 짝지어 건다** — 제외 파일이 없을 때 이 두 줄이 나오면 안 된다.
+    """
+    home, repo = excluded_in_repo_fixture(tmp_path)
+    out = run_check_status(home, repo).stdout
+    assert "다른 기기가 올려 둔 같은 경로 파일도 함께 사라진다" in out, out
+    assert "restore는 `.syncignore`를 보지 않는다" in out, out
+
+    home2, repo2 = status_fixture(tmp_path / "control")
+    plain = run_check_status(home2, repo2).stdout
+    assert "restore는 `.syncignore`를 보지 않는다" not in plain, plain
+
+
+def test_an_excluded_file_left_in_the_repo_is_not_reported_as_all_synced(tmp_path):
+    """**침묵도 거짓이다.** 로컬·레포가 같아도 다음 백업이 레포 사본을 지운다.
+
+    새 묶음을 "in_sync 취급"으로 되돌리면 이 상태가 "모두 동기화 상태입니다"로
+    보고되고, 사용자는 레포에서 파일이 사라질 것을 모른 채 백업을 돌린다.
     """
     home, repo = status_fixture(tmp_path)
     (home / ".claude" / ".syncignore").write_text("agents/internal-*.md\n")
     (repo / "agents" / "internal-secret.md").write_text("사내 URL")
+    (repo / "agents" / "keep.md").write_text("공개")
     out = run_check_status(home, repo).stdout
-    assert "agents/internal-secret.md" in out
+    assert "모두 동기화 상태입니다" not in out, out
+    # 대조군이 실제로 in_sync여야 위 단정이 "제외 파일 때문에" 참인 것이 된다 —
+    # 대조군이 어긋나 있으면 어느 항목이 그 줄을 막았는지 알 수 없다.
+    assert "동일" in section_of(out, "agents/keep.md")

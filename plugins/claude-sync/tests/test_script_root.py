@@ -335,6 +335,15 @@ def test_status_step2_says_the_report_honours_syncignore():
     assert ".syncignore" in sec
     assert "syncignore.py" in sec, "매칭 규칙이 어디 한 벌로 있는지를 적지 않았다"
     assert "레포에도 있는 제외 파일" in sec, "레포 쪽을 거르지 않는 비대칭을 적지 않았다"
+    # 그 항목을 **무엇이라 부르는지**까지 건다. 부르는 이름을 적지 않으면 다음 사람이
+    # 그것을 다시 `local_ahead`("backup 시 push")로 되돌려도 산문은 초록으로 남는다 —
+    # 이 절이 고친 결함이 정확히 그 거짓이었다. 머리말은 스크립트에서 뽑는다.
+    with open(os.path.join(SKILLS_DIR, "sync-status", "scripts", "check_status.py"),
+              encoding="utf-8") as f:
+        label = re.search(r'\("excluded_in_repo", "(.+?)"\)', f.read())
+    assert label, "check_status.py에서 excluded_in_repo 머리말을 뽑지 못했다"
+    assert label.group(1) in sec, (
+        "산문이 그 묶음의 머리말을 그대로 싣지 않는다: %r" % label.group(1))
 
 
 def security_section():
@@ -474,6 +483,7 @@ COMPAT_WIRING = {
             'python3 "$SYNC_SCRIPTS/plan_plugins.py" apply-base',
             'python3 "$SYNC_SCRIPTS/plan_mcp.py" apply-base',
             'python3 "$SYNC_SCRIPTS/plan_plugins.py" plan "$SYNC_REPO/plugins.json"',
+            'python3 "$SYNC_SCRIPTS/plan_plugins.py" recheck-values',
             'python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json"',
             'python3 "$SYNC_BACKUP_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"',
         ),
@@ -1064,6 +1074,52 @@ def test_syncignore_examples_actually_exclude_something(tmp_path):
             "문서가 드는 패턴이 아무것도 제외하지 않는다: %r" % pattern)
     assert keep.exists(), "패턴에 없는 파일까지 지웠다"
     assert (repo / ".git").exists(), ".git이 prune되지 않았다"
+
+
+def test_step4_deletes_what_another_machine_already_pushed(tmp_path):
+    """제외 패턴은 **이번에 복사한 것만** 지우지 않는다 — 레포에 이미 있던 것도 지운다.
+
+    이 사실이 세 문장의 근거다: `/sync-status`의 `excluded_in_repo` 머리말("backup 시
+    레포에서 삭제")과 그 아래 "다른 기기가 올려 둔 같은 경로 파일도 함께 사라진다",
+    그리고 sync-backup 보안 절의 같은 서술. 근거를 산문으로만 두면 그 세 문장이 추정이
+    되므로 **실행해서** 잰다 — 이 저장소가 "실측"이라 적고 추정이었던 사례를 여러 번 냈다.
+
+    **10단계의 스테이징까지 함께 돌린다.** 작업 트리에서만 사라지고 커밋에 실리지 않으면
+    "레포에서 삭제"는 거짓이 된다. 스테이징 명령은 SKILL.md에서 뽑는다 — 손으로 적으면
+    10단계가 특정 경로만 add하도록 바뀌어도 이 테스트가 초록으로 남는다.
+    """
+    repo = tmp_path / "repo"
+    (repo / "agents").mkdir(parents=True)
+    (repo / "agents" / "internal-secret.md").write_text("다른 기기가 올린 것",
+                                                        encoding="utf-8")
+    (repo / "agents" / "public.md").write_text("keep", encoding="utf-8")
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+           "-c", "commit.gpgsign=false"]
+    subprocess.run(git + ["init", "-q"], check=True, capture_output=True)
+    subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
+    subprocess.run(git + ["commit", "-qm", "다른 기기의 백업"], check=True,
+                   capture_output=True)
+
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / ".syncignore").write_text("agents/internal-*.md\n",
+                                                  encoding="utf-8")
+    proc = subprocess.run(["bash", "-c", syncignore_block()],
+                          capture_output=True, text=True,
+                          env=dict(os.environ, HOME=str(home), SYNC_REPO=str(repo)))
+    assert proc.returncode == 0, proc.stderr
+    assert not (repo / "agents" / "internal-secret.md").exists(), (
+        "이 기기가 올린 적 없는 레포 파일이 남았다")
+    assert (repo / "agents" / "public.md").exists(), "패턴에 없는 파일까지 지웠다"
+
+    stage = [line.strip() for block in bash_blocks(section("sync-backup", "10. 커밋 & 푸시"))
+             for line in block.splitlines() if line.strip().startswith("git add")]
+    assert stage == ["git add -A"], stage
+    subprocess.run(git + stage[0].split()[1:], check=True, capture_output=True)
+    staged = subprocess.run(git + ["diff", "--cached", "--name-status"],
+                            capture_output=True, text=True, check=True).stdout
+    assert staged.split() == ["D", "agents/internal-secret.md"], (
+        "삭제가 커밋에 실리지 않는다 — '레포에서 삭제'가 거짓이 된다: %r" % staged)
 
 
 # --- 4단계 bash와 lib/syncignore.py가 같은 규칙인가 ---

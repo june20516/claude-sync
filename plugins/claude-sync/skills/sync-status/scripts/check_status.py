@@ -25,12 +25,18 @@ HOME_CLAUDE = os.path.expanduser("~/.claude")
 # "다음 백업이 올립니다"라고 말하는 자리다. 누수는 아니고 **보고만 어긋난다.**
 # 매칭은 4단계 bash·generate_metadata.py와 같은 한 벌을 쓴다(lib/syncignore.py).
 #
-# **레포 쪽 열거는 거르지 않는다(의도).** reconcile_restore.py는 `.syncignore`를 보지
-# 않으므로 레포에 있는 항목은 제외 대상이라도 restore가 실제로 건드린다 — 거르면 이
+# **레포 쪽 열거는 거르지 않는다(결정).** reconcile_restore.py는 `.syncignore`를 보지
+# 않으므로 레포에 있는 항목은 제외 대상이라도 **restore의 판정 대상이다** — 거르면 이
 # 보고가 restore와 어긋난다. 그래서 이 필터가 없애는 것은 정확히 **"레포에 없는 제외
-# 파일"** 하나뿐이다. 레포에도 있는 제외 파일은 여전히 보고되고, 그중
-# `local_ahead`의 "backup 시 push" 문구는 아직 정확하지 않다 — 그것을 닫으려면
-# "restore가 `.syncignore`를 존중해야 하는가"를 먼저 정해야 한다(범위 밖).
+# 파일"** 하나뿐이다.
+#
+# 레포에도 있는 제외 파일은 **`excluded_in_repo`로 따로 보고한다.** 그 자리에 쓸 수 있는
+# 참인 문구가 셋 중 어느 것도 아니기 때문이다: "backup 시 push"는 거짓이고(4단계가
+# 레포에서 지운다), 침묵도 거짓이며(레포에 있으니 restore가 건드린다), "restore 시
+# 내려옴"도 거짓이다(`in_sync`는 skip, `local_ahead`는 keep이라 안 내려온다).
+# 남는 참은 **backup 방향 하나** — 다음 백업이 레포 사본을 지우고 그 삭제를 푸시한다.
+# 그것을 머리말에 두고, restore 쪽은 "`.syncignore`를 보지 않는다"만 덧붙인다.
+# 규정의 정본은 lib/syncignore.py 모듈 docstring이다.
 #
 # `.syncignore`를 못 읽으면 예외가 전파된다 — load_patterns의 규약이다. 여기서 삼키면
 # 제외 목록이 통째로 빈 것으로 읽혀 위의 잘못된 보고가 조용히 돌아온다.
@@ -46,9 +52,18 @@ buckets = {
     "local_ahead": [],    # backup 시 push
     "fast_forward": [],   # restore 시 업데이트
     "conflict": [],       # 양쪽 변경
+    "excluded_in_repo": [],   # backup 시 레포에서 삭제
 }
 
 for rel in rels:
+    # 여기 오는 제외 대상은 **반드시 레포에 있다** — `rels`의 로컬 쪽 절반은 이미
+    # 걸러졌으므로 제외 패턴에 걸린 채 남은 경로는 레포 열거에서만 올 수 있다.
+    # 3-way 분류를 하지 않는 이유: 그 결과(local_ahead/fast_forward/…)가 말하는 것은
+    # "이 파일을 어느 쪽으로 옮기는가"인데, 이 파일들에 대해 backup이 하는 일은
+    # 옮기는 것이 아니라 **레포에서 지우는 것**이라 어느 분류에도 해당하지 않는다.
+    if syncignore.is_excluded(rel, patterns):
+        buckets["excluded_in_repo"].append(rel)
+        continue
     local = os.path.join(HOME_CLAUDE, rel)
     repo = os.path.join(repo_path, rel)
     L = ss.file_hash(local)
@@ -67,14 +82,28 @@ labels = [
     ("repo_only", "+ 새 파일 — 레포에만 있음 (restore 시 추가)"),
     ("local_ahead", "↑ 로컬 앞섬 (backup 시 push)"),
     ("local_only", "+ 로컬 전용 (backup 시 push)"),
+    ("excluded_in_repo", "⊘ .syncignore 제외인데 레포에 남아 있음 (backup 시 레포에서 삭제)"),
     ("in_sync", "✓ 동일"),
 ]
+
+# 머리말은 참인 절반만 말한다. 나머지 절반(restore가 무시한다)을 적지 않으면 사용자가
+# "곧 사라지니 신경 쓸 것 없다"로 읽는데, 지워지기 전에 복원하면 그 파일이 로컬에
+# 적용될 수 있다. 두 문장이 함께 있어야 규정("올리지 않는다")이 온전히 읽힌다.
+EXCLUDED_NOTE = (
+    "  ↳ push되지 않는다. 다음 backup이 레포 사본을 지우고 그 삭제를 푸시하므로,\n"
+    "    다른 기기가 올려 둔 같은 경로 파일도 함께 사라진다.\n"
+    "  ↳ restore는 `.syncignore`를 보지 않는다 — 지워지기 전에 복원하면 이 파일도\n"
+    "    평소의 3-way 판정을 그대로 받는다(추가·덮어쓰기·머지·보존)."
+)
+
 for key, label in labels:
     items = buckets[key]
     if items:
         print("\n%s (%d개):" % (label, len(items)))
         for f in items:
             print("  " + f)
+        if key == "excluded_in_repo":
+            print(EXCLUDED_NOTE)
 
 if not any(buckets[k] for k in buckets if k != "in_sync"):
     # **전칭으로 읽히면 안 된다.** iter_synced_relpaths가 열거하는 것은 agents·skills·
