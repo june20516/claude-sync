@@ -12,6 +12,8 @@ import json
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 import plugin_config as pc  # noqa: E402
 from plugin_cli import PluginCLI  # noqa: E402
@@ -24,6 +26,67 @@ def test_install_writes_true_but_preserves_an_existing_array(tmp_path):
     cli.set_enabled("q@m", ["1.0.0"])
     assert cli.install("q@m") == 0
     assert cli.settings()["enabledPlugins"]["q@m"] == ["1.0.0"]
+
+
+def test_install_writes_the_manifest_default_enabled(tmp_path):
+    """**실측**(plugin_cli 모듈 docstring 12번 — 2026-08-29 스모크 2차 7장).
+
+    `install`은 "언제나 `true`"가 아니다. 1차 스모크가 그렇게 읽은 것은 픽스처의
+    `defaultEnabled`가 전부 기본값(true)이었기 때문이고, 2차가 그 필드를 `false`로 둔
+    플러그인을 세워 갈랐다.
+
+    **이 테스트가 없으면 그 규칙이 공허하다** — 에뮬레이터를 "언제나 true"로 되돌려도
+    스위트 전체가 통과했다(실측: 이 파일을 쓰기 전에 규칙만 먼저 넣었더니
+    **깨진 테스트가 하나도 없었다**). `defaultEnabled`를 심는 입력이 저장소 어디에도
+    없었기 때문이다.
+
+    **표의 세 번째 행(`defaultEnabled: false` + 기존 `true`)이 그 문서의 요약 문장과
+    어긋난다.** 요약은 *"배열이면 보존하고 그 외에는 defaultEnabled를 쓴다"*인데 그
+    행의 실측은 `false`가 아니라 **`true` 유지**다. 여기서는 표를 따른다.
+    """
+    cli = PluginCLI(str(tmp_path))
+    cli.set_manifest("off@m", default_enabled=False)
+    cli.set_manifest("on@m")                      # defaultEnabled는 선택 필드 — 기본 true
+    # (키 없음) 행 둘.
+    cli.install("off@m")
+    cli.install("on@m")
+    assert cli.settings()["enabledPlugins"] == {"off@m": False, "on@m": True}
+    # `false` 행 둘 — defaultEnabled가 true인 쪽만 **뒤집힌다.**
+    cli.install("off@m")
+    cli.install("on@m")
+    assert cli.settings()["enabledPlugins"] == {"off@m": False, "on@m": True}
+    # `true` 행 — defaultEnabled가 false여도 **유지된다.** 표의 세 번째 행이다.
+    assert cli.enable("off@m") == 0
+    cli.install("off@m")
+    assert cli.settings()["enabledPlugins"]["off@m"] is True
+    # 배열 행 — defaultEnabled와 무관하게 보존된다.
+    cli.set_enabled("arr@m", ["1.0.0"])
+    cli.set_manifest("arr@m", default_enabled=False)
+    cli.install("arr@m")
+    assert cli.settings()["enabledPlugins"]["arr@m"] == ["1.0.0"]
+
+
+def test_a_failed_install_touches_neither_file(tmp_path):
+    """**실측**(plugin_cli 모듈 docstring 13번 — 1-b #3·#4).
+
+    1-b #3은 미등록 마켓플레이스로 install하면 `settings.json`을 **만들지도 않는다**고
+    기록한다. 그 갈래를 재현하는 것이 유령 키 시나리오의 전제다 — 이 픽스처가 없으면
+    "2단계가 실패한 id"라는 상태 자체를 저장소 안에서 만들 수 없다.
+
+    **의존성도 끌어오지 않는다.** 실패한 install이 자식만 남기면 그 자식이 auto로 남아
+    `prune`의 입력이 되고, 실패한 복원이 로컬 상태를 바꾼 것이 된다.
+    """
+    cli = PluginCLI(str(tmp_path))
+    cli.set_manifest("p@m", ["child@m"])
+    cli.set_install_failure("p@m")
+    before_settings = cli.settings()
+    before_installed = cli.installed()
+    assert cli.install("p@m", config={"k": "v"}) == 1
+    assert cli.settings() == before_settings
+    assert cli.installed() == before_installed
+    # 다른 id는 영향받지 않는다 — 실패는 심은 id 하나에만 걸린다.
+    assert cli.install("q@m") == 0
+    assert cli.settings()["enabledPlugins"] == {"q@m": True}
 
 
 def test_install_flattens_an_existing_object_value(tmp_path):
@@ -181,12 +244,11 @@ def test_marketplace_add_is_idempotent_and_writes_a_github_source(tmp_path):
     다른 테스트들이 이 명령을 **셋업으로 부르기만** 하고 반환값도 재실행도 재지 않았기
     때문이다.
 
-    **언제나 github 모양인 것은 에뮬레이터의 단순화이지 CLI의 동작이 아니다** — 실제
-    CLI는 인자 하나에서 출처 종류를 판별한다(**실측**, plugin_cli 모듈 docstring 6번:
-    디렉토리 경로를 주니 `directory` 출처로 썼다). 그 단순화를 고정하는 자리가 여기다.
-    url·git 출처의 시나리오를 쓰려면 이 자리를 먼저 고쳐야 한다 — **그때 이 테스트가
-    먼저 말한다.** 이전에는 이 모양이 교대 시나리오 하나(H2)에 묻혀 있어서, 자기 주제가
-    directory 보류인 그 시나리오를 손대는 순간 두 자리가 함께 풀렸다.
+    `o/r` 인자가 github 모양을 만드는 것은 **실측**이다(plugin_cli 모듈 docstring 6번 —
+    2026-08-29 스모크 2차 9장). 판별의 나머지 두 모양은
+    `test_marketplace_add_detects_the_source_from_the_argument`가 잰다. 이전에는 이 모양이
+    교대 시나리오 하나(H2)에 묻혀 있어서, 자기 주제가 directory 보류인 그 시나리오를
+    손대는 순간 두 자리가 함께 풀렸다.
 
     1-b #10 — `autoUpdate`를 설정하는 옵션이 CLI에 **없으므로** 값에도 넣지 않는다.
     그 필드의 부재를 dict 동등으로 함께 고정한다.
@@ -200,6 +262,31 @@ def test_marketplace_add_is_idempotent_and_writes_a_github_source(tmp_path):
     assert cli.marketplace_add("m", "o/r") == 0
     assert cli.settings()["extraKnownMarketplaces"] == {
         "m": {"source": {"source": "github", "repo": "o/r"}}}
+
+
+def test_marketplace_add_detects_the_source_from_the_argument(tmp_path):
+    """**실측**(plugin_cli 모듈 docstring 6번 — 2026-08-29 스모크 2차 9장).
+
+    초판 에뮬레이터는 **언제나 github 모양**으로 썼다. 실제 CLI는 인자 하나에서 출처
+    종류를 판별한다 — 측정된 세 모양이 아래 셋이고, `https://github.com/o/r`는 `o/r`와
+    **같은 값으로 정규화**된다(그래서 github 왕복이 닫혔다).
+
+    **미측정 모양에는 값을 지어내지 않는다.** `marketplace_arg`는 `url`·`git` 출처에서도
+    인자를 만들어 내는데(`_SOURCE_ARG_FIELDS`) 그 갈래가 남기는 값은 재지 않았다.
+    조용히 github으로 쓰면 그 시나리오를 쓰는 사람이 왕복이 깨지는 것을 볼 자리가 없다 —
+    이 하네스가 이미 한 번 정확히 그렇게 틀렸다.
+    """
+    cli = PluginCLI(str(tmp_path))
+    cli.marketplace_add("gh", "o/r")
+    cli.marketplace_add("url", "https://github.com/o/r")
+    cli.marketplace_add("dir", "/tmp/mkt")
+    assert cli.settings()["extraKnownMarketplaces"] == {
+        "gh": {"source": {"source": "github", "repo": "o/r"}},
+        # 정규화 — 인자 모양이 달라도 값이 같다.
+        "url": {"source": {"source": "github", "repo": "o/r"}},
+        "dir": {"source": {"source": "directory", "path": "/tmp/mkt"}}}
+    with pytest.raises(NotImplementedError):
+        cli.marketplace_add("raw", "https://example.com/marketplace.json")
 
 
 def test_set_directory_marketplace_writes_a_directory_source(tmp_path):
