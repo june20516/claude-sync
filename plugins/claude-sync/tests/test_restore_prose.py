@@ -42,9 +42,9 @@
   `SCRIPT_CONTRACT_PHRASES`와 `test_restore_choice_json_uses_the_real_section_names`가 건다.
 - **더해지는** 확장 지시. 5-3에만 형태 그물이 있고 다른 절에는 없다 —
   `test_the_config_clause_never_widens_beyond_the_keys_the_plan_named`의 docstring 참조.
-- 5절이 플러그인의 `local_ahead`·`local_only`·`in_sync`에 대한 처방을 말하지 않는 것.
-  6절은 같은 버킷들을 표로 다루는데(그래서 위 MCP 표 검사가 성립한다) 5절에는 그 표가
-  없다. 이 파일은 그 **부재**를 지적하지 않는다 — 무엇이 옳은지는 spec의 판단이다.
+- (닫힘) *"5절이 `local_ahead`·`local_only`·`in_sync`의 처방을 말하지 않는다"* 는 spec
+  9.3.8(6차 개정 ②)이 판단했고, 5절 머리의 버킷 표가 그것을 싣는다. 아래
+  `test_the_plugin_bucket_table_*` 셋과 베낌 가드가 그 표를 건다.
 """
 import functools
 import inspect
@@ -64,6 +64,7 @@ import keyed_sync as ks       # noqa: E402  conftest.py가 lib를 sys.path에 �
 import mcp_config as mc       # noqa: E402
 import plugin_config as pc    # noqa: E402
 import plan_plugins           # noqa: E402
+from skill_paths import SKILLS  # noqa: E402
 
 SKILL_PATH = os.path.join(PLUGIN_DIR, "skills", "sync-restore", "SKILL.md")
 
@@ -93,6 +94,18 @@ def mcp_bucket_table():
     text = read_skill()
     sec = text[text.index(MCP_HEADING):text.index(MCP_END_HEADING)]
     out = sec[:sec.index("#### 6-1")]
+    assert "#### " not in out, "버킷 표 슬라이스가 소절을 삼켰다"
+    return out
+
+
+def plugin_bucket_table():
+    """5절 머리의 버킷 처방 표 (`#### 5-1` 앞까지).
+
+    **범위를 좁게 못박는다** — mcp_bucket_table과 같은 이유다. 소절까지 넓히면 5-5의
+    선택지 표가 섞여 들어 아래 완전성 등식이 조용히 다른 것을 잰다.
+    """
+    sec = plugin_section()
+    out = sec[:sec.index("#### 5-1")]
     assert "#### " not in out, "버킷 표 슬라이스가 소절을 삼켰다"
     return out
 
@@ -638,6 +651,121 @@ def test_the_mcp_bucket_table_covers_every_core_bucket():
     assert hold_buckets <= set(ks.BUCKETS), sorted(hold_buckets)
     assert rows == set(ks.BUCKETS) - hold_buckets, (
         sorted(rows), sorted(set(ks.BUCKETS) - hold_buckets - rows))
+
+
+# --------------------------------- 5절 버킷 표의 완전성 (6차 개정 ②)
+
+# 표 행이 처리 절을 가리키는 형태. `(5-2)`처럼 괄호로 감싼 절 번호만 위임으로 센다 —
+# 본문에 절 번호가 스치듯 나오는 것과 구별해야 한다.
+CLAUSE_REF = re.compile(r"\((\d-\d)\)")
+
+BACKUP_SKILL = "sync-backup"
+BACKUP_COMMAND = "/" + BACKUP_SKILL
+
+# 표가 **직접** 처방을 주는 버킷 → 그 행에 반드시 있어야 할 바늘.
+# 손으로 고른 것은 바늘뿐이고, **어느 버킷이 여기 와야 하는지는 표에서 파생한다**
+# (아래 test_..._splits_...). 바늘은 처방의 **행위**를 가리킨다 — 버킷 이름을 담으면
+# 바늘이 곧 단정이 되어 처방을 비워도 초록이다.
+TABLE_PRESCRIPTION = {
+    "in_sync": ("아무것도 하지 않는다",),
+    "local_only": (BACKUP_COMMAND,),
+    "local_ahead": (BACKUP_COMMAND, "선택지를 주지 않는다"),
+    "unrestorable": ("시도하지 않는다",),
+}
+
+
+def plugin_bucket_rows():
+    """5절 표의 {버킷: 행 전문}. **손으로 나열하지 않는다.**"""
+    out = {}
+    for line in plugin_bucket_table().splitlines():
+        m = BUCKET_ROW.match(line)
+        if m:
+            out[m.group(1)] = line
+    assert out, "5절 머리에서 버킷 표를 뽑지 못했다"
+    return out
+
+
+def test_the_plugin_bucket_table_covers_every_core_bucket():
+    """5절의 표는 코어가 내는 버킷을 **열한 개 전부** 덮어야 한다.
+
+    빠진 버킷은 처방이 없는 채로 사용자에게 도달한다 — 그것이 6차 개정 ②가 고친
+    결함이고(`local_ahead`·`local_only`·`in_sync`), 표가 줄어들면 그대로 되돌아온다.
+
+    **6절과 달리 면제가 없다.** MCP는 `no_hold`라 보류 버킷 둘을 빼지만 플러그인
+    어댑터는 네 종류의 보류를 낸다 — 그 사실을 리터럴로 적지 않고 **훅을 돌려서**
+    확인한다. 어댑터가 보류를 그만두는 날 이 단정이 먼저 실패한다.
+    """
+    repo = {"x@m": {"version": "1.0"}}          # H3 — 레포 값이 확장 포맷이다
+    hooks = pc.build_hooks(
+        {section: {} for section in pc.SECTIONS},
+        {"enabledPlugins": repo, "extraKnownMarketplaces": {}, "pluginConfigs": {}},
+        auto_ids=frozenset(), held_state={})
+    assert hooks["enabledPlugins"]["hold"]({}, repo)["value"], (
+        "플러그인 어댑터가 보류를 하나도 내지 않는다 — 면제 없음의 근거가 사라졌다")
+    rows = set(plugin_bucket_rows())
+    assert rows == set(ks.BUCKETS), (sorted(set(ks.BUCKETS) - rows), sorted(rows))
+
+
+def test_the_plugin_bucket_table_splits_into_delegating_and_prescribing_rows():
+    """모든 행은 둘 중 하나다 — 처리 절을 가리키거나, 처방을 표에서 주거나.
+
+    **어느 버킷이 처방 쪽인지는 표에서 파생한다.** 처방 없는 행에 `(5-5)`를 붙여
+    "처리하는 절이 있다"고 위장하면 여기서 갈린다. 반대로 처방 행의 절 참조를 지우면
+    바늘 검사가 없는 버킷이 늘어 이 등식이 깨진다.
+    """
+    rows = plugin_bucket_rows()
+    delegating = {b for b, line in rows.items() if CLAUSE_REF.search(line)}
+    prescribing = set(rows) - delegating
+    assert delegating, "표의 어느 행도 처리 절을 가리키지 않는다 — 파생이 무너졌다"
+    assert prescribing == set(TABLE_PRESCRIPTION), (
+        sorted(prescribing), sorted(TABLE_PRESCRIPTION))
+    # 위임 행이 가리키는 절은 실재해야 한다(전역 참조 무결성 검사가 파일 전체를 걸지만,
+    # 이 표에 대해서도 직접 건다 — 표만 남기고 절을 지우는 변조를 여기서 잡는다).
+    for bucket in sorted(delegating):
+        for ref in CLAUSE_REF.findall(rows[bucket]):
+            assert ref in clauses(), (bucket, ref, sorted(clauses()))
+
+
+@pytest.mark.parametrize("bucket", sorted(TABLE_PRESCRIPTION))
+def test_the_prescribing_row_actually_prescribes(bucket):
+    """처방 행이 **행위**를 말해야 한다. 이름만 남기고 처방을 비우면 여기서 죽는다.
+
+    `local_only`·`local_ahead`가 가리키는 명령은 손으로 적지 않는다 — 이 저장소의
+    스킬 목록에서 파생한다(`skill_paths.SKILLS`). 백업 스킬의 이름이 바뀌면 이 산문도
+    따라야 하고, 따르지 않으면 사용자는 존재하지 않는 명령을 안내받는다.
+    """
+    assert BACKUP_SKILL in SKILLS, (BACKUP_SKILL, SKILLS)
+    rows = plugin_bucket_rows()
+    line = rows[bucket]
+    for needle in TABLE_PRESCRIPTION[bucket]:
+        assert needle in line, (bucket, needle, line)
+        # **바늘이 판별력을 가져야 한다.** 빈 문자열이나 모든 행에 있는 조각은 처방을
+        # 통째로 비워도 초록이다 — 그 자리를 여기서 막는다.
+        hits = sum(needle in other for other in rows.values())
+        assert hits <= 2, (bucket, needle, hits)
+    # `in_sync`에는 사용자 행동이 없다 — 다른 둘과 같은 문구를 주면 뜻이 반대가 된다.
+    if bucket == "in_sync":
+        assert BACKUP_COMMAND not in line, line
+
+
+def test_the_two_bucket_tables_are_not_copies_of_each_other():
+    """5절과 6절의 표는 같은 이름을 **다른 층·다른 처방**으로 다룬다 — 베낀 행이 없어야 한다.
+
+    글자 그대로 같은 행이 있으면 한쪽을 고칠 때 다른 쪽이 조용히 낡는다. 그리고 실제
+    사고가 있었다: 이 표의 초판에서 `in_sync`·`local_only`·`local_ahead` 세 행이 6절과
+    **동일해** 변조 하네스가 두 표를 구별하지 못했다(실측 — 그 세 변조가 APPLY_FAIL).
+    """
+    rows5 = plugin_bucket_rows()
+    rows6 = {}
+    for line in mcp_bucket_table().splitlines():
+        m = BUCKET_ROW.match(line)
+        if m:
+            rows6[m.group(1)] = line
+    assert rows6, "6절에서 버킷 행을 뽑지 못했다"
+    shared = set(rows5) & set(rows6)
+    assert shared, "두 표가 공유하는 버킷이 없다 — 파생이 무너졌다"
+    copied = sorted(b for b in shared if rows5[b] == rows6[b])
+    assert not copied, copied
 
 
 def named_section_buckets(text):
