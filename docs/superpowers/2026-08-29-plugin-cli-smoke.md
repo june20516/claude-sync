@@ -156,7 +156,12 @@ after : enabledPlugins={"demo@smoke-mkt": true}
 | 기본값(=true) | `["1.0.0"]` | **배열 보존** |
 | 기본값(=true) | `{"version":"1.0.0"}` | `true` |
 
-**규칙: `install`은 기존 값이 배열이면 보존하고, 그 외에는 매니페스트의 `defaultEnabled`를 쓴다.**
+**규칙: `install`은 기존 값이 배열이면 보존하고, 그 외에는 「기존 값이 참이면 `true`, 거짓이거나 없으면 매니페스트의 `defaultEnabled`」를 쓴다.**
+
+> **이 요약의 초판은 "그 외에는 `defaultEnabled`를 쓴다"였고 표 3행과 어긋났다.** 3행은
+> `defaultEnabled: false` + 기존 `true` → **`true` 유지**인데 초판대로면 `false`여야 한다.
+> 측정한 일곱 행은 전부 옳았고 **요약만 넓혔다** — 이 문서에서 같은 형태가 두 번째다(9번 행).
+> 구현자가 요약이 아니라 **표를 따라 구현**해서 걸렀다.
 1차가 "언제나 `true`"로 읽은 것은 픽스처의 `defaultEnabled`가 전부 기본값(true)이었기 때문이다.
 
 ### 귀결 셋

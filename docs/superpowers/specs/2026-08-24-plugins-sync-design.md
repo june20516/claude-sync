@@ -205,10 +205,12 @@ MCP 재설계가 `mcp-servers.json`에 대해 고친 것과 **같은 결함**이
 
 **그리고 `install`의 규칙이 위 표보다 넓다**(스모크 7장, 2026-08-29 재측정):
 
-> **`install`은 기존 값이 배열이면 보존하고, 그 외에는 매니페스트의 `defaultEnabled`를 쓴다.**
+> **`install`은 기존 값이 배열이면 보존하고, 그 외에는 「기존 값이 참이면 `true`, 거짓이거나 없으면 매니페스트의 `defaultEnabled`」를 쓴다.**
 
 2026-08-24 측정이 *"그 외에는 `true`"* 로 읽힌 것은 픽스처의 `defaultEnabled`가 전부
-기본값(true)이었기 때문이다. `defaultEnabled`는 **선택 필드이고 기본이 true**이므로 대다수
+기본값(true)이었기 때문이다. (스모크 7장의 **요약**은 한때 *"그 외에는 `defaultEnabled`"* 였고
+그것도 거짓이다 — `defaultEnabled: false`인데 기존 값이 `true`면 `true`가 유지된다. 측정된
+일곱 행이 정본이고 요약이 넓었다.) `defaultEnabled`는 **선택 필드이고 기본이 true**이므로 대다수
 플러그인에서 결과가 같지만, `false`인 플러그인에서는 `install`이 키를 **`false`로** 쓴다.
 이 차이가 9.3.1의 단계 순서와 8.4의 "새 기기" 행을 바꿨다(0.3장 ②).
 
