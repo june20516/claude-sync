@@ -625,7 +625,7 @@ def test_downgrade_prose_walks_every_backed_up_document(skill):
     declarations = [line for line in lines if LOOP_DECLARATION in line]
     assert declarations, "%s: 루프 선언(%r)이 없다" % (skill, LOOP_DECLARATION)
     assert any(all(relpath in line for relpath in dd.RELPATHS) for line in declarations), (
-        "%s: 루프 선언이 백업 문서 전부(%s)를 부르지 않는다"
+        "%s: 루프 선언이 백업 문서 전부(%s)를 부르지 않는다 — 선언은 **한 줄**에 있어야 한다"
         % (skill, ", ".join(dd.RELPATHS))
     )
 
@@ -668,8 +668,14 @@ def test_downgrade_prose_distinguishes_a_global_skip_from_an_unchecked_file(skil
 # 문서가 된다) 1087개가 전부 통과했다. 절 단위 존재 검사가 바로 위 `false` 갈래 줄에
 # 가려지고, 갈래 **뒤**의 불릿이 바늘을 대신 충족시켰기 때문이다(불변식 7).
 #
-# 그래서 갈래마다 (표식, 그 갈래 **안**에 반드시 있어야 할 것)을 짝지어 걸고, 슬라이스를
-# **다음 표식 직전**에서 끊는다 — 갈래 밖의 문장이 갈래를 대신 충족시키면 안 된다.
+# 그래서 갈래마다 (표식, 그 갈래 **안**에 반드시 있어야 할 것)을 짝지어 건다.
+#
+# **실제로 일하는 것은 시작 앵커다.** 측정된 구멍은 갈래 **앞**의 문장이 바늘을 대신
+# 충족시키던 것이다 — "조용히"는 루프 선언 줄에 이미 있고 "확인하지 못했다"는 전역 문단에
+# 이미 있어서, 절 단위 검사였다면 갈래 본문을 지워도 통과한다. 끝 경계는 오늘 열여덟 쌍
+# 어디에서도 잡는 것이 없다(실측 — `len(prose)`로 넓혀도 1107개가 그대로 통과했다).
+# **예방적 절단으로 남겨 둔다** — 값이 싸고, 갈래 뒤에 같은 문구가 생기는 재배치를 미리
+# 막는다. "구멍을 막고 있다"고 읽지 말 것.
 DOWNGRADE_BRANCHES = (
     ('최상위 `status`가 `"skipped"`면', "최상위 `reason`을 알린다",
      "전역 사유를 삼키면 '확인하지 못했다'가 '사고가 없다'로 읽힌다(불변식 6)"),
@@ -686,6 +692,12 @@ DOWNGRADE_BRANCHES = (
      "후보 요약은 relpath 중립 버킷 맵이다 — mcp 전용 키를 읽으면 안 된다"),
 )
 DOWNGRADE_BRANCH_MARKERS = [marker for marker, _, _ in DOWNGRADE_BRANCHES]
+
+# **비면 수집 단계에서 죽는다.** 빈 표는 아래 파라미터화를 FAIL이 아니라 **skip**으로
+# 만들어(pytest 기본 empty_parameter_set_mark, 이 저장소에 설정 파일이 없다) 열여덟 쌍이
+# 조용히 사라진다 — 가드가 자기 입력이 비었을 때 스스로 실패해야 한다는 기준 ⑵가 여기서
+# 걸린다. 별도 가드를 세우는 대신 표 자신이 검사한다.
+assert DOWNGRADE_BRANCHES, "갈래 표가 비었다 — 아래 파라미터화가 통째로 skip된다"
 
 
 def branch_slice(prose, marker):
@@ -719,6 +731,10 @@ def test_the_downgrade_branch_table_did_not_shrink():
 
     대조할 외부 진실 원천이 없는 손으로 고른 목록이라(어느 갈래를 둘지는 산문의 결정이다)
     개수를 함께 건다 — `SCRIPT_CONTRACT_PHRASES`와 같은 처방이다.
+
+    **표를 통째로 비우는 것은 이 단정이 잡지 않는다** — 그쪽은 모듈 상단의
+    `assert DOWNGRADE_BRANCHES`가 수집 단계에서 잡는다. 빈 표는 위 파라미터화를 FAIL이
+    아니라 skip으로 만들기 때문이다(실측). 이 단정이 잡는 것은 **행이 하나씩 빠지는 쪽**이다.
     """
     assert len(DOWNGRADE_BRANCHES) == 6, DOWNGRADE_BRANCHES
     assert len(set(DOWNGRADE_BRANCH_MARKERS)) == len(DOWNGRADE_BRANCHES), "표식이 겹친다"
@@ -738,6 +754,65 @@ def test_backup_says_what_to_do_when_there_is_no_candidate():
     branch = sec[sec.index(marker):]
     assert "사고는 알리되" in branch, "사고를 알린다는 말이 없다"
     assert "복구는 제안하지 않는다" in branch, "복구를 제안하지 않는다는 말이 없다"
+
+
+# 2.x의 `extract_plugins.py`가 실제로 옮기는 키 둘. **그 스크립트는 main에만 있어 이 트리
+# 안에 기계로 대조할 원천이 없다** — 사람이 대조한 실측이고(test_downgrade.py의
+# TWO_X_SECTIONS와 같은 근거), 그래서 **값을 핀하고** 이름이 어댑터에 실재하는지만 기계로
+# 문다. 어느 키가 떨어지는지는 어댑터의 상수에서 계산한다 — 손으로 적으면 섹션이 늘어도
+# 표는 낡은 채다.
+TWO_X_CARRIES = ("enabledPlugins", "extraKnownMarketplaces")
+
+
+def loss_table_row(relpath):
+    """restore 2.5 손실 표에서 그 문서의 행. 없으면 무엇을 못 찾았는지 말하고 죽는다."""
+    head = "| `%s` |" % relpath
+    for line in subsection("sync-restore", DOWNGRADE_RESULT_SUBSECTION).splitlines():
+        if line.startswith(head):
+            return line
+    raise AssertionError("손실 표에 %s 행이 없다 — 표가 낡았다" % relpath)
+
+
+def test_restore_loss_table_names_every_key_that_2x_drops():
+    """2.x가 옮기지 않는 키는 **이 기기 것까지** 사라진다 — 「타 기기의」로 좁히면 거짓이다.
+
+    2.x는 `plugins.json`을 통째로 다시 만들면서 위 둘만 옮긴다. 그래서 `pluginConfigs`와
+    별칭 `additionalMarketplaces`는 **이 기기 것을 포함해 전부** 레포에서 사라지고 로컬에만
+    남는다 — 곧 케이스 4의 `local_stale`로 들어온다. 표가 「타 기기의」로 한정하면 사용자는
+    자기 설정 키가 왜 없어졌는지 이 표에서 읽지 못한다.
+
+    행동은 억제(5-5)가 문서 단위라 안전하지만, **사용자가 읽고 판단하는 사실 진술**이므로
+    좁으면 안 된다.
+    """
+    known = set(pc.SECTIONS) | set(pc.MARKETPLACE_ALIASES)
+    assert set(TWO_X_CARRIES) <= known, (
+        "2.x가 옮기는 키 이름이 어댑터에 없다 — 핀이 낡았다: %s" % sorted(TWO_X_CARRIES)
+    )
+    dropped = sorted(known - set(TWO_X_CARRIES))
+    assert dropped, "떨어지는 키가 없다 — 추출이 죽었다"
+    row = loss_table_row(pc.BACKUP_RELPATH)
+    missing = [key for key in dropped if key not in row]
+    assert not missing, "손실 표의 %s 행이 말하지 않는 키: %s" % (pc.BACKUP_RELPATH, missing)
+    # 키를 세는 것만으로는 **범위**가 안 걸린다. 그 키들이 "타 기기의" 것만 사라진다고
+    # 읽히면 사용자는 자기 설정 키가 왜 없어졌는지 이 표에서 못 읽는다.
+    assert "이 기기 것까지" in row, (
+        "%s 행이 사라지는 범위를 말하지 않는다 — 2.x가 모르는 키는 이 기기 것도 사라진다"
+        % pc.BACKUP_RELPATH
+    )
+
+
+def test_restore_cites_the_backup_step_that_actually_recovers():
+    """restore가 부르는 절 번호를 backup의 **제목에서 뽑는다.**
+
+    restore 2.5는 사용자를 "레포에 쓸 수 있는 경로"로 보내면서 backup의 절 번호를 인용한다.
+    번호를 손으로 적으면 backup의 절이 옮겨졌을 때 사용자가 없는 단계를 찾는다 — 이번
+    diff가 고친 드리프트가 정확히 그 종류다(spec 여섯 줄이 5.5단계라고 말하고 있었고,
+    탐지가 plugins.json으로 넓어진 뒤 그 번호는 이중으로 틀렸다).
+    """
+    step = DOWNGRADE_SECTION["sync-backup"].split()[0] + "단계"
+    assert step[0].isdigit(), "backup 절 제목에서 번호를 뽑지 못했다: %r" % step
+    sub = subsection("sync-restore", DOWNGRADE_RESULT_SUBSECTION)
+    assert step in sub, "restore가 backup의 탐지 절(%s)을 가리키지 않는다" % step
 
 
 def test_backup_recovery_command_restores_the_document_it_is_talking_about():
@@ -867,10 +942,37 @@ DOWNGRADE_REF = '`files["%s"]`의 `downgrade_suspected`'
 FILES_REF = re.compile(r'''files\[\s*['"]([^'"]+)['"]\s*\]''')
 
 LOCAL_STALE_BRANCH = {
-    # 절 → (읽어야 할 문서, 억제 대상인 거짓 문구, 갈래 뒤에 오는 표의 첫 칸)
-    "6-5. ": (mc.BACKUP_RELPATH, "다른 기기가 이 서버를 삭제했습니다", "| 선택 |"),
-    "5-5. ": (pc.BACKUP_RELPATH, "다른 기기가 지웠습니다", "| 버킷 "),
+    # 절 → (읽어야 할 문서, 억제 대상인 거짓 문구, 갈래 뒤에 오는 표의 첫 칸, 범위 바늘)
+    #
+    # 범위 바늘은 **절이 local_stale 아닌 버킷도 함께 다룰 때만** 있다. 6-5는 절 전체가
+    # local_stale이라 범위 오해가 불가능하지만(None), 5-5는 케이스 4·5·8·9를 함께 다루므로
+    # 억제가 repo_ahead(8)·both_changed(9)로 번지면 "다른 기기가 변경했습니다"라는
+    # **참인 안내**까지 지워진다.
+    "6-5. ": (mc.BACKUP_RELPATH, "다른 기기가 이 서버를 삭제했습니다", "| 선택 |", None),
+    "5-5. ": (pc.BACKUP_RELPATH, "다른 기기가 지웠습니다", "| 버킷 ",
+              "`local_stale`(케이스 4·5)에만"),
 }
+
+
+def test_every_backed_up_document_has_a_local_stale_suppression():
+    """**억제 자리는 문서마다 하나씩이다.** 표가 줄면 그 문서의 거짓 문구가 가드 없이 나간다.
+
+    손으로 적은 두 행은 자기 축소를 탐지하지 못한다 — 실측으로, `5-5` 행을 지웠더니
+    그 절을 무는 테스트 둘이 조용히 사라지고 1105개가 전부 통과했다. 그 둘이 이 task가
+    세운 **5-5의 유일한 가드**이므로, 행이 사라지면 억제 갈래를 통째로 지워도 빨개지는
+    것이 없다(6.2의 셋째 형태).
+
+    바늘을 `dd.RELPATHS`에서 만든다 — 손으로 적으면 같은 결함이고, 백업 문서가 셋이 되는
+    날 새 문서의 안내가 가드 없이 나간다(맵 설계의 존재 이유가 정확히 그것이다).
+    """
+    assert dd.RELPATHS, "판정 대상 목록이 비었다 — 바늘을 만들지 못했다"
+    covered = {row[0] for row in LOCAL_STALE_BRANCH.values()}
+    assert covered == set(dd.RELPATHS), (
+        "억제 자리가 없는 백업 문서: %s" % sorted(set(dd.RELPATHS) - covered)
+    )
+    assert len(LOCAL_STALE_BRANCH) == len(dd.RELPATHS), (
+        "한 문서에 두 자리를 적었다: %s" % sorted(LOCAL_STALE_BRANCH)
+    )
 
 
 @pytest.mark.parametrize("heading", sorted(LOCAL_STALE_BRANCH))
@@ -884,7 +986,7 @@ def test_restore_local_stale_does_not_claim_deletion_when_downgraded(heading):
     기본 문구가 그 문서의 `downgrade_suspected` 분기 **뒤에** 와야 한다. 순서를 걸지
     않으면 분기를 지워도 문장이 남아 통과한다(불변식 7).
     """
-    relpath, false_claim, table_head = LOCAL_STALE_BRANCH[heading]
+    relpath, false_claim, table_head, scope = LOCAL_STALE_BRANCH[heading]
     assert relpath in dd.RELPATHS, "탐지하지 않는 문서를 읽고 있다: %r" % relpath
     ref = DOWNGRADE_REF % relpath
     sub = subsection("sync-restore", heading)
@@ -905,6 +1007,14 @@ def test_restore_local_stale_does_not_claim_deletion_when_downgraded(heading):
     assert "마지막 사본" in quote, "로컬이 마지막 사본일 수 있다는 경고가 없다"
 
     assert "권하지 않는다" in true_branch, "제거를 권하지 않는다고 말해야 한다"
+
+    # 그 절이 local_stale 아닌 버킷도 함께 다룬다면 **억제 범위를 말해야 한다.**
+    # 없으면 억제가 안정 상태(케이스 8·9)로 번져 참인 안내까지 지워진다.
+    if scope is not None:
+        assert scope in true_branch, (
+            "%s: 억제 범위(%r)를 말하지 않는다 — 이 절은 local_stale 아닌 버킷도 다룬다"
+            % (heading, scope)
+        )
 
 
 @pytest.mark.parametrize("heading", sorted(LOCAL_STALE_BRANCH))
