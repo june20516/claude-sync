@@ -244,7 +244,7 @@ claude plugin marketplace add <arg> --scope user
 
 #### 5-2. 플러그인 설치
 
-`install` 목록을 설치한다. `skipped_already_installed`는 **부르지 않는다** — 이미 설치된 id에 bare install은 exit 0이지만(실측) **무해한 재실행이 아니다.** 그 명령은 값을 `true`로 덮어쓰므로 로컬이 `false`인 id를 말없이 켜고 객체 값을 평탄화하며, 3단계는 그것을 되돌리지 않는다(3단계 목록은 계획 시점의 로컬 값으로 정해진다).
+`install` 목록을 설치한다. `skipped_already_installed`는 **부르지 않는다** — 이미 설치된 id에 bare install은 exit 0이지만(실측) **무해한 재실행이 아니다.** 그 명령이 쓰는 값은 매니페스트의 `defaultEnabled`이고 그 필드는 **선택 필드이며 기본이 `true`**다(실측 — 2026-08-29 스모크 2차 7장). 그래서 대다수 플러그인에서 로컬의 `false`를 말없이 켜고, 객체 값은 `true`로 평탄화한다(배열만 보존된다). 5-4가 마지막에 값을 되돌리지만 **평탄화된 객체 값은 되돌아오지 않는다** — 그것을 쓸 CLI가 없다(5-6).
 
 **`depends_on`이 가리키는 마켓플레이스의 등록이 실패했다면 그 항목은 시도하지 않는다** — 등록되지 않은 상태로 install하면 CLI가 "플러그인이 없다"와 **똑같은 문구**로 실패해 사용자가 원인을 알 수 없다. `blocked`로 모아 "마켓플레이스 등록이 실패해 건너뛰었습니다"로 보고한다. 같은 규칙이 5-3·5-4에도 적용된다 — 4단계도 `install <id@marketplace> --config k=v` 형태라 등록되지 않은 마켓플레이스로는 똑같이 죽는다.
 
@@ -254,15 +254,11 @@ claude plugin install <id> --scope user
 
 **`-y`를 붙이지 않는다.** 마켓플레이스가 명령으로 설치를 선언한 플러그인은 세션 안에서 설치할 수 없다 — 우회할 대상이 아니라 그대로 존중할 경계다. 실패하면 CLI가 출력한 문구를 **그대로** 전달한다. CLI가 이미 실행할 명령 전문과 승인 방법을 알려준다.
 
-#### 5-3. 값 맞추기
+#### 5-3. 설정 채우기
 
-`disable_after_install`의 항목만 끈다. 설치 직후 값은 `true`이므로 그 외에는 부를 것이 없다 — **`enable`/`disable`은 멱등이 아니라** 현재 상태와 같으면 exit 1로 거짓 실패를 낸다.
+**값 맞추기(5-4)보다 먼저 돈다.** 실행 순서는 `1 → 2 → 4 → 3`이고 절 번호는 그 순서를 따른다 — 단계 번호는 그대로다. 이 명령도 `install`이라 **`enabledPlugins` 값을 함께 쓴다**(5-2와 같은 규칙). 값 맞추기를 먼저 하면 이 명령이 그것을 곧바로 되돌리고, 다음 백업이 되돌려진 값을 레포로 밀어 **수렴이 깨진다.** 실측(2026-08-29 스모크 4장): `enabledPlugins={"demo@mkt": false}`인 기기에 `install demo@mkt --config token=…`을 내면 값이 `true`가 된다. 한 id가 `disable_after_install`과 `config_keys`에 **함께** 실릴 수 있으므로(둘 다 설치 여부로 좁히지 않는다) 가정이 아니라 실제로 나오는 갈래다.
 
-```bash
-claude plugin disable <id> --scope user
-```
-
-#### 5-4. 설정 채우기
+**값 보존형 4단계는 선택지가 아니다** — CLI에 `configure` 서브커맨드가 없고(`claude plugin --help`에 `enable`·`disable`뿐이다), `/plugin configure`는 세션 안 슬래시 명령이라 이 스킬이 부를 수 없다. 남는 처방이 순서다.
 
 **`config_keys`에 실린 키만** 사용자에게 묻는다. 계획이 지목하지 않은 id의 설정을 채우면 실제 흐름이 만들 수 없는 상태가 되고, 이어지는 백업이 그 값을 레포로 민다. **레포에는 마스킹된 값만 있으므로 그대로 등록하면 동작하지 않는 항목이 설치된다.**
 
@@ -279,6 +275,32 @@ claude plugin install <id> --config <key>=<value> --scope user
 | 전부 건너뜀 | 플러그인은 설치하고 설정만 비운다. 항목을 **보류**로 만든다(`declined`) |
 
 값을 입력하지 않아도 **플러그인 자체는 설치한다.** 나중에 채우는 방법을 보고서에 안내한다.
+
+#### 5-4. 값 맞추기
+
+**마지막 단계다.** 앞의 두 단계가 둘 다 `install`이라 `enabledPlugins` 값을 쓰므로, 레포 값과의 일치를 여기서 확정한다.
+
+**계획의 `disable_after_install`을 그대로 실행하지 않는다.** 그 목록은 **계획 시점의** 로컬 값으로 정해졌는데 그 사이에 5-2와 5-3이 같은 키를 썼다. 실행 직전에 로컬을 다시 읽어 명령을 확정한다.
+
+```bash
+python3 "$SYNC_SCRIPTS/plan_plugins.py" recheck-values "$SYNC_REPO/plugins.json" /tmp/claude-sync-plugins-plan.json > /tmp/claude-sync-plugins-values.json
+cat /tmp/claude-sync-plugins-values.json
+```
+
+`status`가 `"skipped"`면 `reason`을 알리고 **이 단계만** 건너뛴다 — 앞 단계가 이미 한 일은 그대로 둔다.
+
+`commands`의 각 항목에 대해 그 항목의 `command`(`enable` 또는 `disable`)를 실행한다. 목록이 비어 있으면 **부를 것이 없다** — 앞 단계가 이미 레포와 같은 상태를 만들었다는 뜻이지 무언가 빠진 것이 아니다.
+
+```bash
+claude plugin disable <id> --scope user
+claude plugin enable <id> --scope user
+```
+
+**`enable`/`disable`은 멱등이 아니다** — 현재 상태와 같은데 부르면 exit 1로 거짓 실패를 낸다. 그래서 "현재 상태와 다를 때만" 부르고, 그 **현재 상태**를 위의 재읽기가 정한다. 확장 포맷 값(5-6)에는 어느 쪽도 나가지 않는다.
+
+**5-2의 `blocked` 필터가 여기에도 걸린다** — 등록이 실패한 마켓플레이스의 플러그인에는 어떤 명령도 내지 않는다.
+
+**exit 1을 「복원 실패」로 렌더링하지 않는 갈래가 하나 있다.** 항목의 `assumed`가 `true`이면 실행 직전에도 로컬에 그 키가 없어 "켜져 있다"고 **추정**한 id다(매니페스트 `defaultEnabled`가 `true`라는 가정이고, 그 필드는 `false`일 수 있다). 추정이 틀렸으면 CLI가 `already disabled`로 exit 1을 내는데 그것은 **"바꿀 것이 없었다"**이지 실패가 아니다 — 최종 상태는 사용자가 원한 그대로다. **"이미 그 상태입니다 — 복원할 것이 없습니다."**로 안내한다. `assumed`가 `false`인 항목의 exit 1은 진짜 실패이므로 stderr 전문과 함께 보고한다.
 
 #### 5-5. 세 선택지 — 케이스 4·5·8·9
 
@@ -303,7 +325,7 @@ claude plugin install <id> --config <key>=<value> --scope user
 
 #### 5-6. 확장 포맷 값 — `value_held`
 
-`sections[<섹션>]["value_held"]`에 있는 항목은 **설치돼 있고 값만 레포를 따르는 상태**다(5-5의 버킷과 같은 층이다). "양쪽이 모두 바뀌었습니다"라고 말하지 않는다 — 사실이 아니고, 배열 값을 쓸 CLI도 없다. **실측**(2026-08-29): CLI는 확장 값을 「꺼짐」으로 읽어 `disable`은 `already disabled`로 죽고 `enable`은 그 값을 `true`로 **지운다.** 그래서 이 항목에는 어느 쪽도 내지 않는다.
+`sections[<섹션>]["value_held"]`에 있는 항목은 **설치돼 있고 값만 레포를 따르는 상태**다(5-5의 버킷과 같은 층이다). "양쪽이 모두 바뀌었습니다"라고 말하지 않는다 — 사실이 아니고, 배열 값을 쓸 CLI도 없다. **실측**(2026-08-29 스모크 3장): CLI는 확장 값을 「꺼짐」으로 읽어 `disable`은 `already disabled`로 죽고 `enable`은 그 값을 `true`로 **지운다.** 그래서 이 항목에는 어느 쪽도 내지 않는다.
 
 > "설치했습니다. 다만 이 기기는 버전 제약을 표현할 수 없어 레포의 값을 보존합니다."
 
@@ -323,7 +345,7 @@ claude plugin install <id> --config <key>=<value> --scope user
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
 
-# 5-5에서 "로컬 유지"를, 5-4에서 "건너뜀"을, 5-6에서 "이 기기 값으로 통일"을 고른
+# 5-5에서 "로컬 유지"를, 5-3에서 "건너뜀"을, 5-6에서 "이 기기 값으로 통일"을 고른
 # 항목만 적는다. 나머지 선택(레포 따르기·이번엔 넘어가기)에는 override가 필요 없다.
 # **섹션 키를 정확히 쓴다** — 모르는 섹션 이름은 조용히 무시되어, 선택을 하나도
 # 적용하지 않은 복원이 성공한 것처럼 보인다.
@@ -338,7 +360,7 @@ python3 "$SYNC_SCRIPTS/plan_plugins.py" apply-base "$SYNC_REPO/plugins.json" "$B
 rm -f /tmp/claude-sync-plugins-choices.json
 ```
 
-`configured`에는 **5-4에서 값을 입력한** 항목을 적는다 — 적지 않으면 이전에 건너뛴 항목의 보류가 풀리지 않아 영영 조용한 상태로 남는다.
+`configured`에는 **5-3에서 값을 입력한** 항목을 적는다 — 적지 않으면 이전에 건너뛴 항목의 보류가 풀리지 않아 영영 조용한 상태로 남는다.
 
 `apply-base`는 `settings.json`을 **다시 읽어** 계산하므로 5-1~5-6의 CLI 실행이 **모두 끝난 뒤**에 호출해야 한다. 실패했거나 건너뛴 항목은 로컬에 없으므로 base가 자동으로 전진하지 않는다.
 
@@ -516,8 +538,8 @@ fi
 - **적용 건수**: add / overwrite / auto_merge / skip 각각의 파일 수
 - **해소한 충돌**: 파일명과 선택 방식 (나중에는 미해소로 표시)
 - **local_ahead 파일** → "올리려면 /sync-backup을 실행하세요" 안내 (restore는 push하지 않음)
-- **설치한 플러그인**: 5-2에서 설치한 것, 5-3에서 값을 맞춘 것
-- **건너뛴 플러그인 설정**: 5-4에서 값을 입력하지 않아 보류(`declined`)로 만든 항목. 나중에 채우는 방법을 함께 적는다
+- **설치한 플러그인**: 5-2에서 설치한 것, 5-4에서 값을 맞춘 것
+- **건너뛴 플러그인 설정**: 5-3에서 값을 입력하지 않아 보류(`declined`)로 만든 항목. 나중에 채우는 방법을 함께 적는다
 - **보류한 항목**: `held`의 종류별(의존성 설치 / 로컬 디렉토리 마켓플레이스 / 버전 제약 / 설정 보류)로 나눠 적는다. **"버전 때문에 보류한 항목"(이 기기의 플러그인이 낮아 알아보지 못한 것)과 섞지 않는다** — 앞의 것은 이 릴리즈의 정상 동작이고 뒤의 것은 업데이트로 풀린다
 - **`orphaned`**: 마켓플레이스가 등록되지 않은 채 레포에 남은 플러그인. 해당 마켓플레이스를 가진 기기에서 `/sync-backup`을 실행하면 해소된다고 안내한다
 - **복원하지 못한 플러그인**: `blocked`(마켓플레이스 등록 실패로 시도하지 않음)와 `unrestorable`(**섹션별** 목록이고, 사유는 **최상위**의 `unrestorable_reasons`를 그대로 쓴다 — 두 이름이 다른 층이다). **둘 다 실패 건수로 세지 않는다** — 시도하지 않았기 때문이다

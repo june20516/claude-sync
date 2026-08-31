@@ -1447,7 +1447,12 @@ def test_plan_omits_dependency_for_always_known_marketplaces(tmp_path):
 
 
 def test_plan_disables_only_what_install_would_leave_wrong(tmp_path):
-    """설치 직후 값은 true다. 레포가 false인 것만 disable 대상이다."""
+    """로컬 키가 없으면 **켜져 있다고 추정한다**(부재 = 매니페스트 defaultEnabled에
+    위임이고 그 기본이 true다). 레포가 false인 것만 계획 시점의 disable 대상이다.
+
+    **이 목록은 계획 시점의 예상이다** — 실제로 나가는 명령은 3단계 직전에
+    `recheck-values`가 로컬을 다시 읽어 정한다(9.3.1).
+    """
     out = build_plan(tmp_path, local={},
                      repo={"enabledPlugins": {"on@m": True, "off@m": False},
                            "extraKnownMarketplaces": {"m": GH}})
@@ -1455,7 +1460,7 @@ def test_plan_disables_only_what_install_would_leave_wrong(tmp_path):
 
 
 def test_plan_disables_nothing_outside_the_install_list(tmp_path):
-    """disable은 **설치 직후**의 값 맞추기다 — 그 범위를 install 밖으로 넓히면 이미
+    """disable은 값 맞추기(3단계)다 — 그 범위를 install 밖으로 넓히면 이미
     로컬에 있는 항목까지 대상이 된다.
 
     wait@m은 케이스 9로 사용자 선택을 기다리는 중인데 레포 값이 false다. 범위가
@@ -1473,7 +1478,7 @@ def test_plan_disables_nothing_outside_the_install_list(tmp_path):
 
 
 def test_plan_does_not_disable_a_plugin_that_is_already_off_locally(tmp_path):
-    """install의 항목이 전부 "설치 직후 = true"인 것은 아니다.
+    """install의 항목이 전부 "로컬에 값이 없다"인 것은 아니다.
 
     Task 10.5 이후 install은 installed_plugins.json에 없는 id만 담는다. 그래도 이
     fixture의 already@m은 그 파일에 없으면서 settings.json에는 값이 있는 **불일치
@@ -1565,8 +1570,9 @@ def test_plan_carries_both_values_for_every_decided_key(tmp_path):
 def test_plan_splits_bare_install_from_the_config_step_by_the_installed_set(tmp_path):
     """9.3.1 — 2단계(`plugin install <id>`)와 4단계(`install --config k=v`)는 다른 단계다.
 
-    이미 설치된 플러그인에 bare install이 나가면 그 값이 `true`로 덮인다 — **exit 0이라
-    실패로 보이지도 않는다**(브리프 1-b #2 · 2026-08-29 스모크 2장 — 실측). old@m은 이
+    이미 설치된 플러그인에 bare install이 나가면 그 값이 매니페스트 `defaultEnabled`로
+    덮인다 — 기본이 true라 대다수에서 `true`가 되고, **exit 0이라 실패로 보이지도
+    않는다**(브리프 1-b #2 · 2026-08-29 스모크 2장·2차 7장 — 실측). old@m은 이
     기기에 **설치돼 있고** 레포에만 pluginConfigs가 있으므로 2단계가 아니라 4단계다.
     (*초판은 "exit 1로 죽어 거짓 실패"라고 적었다 — 같은 저장소의 1-b #2가 이미 반증하고
     있던 문장이다. 분리의 필요는 그대로이고 사유만 바뀐다.*)

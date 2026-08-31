@@ -135,16 +135,14 @@ def test_enable_and_disable_on_an_unknown_plugin_create_a_ghost_key(tmp_path):
     테스트가 재는 것은 안전 성질이 아니라 **위험**이다 — 이름이 `reject`에서
     `create_a_ghost_key`로 바뀐 것이 그 뜻이다.
 
-    **왜 위험인가.** 복원 2단계(`install`)가 실패한 id에도 3단계(`disable_after_install`)는
-    그대로 `disable`을 낸다(sync-restore/SKILL.md 5-2·5-3 — 5-2의 `blocked` 필터는
-    **마켓플레이스 등록 실패**만 걸러 낸다). 그러면 설치되지 않은 플러그인에 로컬 값
-    `false`가 생기고, 레포도 `false`이므로 다음 백업이 그 키를 in_sync로 읽어
-    **next_base를 전진시킨다** — 복원 실패가 성공처럼 보이고, 그 뒤로는 그 id가
-    add 버킷에 오지 않아 **영영 설치되지 않는다.** spec 10.4의 *"실패한 항목은
-    로컬에 없으니 자동으로 빠진다"*가 이 갈래에서는 참이 아니다.
+    **왜 위험인가.** 복원 2단계(`install`)가 실패한 id에 3단계가 `disable`을 내면
+    설치되지 않은 플러그인에 로컬 값 `false`가 생기고, 레포도 `false`이므로 다음 백업이
+    그 키를 in_sync로 읽어 **next_base를 전진시킨다** — 복원 실패가 성공처럼 보이고,
+    그 뒤로는 그 id가 add 버킷에 오지 않아 **영영 설치되지 않는다.** spec 10.4의
+    *"실패한 항목은 로컬에 없으니 자동으로 빠진다"*가 이 갈래에서는 참이 아니다.
 
-    이 테스트는 그 갈래를 고치지 않는다(범위 밖). 고정하는 것은 **CLI가 무엇을
-    하는가**이고, 하네스가 그 위험을 무해한 no-op으로 흉내 내지 못하게 막는 것이다.
+    이 테스트는 그 갈래를 고치지 않는다. 고정하는 것은 **CLI가 무엇을 하는가**이고,
+    하네스가 그 위험을 무해한 no-op으로 흉내 내지 못하게 막는 것이다.
     """
     cli = PluginCLI(str(tmp_path))
     assert cli.disable("ghost@m") == 0

@@ -37,6 +37,7 @@ class Device:
         self.repo = repo
         os.makedirs(os.path.join(self.home, ".claude"), exist_ok=True)
         self.cli = PluginCLI(self.home)
+        self.commands = []      # restore가 실행한 (단계, 이름, exit code)
 
     # --- 로컬 상태 ---
     def local(self):
@@ -114,25 +115,34 @@ class Device:
 
         secrets는 {plugin_id: {key: value}} — 사용자가 값을 입력한 항목만이다.
         fail_marketplaces는 등록이 실패하는 이름 — 9.3.2의 blocked를 만든다.
+
+        **실행 순서는 `1 → 2 → 4 → 3`이다**(9.3.1, SKILL.md 5-1~5-4). 4단계도 `install`이라
+        enabledPlugins 값을 쓰므로 3단계보다 먼저 돌지 않으면 그 값을 되돌린다 — 실측
+        (2026-08-29 스모크 4장). 번호는 단계의 이름이고 순서가 아니다.
+
+        **3단계의 대상은 계획의 `disable_after_install`이 아니라 `recheck-values`의
+        출력이다.** 계획 시점의 판정은 2·4단계가 같은 키를 쓴 뒤라 낡았다.
+
+        실행한 명령을 `self.commands`에 (단계, id, exit code)로 남긴다 — "이 명령이
+        나가지 않았다"를 재는 시나리오가 그것 말고 볼 자리가 없기 때문이다. 최종 값만
+        보면 명령이 나가고 실패한 것과 아예 나가지 않은 것이 구별되지 않는다.
         """
         backup_path = os.path.join(self.repo, pc.BACKUP_RELPATH)
-        plan = json.loads(self._run(PLAN, "plan", backup_path))
+        plan = self.plan()
         if plan["status"] == "skipped":
             return plan
+        self.commands = []
         blocked = set()
         for entry in plan["marketplace_add"]:                       # 1단계
             if entry["name"] in fail_marketplaces:
                 blocked.add(entry["name"])
                 continue
-            self.cli.marketplace_add(entry["name"], entry["arg"])
+            self._record("marketplace_add", entry["name"],
+                         self.cli.marketplace_add(entry["name"], entry["arg"]))
         for plugin_id in plan["install"]:                           # 2단계
             if self._blocked(plan, plugin_id, blocked):
                 continue
-            self.cli.install(plugin_id)
-        for plugin_id in plan["disable_after_install"]:             # 3단계
-            if self._blocked(plan, plugin_id, blocked):
-                continue
-            self.cli.disable(plugin_id)
+            self._record("install", plugin_id, self.cli.install(plugin_id))
         for plugin_id, options in (secrets or {}).items():          # 4단계
             # 실제 흐름은 **계획이 지목한 키만** 되묻는다(`plan["config_keys"]`). 대조하지
             # 않으면 계획이 요구하지 않은 id에도 설정이 채워져 **실제 흐름이 만들 수 없는
@@ -141,8 +151,40 @@ class Device:
             assert plugin_id in plan["config_keys"], plugin_id
             if self._blocked(plan, plugin_id, blocked):
                 continue
-            self.cli.install(plugin_id, config=options)
+            self._record("config", plugin_id,
+                         self.cli.install(plugin_id, config=options))
+        for entry in self.value_commands(plan):                     # 3단계 — 마지막
+            if self._blocked(plan, entry["id"], blocked):
+                continue
+            self._record(entry["command"], entry["id"],
+                         getattr(self.cli, entry["command"])(entry["id"]))
         return self._apply_base(backup_path, plan, choices or {})
+
+    def _record(self, step, name, exit_code):
+        self.commands.append((step, name, exit_code))
+        return exit_code
+
+    def plan(self):
+        """실행 없이 계획만 낸다. restore가 부르는 것과 **같은 명령**이다."""
+        return json.loads(
+            self._run(PLAN, "plan", os.path.join(self.repo, pc.BACKUP_RELPATH)))
+
+    def value_commands(self, plan):
+        """3단계 직전의 재읽기 (SKILL.md 5-4의 `recheck-values` 배선 그대로).
+
+        계획을 파일로 넘긴다 — 실제 흐름도 `plan`의 stdout을 파일에 담아 두고 그것을
+        인자로 준다. 여기서 계획 dict를 직접 스크립트 함수에 넘기면 그 배선이 서브프로세스
+        경계를 건너뛰어, 인자 형태가 깨져도 이 파일이 초록으로 지나간다.
+
+        공개 메서드인 것은 `assumed` 표식을 재는 시나리오 때문이다 — 그 표식은 CLI 호출에
+        나타나지 않으므로(SKILL.md의 렌더링만 읽는다) restore의 부작용으로는 관측할 수 없다.
+        """
+        path = os.path.join(self.home, "plan.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(plan, f)
+        out = json.loads(self._run(PLAN, "recheck-values",
+                                   os.path.join(self.repo, pc.BACKUP_RELPATH), path))
+        return [] if out["status"] == "skipped" else out["commands"]
 
     @staticmethod
     def _blocked(plan, plugin_id, blocked):
@@ -153,10 +195,10 @@ class Device:
         마켓플레이스로는 2단계와 똑같이 죽는다. 그래서 `plan_plugins._install_dependencies`가
         `depends_on`에 2단계 목록이 아니라 **2단계 ∪ 4단계**를 싣는다.
 
-        4단계에서 빠뜨리면 조용한 fail-open이 된다 — 이 에뮬레이터의 `install`은 언제나
-        exit 0이므로, **실제 CLI가 도달할 수 없는 상태**(등록에 실패한 마켓플레이스의
-        플러그인에 설정이 채워진 상태)를 만들고 이어지는 백업이 그 값을 레포로 밀어
-        시나리오가 초록으로 통과한다.
+        4단계에서 빠뜨리면 조용한 fail-open이 된다 — 이 에뮬레이터의 `install`은 실패를
+        심지 않는 한(`set_install_failure`) exit 0이므로, **실제 CLI가 도달할 수 없는
+        상태**(등록에 실패한 마켓플레이스의 플러그인에 설정이 채워진 상태)를 만들고
+        이어지는 백업이 그 값을 레포로 밀어 시나리오가 초록으로 통과한다.
         """
         return plan["depends_on"].get(plugin_id) in blocked
 
@@ -371,10 +413,12 @@ def test_a_blocked_marketplace_stops_the_disable_step(tmp_path):
          있을 때만 참이므로 이것 없이는 필터가 애초에 동작하지 않는다.
 
     **④가 특히 놓치기 쉽다.** 등록이 성공하면 `blocked`가 비어 필터가 애초에 동작하지
-    않고, 그 id에 secret까지 주어지면 3단계가 `disable`을 낸 직후 4단계의
-    `install --config`가 그 값을 되돌려(`PluginCLI.install` — 값이 배열이 아니면 `True`)
-    최종 값이 `True`가 된다(실측). 같은 이유로 **아래 두 번째 복원에는
-    `secrets`를 주지 않는다** — 주면 4단계가 3단계를 되돌려 수렴 단정이 거짓으로 죽는다.
+    않는다. (*초판은 여기에 "그 id에 secret까지 주어지면 4단계가 3단계를 되돌려 최종 값이
+    `True`가 된다"를 함께 적고 아래 두 번째 복원에서 `secrets`를 뺐다. **실행 순서가
+    `1 → 2 → 4 → 3`으로 바뀌어 그 문장은 거짓이 됐다** — 4단계가 먼저 돌고 3단계가 마지막에
+    값을 확정한다. 그 되돌림이 정확히 이 순서 변경이 고친 결함이고,
+    `test_a_config_and_disable_id_ends_at_the_repo_value`가 그것을 잰다. 두 번째 복원에
+    `secrets`를 주지 않는 것은 이제 필요가 아니라 픽스처의 단순함이다.*)
 
     두 번째 복원이 이 단정을 공허하지 않게 만든다 — 원인을 없애면 3단계가 실제로 값을
     바꾼다. 이것은 9.3.2의 3단계 판이고, 14.2 #7("부분 실패 후 재실행 수렴")의 2단계 판은
@@ -396,6 +440,141 @@ def test_a_blocked_marketplace_stops_the_disable_step(tmp_path):
 
     dev.restore()                                               # 원인 제거 (secrets 없이)
     assert dev.local()["enabledPlugins"]["p@m"] is False        # 3단계가 실제로 값을 바꾼다
+
+
+def test_a_config_and_disable_id_ends_at_the_repo_value(tmp_path):
+    """14.1 — 한 id가 3단계와 4단계에 **함께** 실릴 때 복원 후 값이 레포 값과 같다.
+
+    **순서를 되돌리면 이 테스트가 실패한다.** 4단계도 `install`이라 enabledPlugins 값을
+    쓰므로(2026-08-29 스모크 4장의 실측), 3단계를 먼저 돌리면 4단계가 그것을 곧바로
+    되돌리고 다음 백업이 되돌려진 `True`를 레포로 밀어 **수렴이 깨진다.**
+
+    스모크가 실제 CLI에서 읽은 전이가 이 픽스처다::
+
+        before: enabledPlugins={"demo@mkt": false}  pluginConfigs=null
+        $ claude plugin install demo@mkt --config token=s3cr3t   → exit 0
+        after : enabledPlugins={"demo@mkt": true}
+
+    두 버킷에 함께 실리는 것은 우연이 아니다 — 3단계도 4단계도 **설치 여부로 대상을
+    좁히지 않으므로**(9.3.1) 이미 설치된 id가 양쪽에 온다.
+
+    **백업까지 돌려야 이 단정이 자기 이름을 재는다.** 복원 직후의 로컬 값만 보면
+    "수렴이 깨진다"의 절반(레포가 되밀린다)이 관측되지 않는다.
+    """
+    dev = make_device(tmp_path, repo_init={
+        "enabledPlugins": {"p@m": False},
+        "extraKnownMarketplaces": {"m": GH},
+        "pluginConfigs": {"p@m": {"options": {"token": pc.SENTINEL}}}})
+    dev.cli.install("p@m")          # 이미 설치됨 — 2단계 대상이 아니다
+    plan = dev.restore(secrets={"p@m": {"token": "s3cr3t"}})
+    # 픽스처가 의도한 계획인지 먼저 확인한다 — 두 버킷에 **함께** 실려야 주제가 성립한다.
+    assert plan["disable_after_install"] == ["p@m"]
+    assert plan["config_keys"] == {"p@m": ["token"]}
+    assert plan["skipped_already_installed"] == ["p@m"]
+    # 4단계가 실제로 돌았다 — 안 돌면 아래 값 단정이 순서와 무관해진다.
+    assert dev.cli.settings()["pluginConfigs"]["p@m"]["options"] == {"token": "s3cr3t"}
+    # 3단계가 마지막이므로 최종 값이 레포 값이다.
+    assert dev.local()["enabledPlugins"]["p@m"] is False
+    dev.backup()
+    assert repo_doc(dev.repo)["enabledPlugins"]["p@m"] is False
+
+
+def test_a_default_disabled_plugin_gets_no_disable_command(tmp_path):
+    """14.1 — 레포도 매니페스트도 `false`인 미설치 id에 3단계 명령이 나가지 않는다.
+
+    계획은 로컬 키 부재를 `True`로 **추정**해 이 id를 `disable_after_install`에 싣는다
+    (`local_masked.get(k, True)`). 그런데 2단계 `install`이 매니페스트의
+    `defaultEnabled: false`를 이미 써 두므로(2026-08-29 스모크 2차 7장) 계획 시점 판정으로
+    `disable`을 내면 `already disabled`(exit 1)로 죽는다 — **최종 상태는 옳은데 사용자는
+    실패를 본다.** 실행 시점에 다시 읽으면 값이 같으므로 명령이 아예 나가지 않는다.
+
+    **판정을 계획 시점으로 되돌리면 이 테스트가 실패한다.**
+
+    `dev.commands`를 보는 것이 이 주제의 유일한 관측 지점이다 — 최종 값만 보면 명령이
+    나가서 실패한 것과 아예 나가지 않은 것이 **구별되지 않는다**(둘 다 `False`다).
+
+    `set_manifest(default_enabled=False)`를 빼면 2단계가 `True`를 써서 3단계가 실제로
+    `disable`을 내야 하고, 그러면 아래 두 단정이 함께 죽는다 — 그 입력이 이 시나리오를
+    지탱한다.
+    """
+    dev = make_device(tmp_path, repo_init={
+        "enabledPlugins": {"p@m": False},
+        "extraKnownMarketplaces": {"m": GH}})
+    dev.cli.set_manifest("p@m", default_enabled=False)
+    plan = dev.restore()
+    # 계획은 추정으로 이 id를 3단계에 싣는다 — 그래야 "재읽기가 걸러 냈다"가 성립한다.
+    assert plan["disable_after_install"] == ["p@m"]
+    assert plan["install"] == ["p@m"]
+    assert ("disable", "p@m") not in [(step, name) for step, name, _ in dev.commands]
+    # 거짓 실패가 하나도 없다. 실행된 명령은 전부 exit 0이다.
+    assert dev.commands and all(code == 0 for _, _, code in dev.commands)
+    # 최종 상태는 레포와 같다 — 2단계가 이미 그 값을 썼기 때문이다.
+    assert dev.local()["enabledPlugins"]["p@m"] is False
+
+
+def test_the_value_step_covers_a_key_the_plan_did_not_list(tmp_path):
+    """9.3.1 귀결 2 — 4단계가 값을 뒤집어도 3단계가 마지막에 레포 값을 적용한다.
+
+    계획 시점에는 로컬 값이 이미 레포와 같아(`False == False`) 이 id가
+    `disable_after_install`에 **실리지 않는다.** 그런데 4단계 `install --config`가
+    매니페스트 `defaultEnabled`(기본 true)를 써서 값을 뒤집는다. 3단계의 대상을 계획의
+    그 목록으로 좁히면 뒤집힘이 그대로 남고 다음 백업이 레포로 밀어 **수렴이 깨진다.**
+
+    그래서 재읽기의 대상 집합은 계획의 candidates 전부
+    (`install ∪ skipped_already_installed`)이지 `disable_after_install`이 아니다.
+    이 시나리오가 그 넓이를 재는 유일한 자리다 — 위 두 순서 시나리오의 id는 계획 시점에도
+    3단계 목록에 실려 있어 좁혀도 결과가 같다.
+    """
+    dev = make_device(tmp_path, repo_init={
+        "enabledPlugins": {"r@m": False},
+        "extraKnownMarketplaces": {"m": GH},
+        "pluginConfigs": {"r@m": {"options": {"token": pc.SENTINEL}}}})
+    dev.cli.install("r@m")
+    assert dev.cli.disable("r@m") == 0      # 로컬 값이 이미 레포와 같아진다
+    plan = dev.restore(secrets={"r@m": {"token": "s3cr3t"}})
+    # 전제 — 계획은 이 id를 3단계 목록에 싣지 않는다. 4단계로만 온다.
+    assert plan["disable_after_install"] == []
+    assert plan["config_keys"] == {"r@m": ["token"]}
+    # 재읽기가 4단계의 뒤집힘을 찾아내 명령을 냈다.
+    assert ("disable", "r@m", 0) in dev.commands
+    assert dev.local()["enabledPlugins"]["r@m"] is False
+    dev.backup()
+    assert repo_doc(dev.repo)["enabledPlugins"]["r@m"] is False
+
+
+def test_the_value_step_marks_an_assumed_judgement(tmp_path):
+    """10.2 — 실행 시점에도 로컬 값이 없어 **추정**으로 판정한 id는 그렇게 표시된다.
+
+    2·4단계 어느 명령의 대상도 아닌 id에는 재읽기에도 읽을 값이 없다(9.3.1의 남는 갈래).
+    그때 나가는 명령이 exit 1이면 그것은 "이미 그 상태"이지 실패가 아니고, SKILL.md 5-4가
+    그 갈래만 복원 실패로 렌더링하지 않는다. **표식이 없으면 그 구별을 할 수 없다.**
+
+    `q@m` 절반이 대조군이다 — 로컬에 값이 있는 id는 추정이 아니다. 없으면 표식을 언제나
+    `true`로 두는 구현도 통과한다.
+
+    `dev.commands`로는 잴 수 없다 — 표식은 CLI 호출에 나타나지 않고 안내 문구에만 쓰인다.
+    그래서 재읽기의 출력을 직접 본다.
+    """
+    dev = make_device(tmp_path, repo_init={
+        "enabledPlugins": {"p@m": False, "q@m": False},
+        "extraKnownMarketplaces": {"m": GH},
+        "pluginConfigs": {"q@m": {"options": {"token": pc.SENTINEL}}}})
+    dev.cli.install("p@m")
+    dev.cli.install("q@m")
+    # p@m만 settings의 키를 지운다 — **설치돼 있으면서** 매니페스트 기본값에 위임하는
+    # 상태다(부재 ≠ 꺼짐). 공개 명령으로는 만들 수 없으므로 파일을 직접 손댄다.
+    settings = dev.cli.settings()
+    settings["enabledPlugins"].pop("p@m")
+    with open(dev.cli.settings_path, "w", encoding="utf-8") as f:
+        json.dump(settings, f)
+    plan = dev.plan()
+    # 전제 — 둘 다 2단계 대상이 아니고, 4단계 대상은 q@m뿐이다.
+    assert plan["skipped_already_installed"] == ["p@m", "q@m"]
+    assert plan["install"] == []
+    assert plan["config_keys"] == {"q@m": ["token"]}
+    assert dev.value_commands(plan) == [
+        {"id": "p@m", "command": "disable", "assumed": True},
+        {"id": "q@m", "command": "disable", "assumed": False}]
 
 
 def test_restore_rejects_a_secret_the_plan_did_not_ask_for(tmp_path):

@@ -5,6 +5,10 @@
   plan_plugins.py plan <레포의 plugins.json 경로>
     복원 계획 JSON을 stdout에 낸다 (섹션별 버킷 11개 + 실행 보조).
 
+  plan_plugins.py recheck-values <레포의 plugins.json 경로> <계획 JSON 경로>
+    **3단계 직전에** 로컬을 다시 읽어 값 맞추기 명령을 확정한다 (9.3.1).
+    실행 순서가 1 → 2 → 4 → 3이라 3단계가 도는 시점의 로컬 값은 계획 시점과 다르다.
+
   plan_plugins.py apply-base <레포의 plugins.json 경로> <스테이징 디렉토리>
                              <선택 결과 JSON 경로>
     복원 후 로컬을 기준으로 다음 base를 계산해 스테이징에 쓰고, 이 기기의 보류
@@ -129,11 +133,15 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     **2단계와 4단계가 갈리는 자리가 여기다**(9.3.1). 두 단계는 다른 명령이고 대상도
     다르다 — 2단계는 `plugin install <id>`, 4단계는 `install --config k=v`다. 이미 설치된
     플러그인에 2단계를 내면 **exit 0이지만**(브리프 1-b #2 · 2026-08-29 스모크 2장 —
-    실측) **그 id의 값이 `true`로 덮인다.** 로컬이 `false`인 id를 말없이 켜고, 객체 값이면
-    평탄화해 없앤다. 3단계가 되돌려 주지도 않는다 — 그 목록은 **계획 시점의** 로컬 값으로
-    정해지는데, 그때 이미 레포와 같았던 id는 애초에 거기 실리지 않기 때문이다.
+    실측) **그 id의 값이 덮인다.** 매니페스트의 `defaultEnabled`를 쓰므로(같은 문서
+    2차 7장) 기본값이 true인 대다수에서 로컬의 `false`를 말없이 켜고, 객체 값이면
+    평탄화해 없앤다(배열만 보존된다).
     (*초판은 이 자리에 "exit 1로 죽어 거짓 실패가 된다"라고 적었다. 결론은 같고 사유가
     틀렸다 — 그 문장은 브리프 1-b #2가 저장소 안에서 이미 반증하고 있었다.*)
+    **3단계가 그 덮어쓰기를 되돌린다** — 실행 순서가 `1 → 2 → 4 → 3`이고(9.3.1)
+    3단계의 판정이 **실행 시점에 다시 읽은 로컬 값**이기 때문이다(recheck_values).
+    아래 disable_after_install은 그 재계산의 **계획 시점 예상**이고, 실제로 나가는
+    명령을 정하는 것은 recheck_values다.
     가르는 기준은 **설치 집합 하나**이고 로컬 섹션 문서가 아니다 —
     enabledPlugins의 키 부재는 미설치가 아니라 매니페스트 defaultEnabled에 위임하는
     상태이므로(value_command가 같은 사실을 반대편에서 쓴다) 그것으로 가르면 이미 설치된
@@ -181,7 +189,7 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     candidates = sorted(candidates)
     # 2단계 — `plugin install <id>`. 4단계 — `install --config k=v`(설정 값은 config_keys).
     # **가르는 기준은 설치 집합 하나다**(위 docstring). 이미 설치된 id에 2단계를 내면
-    # exit 0으로 조용히 그 id의 값이 `true`로 덮인다.
+    # exit 0으로 조용히 그 id의 값이 매니페스트 defaultEnabled로 덮인다.
     install = [k for k in candidates if k not in installed_ids]
     # 1단계의 skipped_always_known과 같은 결의 **제외 목록**이다 — 어느 단계에서 왜
     # 빠졌는지를 보고에 남겨야 SKILL.md가 "아무 일도 일어나지 않았다"와 구별할 수 있다.
@@ -208,20 +216,26 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 문구는 갈리지 않는다: _config_secret_keys가 option 키 전부를 되물을 목록으로
     # 돌려주므로, add 버킷에 남는 pluginConfigs 항목은 정의상 options가 비어 실질이 없다.
     # 세 갈래 모두 **bare install은 대안이 아니다.** exit 0이라 죽지는 않지만(실측) 값을
-    # `true`로 덮어써 (a)에서 방금 "현재 상태와 같다"고 판정한 그 상태를 깨고 (b)의 확장
-    # 값을 평탄화한다 — 조용한 상태 파괴다.
+    # 매니페스트 defaultEnabled로 덮어써 (a)에서 방금 "현재 상태와 같다"고 판정한 그
+    # 상태를 깨고 (b)의 확장 값을 평탄화한다(배열만 살아남는다) — 조용한 상태 파괴다.
     skipped_already_installed = [k for k in candidates if k in installed_ids]
     # **3단계의 기준은 두 목록 전부(candidates)다.** 이미 설치된 id도 값 맞추기 대상이다 —
     # 로컬 enabledPlugins에 값이 없고(매니페스트 기본값에 위임) 레포가 false이면 그
     # 플러그인은 켜진 채 남으므로 disable이 필요하다. 2단계로 좁히면 그 명령이 사라진다.
-    # **candidates의 절반은 "설치 직후"가 아니다.** enabledPlugins 경로의 키는 정의상
+    # **candidates의 절반은 "설치될 것"이 아니다.** enabledPlugins 경로의 키는 정의상
     # 로컬 섹션 문서에 없지만, pluginConfigs 경로의 키는 이미 로컬에 값이 있을 수 있다 —
     # 그 섹션의 route_new는 "그 섹션에" 레포 전용인 키를 훑을 뿐 플러그인 자체의 설치
     # 여부와 무관하기 때문이다.
-    # 그래서 로컬에 값이 있으면 **그 값**을 쓰고, 없을 때만 설치 직후의 true로 떨어진다. 상수
-    # true를 넣으면 value_command가 지키라고 받는 규칙("현재 상태와 다를 때만 낸다")을
-    # 유일한 호출부가 우회하고, 이미 꺼진 플러그인에 disable이 나가 exit 1의 거짓 실패가
-    # 된다(enable/disable은 멱등이 아니다).
+    # 그래서 로컬에 값이 있으면 **그 값**을 쓰고, 없을 때만 True로 떨어진다. 상수 True를
+    # 넣으면 value_command가 지키라고 받는 규칙("현재 상태와 다를 때만 낸다")을 이 자리가
+    # 우회하고, 이미 꺼진 플러그인에 disable이 실려 exit 1의 거짓 실패가 된다.
+    # **부재를 True로 읽는 것은 추정이다** — 매니페스트 defaultEnabled가 true라는 가정이고
+    # 그 필드는 false일 수 있다(2026-08-29 스모크 2차 7장). 그 추정이 틀린 갈래는
+    # 10.2가 "이미 그 상태입니다"로 안내하고, 대부분은 recheck_values의 재읽기가 닫는다.
+    # **이 목록은 계획 시점의 예상이다.** 실제로 나가는 명령은 3단계 직전에
+    # recheck_values가 로컬을 다시 읽어 정한다(9.3.1) — 그 사이에 2·4단계가 같은 키를
+    # 쓰기 때문이다. 여기서 지우면 안 되는 것은 **대상 집합**이고(candidates), 값 판정은
+    # 두 번 한다.
     disable_after_install = [
         k for k in candidates
         if k in masked["enabledPlugins"]
@@ -229,9 +243,12 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
                              masked["enabledPlugins"][k]) == "disable"]
 
     # 값을 맞춰야 하는 세 갈래에 양쪽 값을 실어 준다 — 케이스 8·9(repo_ahead·
-    # both_changed)의 선택 뒤, 8.4의 값 보류 문구("레포 값을 보존합니다"), 그리고 설치
-    # 직후의 3단계. SKILL.md가 value_command와 같은 규칙을 손으로 재구현하지 않게 하려는
-    # 것이다 — 재구현하면 멱등이 아닌 명령을 같은 상태에 내어 거짓 실패를 양산한다.
+    # both_changed)의 선택 뒤, 8.4의 값 보류 문구("레포 값을 보존합니다"), 그리고 3단계.
+    # SKILL.md가 value_command와 같은 규칙을 손으로 재구현하지 않게 하려는 것이다 —
+    # 재구현하면 멱등이 아닌 명령을 같은 상태에 내어 거짓 실패를 양산한다.
+    # **local_values는 계획 시점의 값이다.** 3단계가 실제로 낼 명령은 recheck_values가
+    # 실행 시점에 다시 읽어 정한다(9.3.1) — 케이스 8·9의 선택은 그 사이에 2·4단계가
+    # 건드리지 않은 키에서만 나오므로 이 값으로 안내해도 어긋나지 않는다.
     decided = sorted({k for bucket in ("repo_ahead", "both_changed", "value_held")
                       for k in plugins.get(bucket, [])} | set(candidates))
 
@@ -270,6 +287,65 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
             for section in pc.SECTIONS
             for k in sections[section].get("unrestorable", [])},
     }
+
+
+def recheck_values(backup_path, plan, settings_path=None):
+    """3단계 직전에 로컬을 **다시 읽어** 값 맞추기 명령을 확정한다 (9.3.1).
+
+    실행 순서가 `1 → 2 → 4 → 3`이므로, 3단계가 도는 시점의 로컬 값은 계획을 세운
+    시점과 다르다 — 2단계와 4단계가 **둘 다 `install`이고 둘 다 enabledPlugins 값을
+    쓴다.** 계획 시점 판정을 그대로 실행하면 두 방향으로 틀린다:
+
+      · 2·4단계가 `defaultEnabled`(기본 true)로 덮은 값이 그대로 남는다 —
+        레포의 `false`가 복원되지 않고 다음 백업이 로컬 `true`를 레포로 도로 민다.
+        **수렴이 깨진다**(2026-08-29 스모크 4장의 실측이 이 갈래다).
+      · 반대로, 레포도 매니페스트도 `false`인 미설치 id는 2단계가 이미 `false`를 써
+        두었는데 계획은 로컬 키 부재를 `true`로 **추정**해 `disable`을 싣는다. 그러면
+        멱등이 아닌 명령이 `already disabled`(exit 1)로 죽어 **거짓 실패**가 된다
+        (같은 문서 2차 7장 귀결 3).
+
+    **대상 집합은 계획이 정하고, 값 판정만 여기서 다시 한다.** candidates는
+    `install ∪ skipped_already_installed`이고 그 둘이 build_plan의 candidates를 남김없이
+    가른다 — 여기서 레포 문서를 다시 훑어 대상을 넓히면 계획이 판정의 단일 진입점이라는
+    계약이 깨진다. 반대로 계획의 `disable_after_install`만 받으면 **좁다**: 계획 시점에
+    "손댈 것 없음"이던 id를 4단계가 `true`로 뒤집는 갈래가 그 목록에 없다(9.3.1의 귀결 2가
+    *"2·4단계가 true로 덮어도 3단계가 마지막에 레포의 false를 적용한다"*로 요구하는 것이
+    바로 그 갈래다).
+
+    **`enable`도 낸다.** 명령을 정하는 것은 `value_command` 하나이고 3단계의 이름이
+    "값 맞추기"인 것이 그 뜻이다(9.3.1이 `enable|disable`로 적는다). 레포가 `true`인데
+    `defaultEnabled: false`라 2단계가 `false`를 써 둔 id가 그 갈래다.
+    비불리언 레포 값(H3)에는 어느 쪽도 나가지 않는다 — `value_command`가 `None`이다.
+
+    **`assumed`는 10.2가 쓴다.** 실행 직전에도 로컬 키가 없어 값을 `true`로 **추정**한
+    id다. 그때 나가는 명령이 exit 1을 내면 그것은 실패가 아니라 "이미 그 상태"이고,
+    SKILL.md는 그 갈래를 복원 실패로 렌더링하지 않는다. 추정이 남는 이유는 하나다 —
+    2·4단계 어느 명령의 대상도 아니어서 이 시점에도 읽을 값이 없다.
+    (매니페스트의 `defaultEnabled`를 되읽으면 없앨 수 있으나, **설치된 플러그인에서 그
+    필드를 어느 파일로 읽는지는 미측정**이다 — spec 14.5로 이월돼 있다.)
+
+    **차단·실패 필터는 여기 없다.** 등록이 실패한 마켓플레이스(9.3.2의 `blocked`)와
+    2단계가 실패한 id를 거르는 것은 SKILL.md의 실행 층이다 — 2·4단계가 같은 필터를
+    쓰는 자리와 같다. 이 스크립트는 로컬 상태를 읽을 뿐 무엇이 실패했는지 모른다.
+    """
+    local = pc.read_local_sections(settings_path)
+    repo = pc.load_backup(backup_path)
+    # 계획이 값을 실을 때와 **같은 표**를 쓴다(normalized_sections). 한쪽만 정규화하면
+    # 마스킹이 도입되는 날 두 값이 갈리고, 예외도 빈 결과도 없이 없어야 할 명령이 나간다.
+    masked = pc.normalized_sections(repo)["enabledPlugins"]
+    local_now = pc.normalized_sections(local)["enabledPlugins"]
+    candidates = sorted(set(plan.get("install", []))
+                        | set(plan.get("skipped_already_installed", [])))
+    commands = []
+    for key in candidates:
+        if key not in masked:
+            continue
+        command = pc.value_command(local_now.get(key, True), masked[key])
+        if command is None:
+            continue
+        commands.append({"id": key, "command": command,
+                         "assumed": key not in local_now})
+    return {"status": "ok", "commands": commands}
 
 
 def _next_base_sections(local, repo, base, hooks, skipped, degraded, choices,
@@ -433,14 +509,32 @@ def read_choices(path):
     return data
 
 
+def read_plan(path):
+    """`plan` 서브명령이 낸 계획 JSON. recheck-values의 대상 집합이 여기서 온다.
+
+    **최상위가 객체가 아니면 죽는다** — read_choices와 같은 규율이다. 리스트나 문자열을
+    받으면 아래 .get이 AttributeError로 traceback을 내는데, 그것은 10.3의 "항목 단위로
+    독립"과 달리 복원 흐름 전체를 세운다.
+    """
+    with open(path, "rb") as f:
+        data = json.loads(f.read())
+    if not isinstance(data, dict):
+        raise ValueError("계획 JSON의 최상위가 객체가 아님: %s" % path)
+    return data
+
+
 def main():
     args = sys.argv[1:]
     if len(args) == 2 and args[0] == "plan":
         runner = lambda: build_plan(args[1])  # noqa: E731
+    elif len(args) == 3 and args[0] == "recheck-values":
+        runner = lambda: recheck_values(args[1], read_plan(args[2]))  # noqa: E731
     elif len(args) == 4 and args[0] == "apply-base":
         runner = lambda: apply_base(args[1], args[2], read_choices(args[3]))  # noqa: E731
     else:
         print("사용: plan_plugins.py plan <레포의 plugins.json 경로>", file=sys.stderr)
+        print("      plan_plugins.py recheck-values <레포의 plugins.json 경로>"
+              " <계획 JSON 경로>", file=sys.stderr)
         print("      plan_plugins.py apply-base <레포의 plugins.json 경로>"
               " <스테이징 디렉토리> <선택 결과 JSON 경로>", file=sys.stderr)
         sys.exit(1)
