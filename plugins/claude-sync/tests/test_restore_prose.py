@@ -9,8 +9,8 @@
 **같은 이름 바꿔치기라도 층에 따라 결과가 정반대다**(실측 — `build_plan`의 `install` 키를
 개명하면 40개가 죽는데, 5-2 산문에서 같은 이름을 바꾸면 이 파일이 생기기 전에는 0개였다).
 
-**왜 test_script_root.py가 아니라 여기인가.** 그 파일은 이미 관심사를 둘 담는다 —
-0단계 bash를 **실행해서** 재는 것과 세 SKILL.md의 **배선 계약**을 읽어서 재는 것이다.
+**왜 스킬 계약 파일들이 아니라 여기인가.** `test_script_root.py`는 0단계 bash를
+**실행해서** 재고, `test_skill_wiring.py`는 세 SKILL.md의 **배선 계약**을 읽어서 잰다.
 이 파일이 재는 것은 셋째다: 배선이 아니라 **실행 산문의 의미** — 어떤 버킷이 어떤 CLI
 명령에 실리는가. `test_user_docs.py`가 사용자 문서를 같은 이유로 갈라 나간 선례다.
 
@@ -38,7 +38,7 @@
 - `sync-backup`·`sync-status`의 실행 산문. 두 스킬은 `claude plugin` 명령을 내지 않아
   위험이 낮다고 **추론**했을 뿐, 재 보지 않았다.
 - restore 6절 6-1~6-6의 「버킷 → 명령」 결속. 6절은 **버킷 표의 완전성**만 걸었다.
-- 5-6·5-7(`value_held`·`action_held`·선택 JSON)의 결속. 일부는 `test_script_root.py`의
+- 5-6·5-7(`value_held`·`action_held`·선택 JSON)의 결속. 일부는 `test_skill_wiring.py`의
   `SCRIPT_CONTRACT_PHRASES`와 `test_restore_choice_json_uses_the_real_section_names`가 건다.
 - **더해지는** 확장 지시. 5-3에만 형태 그물이 있고 다른 절에는 없다 —
   `test_the_config_clause_never_widens_beyond_the_keys_the_plan_named`의 docstring 참조.
@@ -649,7 +649,7 @@ def test_the_choice_clause_keeps_the_top_level_keys_in_the_top_layer():
     """5-5는 층이 다른 두 이름을 한 표에서 부른다 — 버킷은 섹션 안, 값 목록은 최상위다.
 
     층을 뒤집으면 소비자가 없는 자리를 뒤져 **케이스 4·5·8·9가 하나도 보고되지 않는다.**
-    버킷 쪽 층은 `test_script_root.py`의 계약 문구가 이미 걸지만, `repo_values`·
+    버킷 쪽 층은 `test_skill_wiring.py`의 계약 문구가 이미 걸지만, `repo_values`·
     `local_values` 쪽은 걸리지 않아 층을 반대로 적어도 스위트가 전부 초록이었다(실측).
 
     **줄 단위로 본다.** 그 선언은 앞 문장을 "그 둘"로 받으므로 문장 하나에는 이름이 없다.

@@ -1,10 +1,11 @@
 """사용자 문서가 `plugins.json`에 대해 말하는 것 (spec 13장 첫 표, "새로 적어야 할 한계").
 
-**왜 test_script_root.py가 아니라 여기인가.** 그 파일은 관심사를 둘 담는다 — SKILL.md의
-0단계 bash를 **실행해서** 재는 것과, 세 SKILL.md의 **배선 계약**을 읽어서 재는 것이다.
-`README.md`·`README.ko.md`는 스킬도 스크립트도 아니고 `backup-readme*.md`는 백업 레포에
-그대로 복사되는 자료 파일이라, 그쪽에 얹으면 간판이 내용을 설명하지 못하는 파일이 하나 더
-생긴다. SKILL.md의 서술 정정은 그 파일의 둘째 관심사에 속하므로 그쪽에 남겼다.
+**왜 스킬 계약 파일들이 아니라 여기인가.** `test_script_root.py`는 SKILL.md의 0단계
+bash를 **실행해서** 재고, `test_skill_wiring.py`는 세 SKILL.md의 **배선 계약**을 읽어서
+잰다. `README.md`·`README.ko.md`는 스킬도 스크립트도 아니고 `backup-readme*.md`는 백업
+레포에 그대로 복사되는 자료 파일이라, 그쪽에 얹으면 간판이 내용을 설명하지 못하는 파일이
+하나 더 생긴다. SKILL.md의 서술 정정은 배선 계약 쪽 관심사이므로
+`test_skill_wiring.py`에 남겼다.
 
 **`not in` 가드는 바늘이 틀려도 초록이다** — 없어야 할 것을 찾는 검사라 부재가 곧 통과다.
 그래서 옛 문구를 혼자 걸지 않고 **정정 문안과 짝지어** 건다(CORRECTIONS). 문서를 옛
@@ -38,7 +39,7 @@ BACKUP_SCRIPTS = os.path.join(
     ROOT, "plugins", "claude-sync", "skills", "sync-backup", "scripts")
 SPEC = os.path.join(ROOT, "docs", "superpowers", "specs",
                     "2026-08-24-plugins-sync-design.md")
-# `.syncignore`의 진실 원천은 **실행되는 쪽**이다 — test_script_root.py가 이 SKILL.md의
+# `.syncignore`의 진실 원천은 **실행되는 쪽**이다 — test_skill_wiring.py가 이 SKILL.md의
 # bash 블록을 예시 패턴과 함께 실제로 돌린다. 여기서는 README 두 벌이 그 검사를 받은
 # 예시와 같은 것을 드는지만 잰다(세 벌이 갈리면 한 곳만 고친 정정이 나머지를 남긴다).
 SYNCIGNORE_SOURCE = os.path.join(
@@ -345,7 +346,7 @@ def test_the_syncignore_example_is_the_same_in_every_document():
     """세 문서가 **같은** 예시를 싣는다.
 
     갈리면 한 곳만 고친 정정이 나머지 두 곳에 동작하지 않는 예시를 남긴다. 실행해서
-    재는 것은 test_script_root.py의 test_syncignore_examples_actually_exclude_something
+    재는 것은 test_skill_wiring.py의 test_syncignore_examples_actually_exclude_something
     하나이므로, 그 검사를 받지 않는 사본이 생기는 것이 정확히 이 결함의 형태다.
     """
     with open(SYNCIGNORE_SOURCE, encoding="utf-8") as f:

@@ -150,7 +150,7 @@ def test_update_base_multiple_files(tmp_path):
 # check_status.py는 `~/.claude`를 직접 걷는다. 4단계의 `find | rm -rf`는 레포 작업
 # 트리만 손대므로, 필터가 없으면 사용자가 제외한 파일이 `local_only`("backup 시 push")로
 # 보고된다 — 백업은 그것을 push하지 않으므로 **보고만 어긋난다**(누수가 아니다).
-# 매칭 규칙 한 벌은 lib/syncignore.py이고, 4단계 bash와 같은지는 test_script_root.py의
+# 매칭 규칙 한 벌은 lib/syncignore.py이고, 4단계 bash와 같은지는 test_skill_wiring.py의
 # test_python_syncignore_matches_the_skill_bash가 두 구현을 함께 돌려 잰다.
 #
 # 제외 대상이 **레포에도 있으면** 로컬 필터로는 사라지지 않는다. 그 자리의 문구는

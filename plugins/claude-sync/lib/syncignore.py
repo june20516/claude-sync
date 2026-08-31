@@ -27,7 +27,7 @@
 다시 조용해지므로 규칙을 이 파일 하나에 둔다.
 
 **bash 쪽은 이 함수를 부를 수 없다**(`find`다). 그래서 대응이 깨지는 것을 잡는 것은
-test_script_root.py의 `test_python_syncignore_matches_the_skill_bash`다 — 같은 픽스처에
+test_skill_wiring.py의 `test_python_syncignore_matches_the_skill_bash`다 — 같은 픽스처에
 SKILL.md의 bash 블록과 아래 `is_excluded`를 **둘 다 돌려** 결과 집합이 같은지 잰다.
 규칙을 한쪽만 고치면 거기서 죽는다.
 

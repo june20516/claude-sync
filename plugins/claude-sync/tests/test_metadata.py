@@ -195,7 +195,7 @@ def test_dangling_symlink_is_skipped_not_fatal(tmp_path):
 # 작업 트리만 손대므로, 필터가 없으면 사용자가 제외한 파일의 **이름과 sha256이 푸시되는
 # `sync-metadata.json`에 그대로 남는다** — README가 "민감 파일을 `.syncignore`로 걸러내고
 # 백업하라"고 말하는 바로 그 자리의 조용한 fail-open이다.
-# 매칭 규칙이 4단계의 `find -path`와 같은지는 test_script_root.py의
+# 매칭 규칙이 4단계의 `find -path`와 같은지는 test_skill_wiring.py의
 # test_python_syncignore_matches_the_skill_bash가 두 구현을 함께 돌려 잰다.
 
 def write_syncignore(claude_dir, text):
