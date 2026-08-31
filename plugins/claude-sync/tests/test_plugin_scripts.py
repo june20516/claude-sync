@@ -1789,6 +1789,165 @@ def test_plan_keeps_the_value_and_dependency_steps_on_both_lists(tmp_path):
     assert sorted(out["repo_values"]) == ["gone@m", "here@m"]
 
 
+# ── 4단계는 로컬 확장 값을 평탄화하지 않는다 (사용자 결정 2026-08-31) ────────────
+#
+# 4단계의 명령은 `install --config k=v`이고 **그것도 `install`이라 enabledPlugins 값을 함께
+# 쓴다**(9.3.1). 로컬 값이 객체면 매니페스트 `defaultEnabled`로 **평탄화되고, 되돌릴 CLI가
+# 없다**(5-6) — 사용자가 요청하지 않은, 되돌릴 수 없는 로컬 상태 변경이다. 결정은 **그 id의
+# 4단계를 건너뛰고 보고**다.
+#
+# **지킬 값이 있을 때만 건너뛴다.** 5-4(3단계)가 그 키에 명령을 낼 예정이면 그 `enable`이
+# 확장 값을 어차피 지우므로(value_command의 실측 표 — 스모크 3장) 건너뛰어도 최종 상태가
+# 같고, 잃는 것은 설정 채우기뿐이다. 그래서 판정은 `value_command`가 `None`인 키로 좁힌다 —
+# 레포 값이 **비불리언**(H3)이거나 레포 enabledPlugins에 **키가 없을** 때다. 아래 두
+# 건너뛰기 테스트가 그 두 갈래를 각각 세운다.
+#
+# 판정을 **레포 값**으로 바꾸는 변조는 `test_step_four_judges_the_local_value_not_the_repo_value`
+# 가 좌우 비대칭에서 잡는다.
+
+# 레포 enabledPlugins에 conf@m이 **없다** — 5-4가 그 키를 건드리지 않는 첫째 갈래다
+# (recheck_values가 `key not in masked`에서 continue한다).
+CONFIG_STEP_REPO = {"enabledPlugins": {},
+                    "extraKnownMarketplaces": {"m": GH},
+                    "pluginConfigs": {"conf@m": {"options": {"apiKey": pc.SENTINEL}}}}
+# 레포 값이 **비불리언**(H3) — 5-4가 침묵하는 둘째 갈래다(value_command가 None이다).
+CONFIG_STEP_REPO_HELD = {"enabledPlugins": {"conf@m": {"version": "9.9.9"}},
+                         "extraKnownMarketplaces": {"m": GH},
+                         "pluginConfigs": {"conf@m": {"options": {"apiKey": pc.SENTINEL}}}}
+# 레포 값이 **불리언** — 5-4가 `enable`/`disable`을 내는 갈래. 여기서는 건너뛰지 않는다.
+CONFIG_STEP_REPO_BOOL = {"enabledPlugins": {"conf@m": True},
+                         "extraKnownMarketplaces": {"m": GH},
+                         "pluginConfigs": {"conf@m": {"options": {"apiKey": pc.SENTINEL}}}}
+
+
+def config_step_plan(tmp_path, local_enabled, repo=None):
+    """conf@m 하나가 4단계 대상(needs_secret)이고 **이미 설치된** 최소 픽스처."""
+    local = {} if local_enabled is _ABSENT else {"enabledPlugins": {"conf@m": local_enabled}}
+    out = build_plan(tmp_path, local=local, repo=repo or CONFIG_STEP_REPO,
+                     installed=write_installed(tmp_path, {"conf@m": [{"scope": "user"}]}))
+    # 픽스처가 그 갈래를 실제로 타는지 고정한다 — needs_secret이 비면 아래 단정들이
+    # "건너뛰었다"와 "애초에 대상이 아니었다"를 구별하지 못한 채 초록이 된다.
+    assert out["sections"]["pluginConfigs"]["needs_secret"] == ["conf@m"], out
+    return out
+
+
+_ABSENT = object()
+
+
+def test_step_four_skips_an_id_whose_local_value_is_an_object(tmp_path):
+    """객체 값은 `install --config`가 `true`로 평탄화한다 — 그 id의 4단계를 건너뛴다.
+
+    레포 enabledPlugins에 키가 없어 5-4도 침묵한다 — 그래서 지킬 값이 실재한다.
+    """
+    out = config_step_plan(tmp_path, {"version": "1.2.3"})
+    assert out["config_keys"] == {}
+    # 값을 함께 싣는다 — 사용자가 "무엇을 지키려고 건너뛰었는지"를 봐야 "이 기기 값을
+    # 포기하겠다"를 고를 수 있다.
+    assert out["config_skipped_local_extended"] == {"conf@m": {"version": "1.2.3"}}
+
+
+def test_step_four_skips_an_id_whose_local_value_is_an_array(tmp_path):
+    """배열도 **함께** 건너뛴다.
+
+    `install`이 배열을 보존하는 것은 실측이지만(2026-08-29 스모크 2차 7장 6행) 값 종류로
+    가르면 표가 하나 더 생기고, H3가 배열·객체를 구분하지 않는다(`value_command`가 비불리언
+    전부에 None이다). 한 규칙으로 통일하는 편이 좁고 안전하다.
+
+    레포 값이 비불리언(H3)이라 5-4가 침묵하는 둘째 갈래를 함께 세운다.
+    """
+    out = config_step_plan(tmp_path, ["1.2.3"], repo=CONFIG_STEP_REPO_HELD)
+    assert out["config_keys"] == {}
+    assert out["config_skipped_local_extended"] == {"conf@m": ["1.2.3"]}
+
+
+@pytest.mark.parametrize("local_value", [True, False])
+def test_step_four_proceeds_when_the_local_value_is_a_boolean(tmp_path, local_value):
+    """**과하게 좁히지 않았다.** 불리언은 지킬 확장 값이 아니므로 4단계가 정상 진행한다.
+
+    **두 행이 서로 다른 절을 건다** — 레포가 `True`일 때 `False`는 `value_command`가
+    `enable`을 내어 둘째 절이 막고, `True`는 `value_command`가 `None`이라 **첫째 절
+    (`isinstance`)만이** 막는다. 한 행만 두면 가드를 `k in local_masked` 하나로 넓히는
+    변조가 살아남는다(실측).
+    """
+    out = config_step_plan(tmp_path, local_value, repo=CONFIG_STEP_REPO_BOOL)
+    assert out["config_keys"] == {"conf@m": ["apiKey"]}
+    assert out["config_skipped_local_extended"] == {}
+
+
+def test_step_four_proceeds_when_the_local_key_is_absent(tmp_path):
+    """**부재는 확장 값이 아니다.** 키 부재는 매니페스트 기본값에 위임하는 상태다(9.3.3).
+
+    부재를 확장 값으로 읽으면 새 플러그인의 설정이 **어디에서도** 채워지지 않는다 —
+    복원의 4단계가 통째로 죽는데 증상이 없다.
+    """
+    out = config_step_plan(tmp_path, _ABSENT)
+    assert out["config_keys"] == {"conf@m": ["apiKey"]}
+    assert out["config_skipped_local_extended"] == {}
+
+
+def test_step_four_judges_the_local_value_not_the_repo_value(tmp_path):
+    """좌우 비대칭. 레포 쪽 비불리언은 H3(값 보류)이고 4단계와는 다른 축이다.
+
+    이쪽을 뒤집으면 **지킬 것이 없는 id의 설정이 채워지지 않고**, 반대로 지켜야 할
+    로컬 값은 평탄화된다. 두 방향 다 조용하다.
+    """
+    repo = {"enabledPlugins": {"conf@m": {"version": "9.9.9"}},
+            "extraKnownMarketplaces": {"m": GH},
+            "pluginConfigs": {"conf@m": {"options": {"apiKey": pc.SENTINEL}}}}
+    out = config_step_plan(tmp_path, True, repo=repo)
+    assert out["config_keys"] == {"conf@m": ["apiKey"]}
+    assert out["config_skipped_local_extended"] == {}
+
+
+def test_step_four_proceeds_when_the_value_step_would_flatten_it_anyway(tmp_path):
+    """**지킬 값이 있을 때만 건너뛴다**(사용자 결정 2026-08-31의 사유를 그대로 적용).
+
+    로컬이 확장 값이어도 **레포 값이 불리언**이면 5-4가 `enable`/`disable`을 내고, 그
+    명령이 확장 값을 지운다(value_command의 실측 표 — 2026-08-29 스모크 3장). 즉 4단계를
+    건너뛰어도 최종 상태가 **같고** 설정만 채워지지 않는다 — 순수한 손해다. 그 갈래에서
+    5-4는 부수 효과가 아니라 **요청된 수렴**이다: 레포와 로컬이 실제로 갈렸고 복원이
+    그것을 맞춘다.
+    """
+    out = config_step_plan(tmp_path, {"version": "1.2.3"}, repo=CONFIG_STEP_REPO_BOOL)
+    assert out["config_keys"] == {"conf@m": ["apiKey"]}
+    assert out["config_skipped_local_extended"] == {}
+    # 5-4가 실제로 그 명령을 낸다는 것이 이 테스트의 근거다 — 아니면 위 단정이 공허하다.
+    assert pc.value_command({"version": "1.2.3"}, True) == "enable"
+
+
+def test_the_skip_decision_reads_the_normalized_local_table(tmp_path, monkeypatch):
+    """판정 입력은 `local_masked`다 — 정규화를 거치지 않은 `local`이 아니다.
+
+    오늘 enabledPlugins의 normalize는 항등(`_identity`)이라 두 표의 값이 같고, 그래서
+    "원본을 본다"는 변조가 값 단정만으로는 살아남는다. 이 저장소는 그런 자리를 **라우팅
+    단정**으로 닫는 관례가 있다(`test_write_base_routes_through_ks_dump_bytes`). 같은
+    방법으로 정규화가 값을 바꾸는 훅을 끼워 두 표를 갈라 놓고 어느 쪽을 보는지 잰다.
+    이 섹션에 마스킹이 도입되는 날 이 단정이 그 변화를 잡는다 — `local_values`가 싣는
+    표와 이 판정이 보는 표가 갈리면 보고와 판정이 다른 값을 말한다.
+    """
+    real_build_hooks = pc.build_hooks
+
+    def hooks_with_flattening_normalize(local, repo, **kw):
+        hooks = real_build_hooks(local, repo, **kw)
+        inner = hooks["enabledPlugins"]["normalize"]
+
+        def normalize(mapping):
+            # 값만 바꾼다 — 키 집합을 바꾸면 코어가 normalize 계약 위반으로 ValueError다.
+            return {k: (True if isinstance(v, dict) else v)
+                    for k, v in inner(mapping).items()}
+
+        hooks["enabledPlugins"] = dict(hooks["enabledPlugins"], normalize=normalize)
+        return hooks
+
+    monkeypatch.setattr(plan_plugins.pc, "build_hooks", hooks_with_flattening_normalize)
+    # 레포 값도 불리언이라 정규화 뒤 두 값이 같아진다 — 그러면 value_command가 None이라
+    # 둘째 조건이 열리고, **첫째 조건(어느 표를 보는가)만으로** 결과가 갈린다.
+    out = config_step_plan(tmp_path, {"version": "1.2.3"}, repo=CONFIG_STEP_REPO_BOOL)
+    # 정규화된 표에서 conf@m은 불리언이다 → 건너뛰지 않는다.
+    assert out["config_keys"] == {"conf@m": ["apiKey"]}
+    assert out["config_skipped_local_extended"] == {}
+
+
 def test_plan_reads_base_of_each_section_from_that_section(tmp_path):
     """base를 안 읽거나 엉뚱한 섹션에서 읽으면 삭제 후보(케이스 4·5)가 통째로 사라진다 —
     로컬 신규(케이스 1)로 보이므로 예외도 빈 결과도 나지 않는다.

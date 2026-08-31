@@ -101,15 +101,16 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     """복원 계획.
 
     **평문 비밀이 실리지 않는 근거는 "값이 전부 정규화된다"가 아니다.** sections는 코어가
-    키 목록만 담아 돌려주므로(restore_plan) 값이 실리는 자리는 **넷**이다 —
+    키 목록만 담아 돌려주므로(restore_plan) 값이 실리는 자리는 **다섯**이다 —
     marketplace_add[].arg(마스킹된 레포 값에서 뽑은 source 문자열), config_keys(값이
     아니라 물어야 할 option 키 **이름**), repo_values/local_values(enabledPlugins 전용 —
-    도메인상 비밀이 없는 섹션이다), 그리고 unrestorable_reasons(아래). 그 넷을 전부
+    도메인상 비밀이 없는 섹션이다), config_skipped_local_extended(로컬 enabledPlugins 값 —
+    앞의 둘과 같은 성질이고 같은 훅을 거친다), 그리고 unrestorable_reasons(아래). 그 다섯을 전부
     마스킹 훅에 통과시키는 것은 근거를 구조로 바꾸기 위해서다: enabledPlugins의 정규화가
     오늘 항등(_identity)이라는 사실에 기대면, 그 섹션에 마스킹이 도입되는 순간 훅을
     우회하는 자리 하나만 조용히 남는다.
 
-    **넷째는 값이 문자열 안에 들어가 있어 세는 눈에 걸리지 않는다.** unrestorable_reasons의
+    **마지막 자리는 값이 문자열 안에 들어가 있어 세는 눈에 걸리지 않는다.** unrestorable_reasons의
     마켓플레이스 갈래는 레포 값의 source.source를 사유 문장에 **보간한다**
     (plugin_config.unrestorable_reason의 (a)·(b) 갈래). 레포에
     {"m": {"source": {"source": "X"}}}가 있으면 사유가 "'X' 출처로는 …"이 된다. 오늘
@@ -252,6 +253,47 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     decided = sorted({k for bucket in ("repo_ahead", "both_changed", "value_held")
                       for k in plugins.get(bucket, [])} | set(candidates))
 
+    # 4단계에서 뺄 id — **로컬 enabledPlugins 값이 비불리언**인 것들(사용자 결정 2026-08-31).
+    # 4단계의 명령은 `install --config k=v`이고 그것도 `install`이라 enabledPlugins 값을 함께
+    # 쓴다(9.3.1). 로컬 값이 객체면 매니페스트 defaultEnabled로 **평탄화되고 되돌릴 CLI가
+    # 없다**(9.3.1의 "값 보존형 4단계는 선택지가 아니다") — 사용자가 요청하지 않은,
+    # 되돌릴 수 없는 로컬 상태 변경이다. 그래서 건너뛰고 **보고한다.**
+    #
+    # **배열도 함께 건너뛴다.** install이 배열을 보존하는 것은 실측이지만(2026-08-29 스모크
+    # 2차 7장 6행) config_keys의 판정을 값 종류로 가르면 표가 하나 더 생기고, H3가 배열·객체를
+    # 구분하지 않는다(value_command가 비불리언 전부에 None이다). 한 규칙으로 통일하는 편이
+    # 좁고 안전하다. **다음 독자는 반드시 "배열은 보존되는데 왜 건너뛰나"를 묻는다 — 답이 이것이다.**
+    #
+    # **판정은 로컬 값이다. 레포 값이 아니다.** 레포 쪽 비불리언은 H3(값 보류)이고 "밀 CLI가
+    # 없다"는 다른 사실이다. 좌우를 바꾸면 지켜야 할 로컬 값이 평탄화되고, 지킬 것이 없는
+    # id의 설정은 채워지지 않는다 — 두 방향 다 조용하다.
+    #
+    # 판정 입력은 local_masked다 — 계획이 값을 실을 때(local_values) 쓰는 **같은 표**여야
+    # 한다. 한쪽만 정규화하면 이 섹션에 마스킹이 도입되는 날 두 값이 갈린다.
+    #
+    # **키 부재는 확장 값이 아니다.** 부재는 매니페스트 기본값에 위임하는 상태이므로(9.3.3)
+    # 여기서 빼면 새 플러그인의 설정이 어디에서도 채워지지 않는다.
+    #
+    # **지킬 값이 있을 때만 건너뛴다**(사용자 결정 2026-08-31 — 이 조건이 그 결정의 사유를
+    # 그대로 적용한 것이다). 3단계(5-4)가 그 키에 명령을 낼 예정이면 그 명령이 확장 값을
+    # **어차피** 평탄화하므로 건너뛰어도 최종 상태가 같고, 잃는 것은 설정 채우기뿐이다.
+    # 실측 근거는 value_command의 표다(2026-08-29 스모크 3장) — 확장 값에 낼 수 있는 명령은
+    # `enable` 하나뿐이고 **그것이 값을 지운다.** 그리고 그 갈래에서 3단계는 요청된 수렴이지
+    # 부수 효과가 아니다: 레포와 로컬이 실제로 갈렸고 복원이 그것을 맞추는 것이다.
+    # 그래서 판정은 **value_command가 None인 키**로 좁힌다 — 레포 값이 비불리언(H3)이거나
+    # 레포 enabledPlugins에 키가 아예 없는 경우다. 그때만 3단계가 침묵하므로 4단계를
+    # 건너뛰는 것이 실제로 값을 지킨다.
+    #
+    # **경계.** 이 id가 install(2단계)에도 있고 로컬 값이 **객체**면 bare install이 그것을
+    # 먼저 덮는다(배열은 보존된다 — 스모크 2차 7장 6행). 그 갈래에서 로컬 값은 설치되지
+    # 않은 플러그인의 **유령 키**이고 2단계는 사용자가 요청한 설치 자체다. 그래서 여기서
+    # 막지 않는다 — 설치 여부로 좁히면 배열 값(bare install이 보존하는 것)까지 함께 잃는다.
+    config_skipped_local_extended = {
+        k: local_masked[k] for k in configs.get("needs_secret", [])
+        if k in local_masked and not isinstance(local_masked[k], bool)
+        and pc.value_command(local_masked[k],
+                             masked["enabledPlugins"].get(k)) is None}
+
     return {
         "status": "ok",
         "sections": sections,
@@ -271,10 +313,18 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
         # 갈려도 증상이 없다 — 사용자는 되물어야 할 키를 하나 덜 받을 뿐이다.
         # **설치 집합으로 좁히지 않는다.** 2단계로 새로 깔린 id도, 이미 설치돼 있어
         # 4단계만 남은 id도 똑같이 설정을 채워야 한다 — 한쪽으로 좁히면 다른 쪽 id의
-        # 설정이 어디에서도 채워지지 않는다.
+        # 설정이 어디에서도 채워지지 않는다. **다른 축으로는 좁힌다** — 로컬 확장 값을
+        # 평탄화할 id는 뺀다(위 config_skipped_local_extended). 설치 여부로는 여전히
+        # 좁히지 않는다.
         "config_keys": {k: hooks["pluginConfigs"]["secret_keys"](
             masked["pluginConfigs"][k])
-            for k in configs.get("needs_secret", [])},
+            for k in configs.get("needs_secret", [])
+            if k not in config_skipped_local_extended},
+        # 4단계에서 뺀 id와 **그 로컬 값**. 값을 함께 싣는 것은 사용자가 "무엇을 지키려고
+        # 건너뛰었는지"를 봐야 "이 기기 값을 포기하겠다"를 고를 수 있어서다. 정규화를 거친
+        # enabledPlugins 값이라 비밀이 아니다(pluginConfigs가 아니다 — 7.2).
+        # **"실패"가 아니다.** 건너뛴 것이지 실패한 것이 아니므로 산문이 그렇게 렌더링한다.
+        "config_skipped_local_extended": config_skipped_local_extended,
         "repo_values": {k: masked["enabledPlugins"][k] for k in decided
                         if k in masked["enabledPlugins"]},
         "local_values": {k: local_masked[k] for k in decided if k in local_masked},
