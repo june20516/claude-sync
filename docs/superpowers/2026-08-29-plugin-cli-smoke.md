@@ -202,3 +202,92 @@ after : enabledPlugins={"demo@smoke-mkt": true}
 `claude plugin --help`의 명령 목록에 `enable`·`disable`만 있고 `configure`는 없다.
 `/plugin configure`는 **세션 안 슬래시 명령**이라 스킬이 부를 수 없다 —
 **"4단계를 값 보존형으로 바꾼다"는 선택지는 존재하지 않는다.**
+
+---
+
+# 스모크 3차 (2026-08-31, plan ③ 착수)
+
+- CLI: `claude` **2.1.251** — 1·2차는 2.1.250이었다. **이 표들은 2.1.251에서 잰 것이다.**
+- 방법: 같은 임시 HOME 기법. 실제 `~/.claude`와 sync 레포는 건드리지 않았고 측정 뒤
+  **오염이 없음을 확인**했다(실제 홈의 마켓플레이스는 `claude-sync`·`planning-with-files`·`suberpower` 셋 그대로).
+- 목적: KICKOFF 3장의 **측정 둘** — 추정 10번(`marketplace remove`의 소속 판정)과 `url` 출처의 왕복.
+  둘 다 닫혔고, **`git` 출처까지 함께 닫혔다.**
+
+## 11. 추정 10번 — `marketplace remove`의 소속 판정 규칙
+
+픽스처: **이름이 서로의 접미인 마켓플레이스 둘.** `m`(플러그인 `alpha`)과 `sub-m`(플러그인 `beta`),
+둘 다 디렉토리 출처·user 스코프. `"beta@sub-m"`은 `endswith("m")`·`includes("m")`에 걸리고
+`endswith("@m")`에는 걸리지 않는다 — **규칙의 세 후보를 이 하나의 픽스처가 가른다.**
+
+| `marketplace remove m` 이후 | 값 |
+|---|---|
+| `extraKnownMarketplaces` | `{"sub-m": …}` — `m`만 사라짐 |
+| `enabledPlugins` | `{"beta@sub-m": true}` — **`alpha@m`만 사라짐** |
+| `installed_plugins.json` | `{"beta@sub-m": [...]}` — 같음 |
+| `~/.claude/plugins/cache/` | `m`·`sub-m` **둘 다 남는다** — 디스크 캐시는 지우지 않는다 |
+
+**판정: 에뮬레이터의 `pid.endswith("@" + name)`이 맞다.** false-positive 규칙이 아니다.
+`tests/plugin_cli.py`의 모듈 docstring 10번은 이제 **[미확인]이 아니라 실측**이다.
+
+## 12. 추정 11번의 나머지 절반 — 삭제 명령의 실패 갈래
+
+1차가 잰 것은 `uninstall ghost`뿐이었다. `marketplace remove`의 실패 갈래를 마저 쟀다.
+
+| 명령 | exit | `settings.json` | `installed_plugins.json` |
+|---|---|---|---|
+| `marketplace remove ghost-mkt` (미등록) | **1** | 불변(바이트 동일) | 불변(바이트 동일) |
+
+**판정: 맞음.** 추정 11번도 이제 실측이다.
+
+## 13. `url`·`git` 출처 — 값의 모양과 왕복
+
+로컬에 http 서버를 세워 쟀다(네트워크 없이 비-github 호스트를 만드는 유일한 길이다).
+`url`은 `python3 -m http.server`가 낸 raw `.json`, `git`은 `git-http-backend`를 감싼
+**smart HTTP** 서버다 — dumb HTTP로는 CLI의 shallow clone이 실패한다(아래 14장).
+
+| 인자 | 기록된 값 | `marketplace_arg`가 낼 문자열 | 재등록 결과 |
+|---|---|---|---|
+| `http://127.0.0.1:8731/marketplace.json` | `{"source":{"source":"url","url":"http://127.0.0.1:8731/marketplace.json"}}` | `url` 필드 → 인자와 **동일** | **바이트 동일** |
+| `http://127.0.0.1:8733/gitmkt.git` | `{"source":{"source":"git","url":"http://127.0.0.1:8733/gitmkt.git"}}` | `url` 필드 → 인자와 **동일** | **바이트 동일** |
+
+**둘 다 왕복이 닫혔다.** 그리고 **`git` 출처의 필드는 `repo`가 아니라 `url`이다** —
+`plugin_config.py`의 `_SOURCE_ARG_FIELDS = {"git": ("url", "repo")}`가 후보 둘을 순서대로
+훑는데 **첫 후보가 옳았다.** (둘째 후보 `repo`는 이 실측으로는 도달 경로가 없다.
+지울지 방어로 남길지는 plan ③이 정한다 — 지우면 `repo`만 가진 값이 조용히 unrestorable이 된다.)
+
+## 14. `marketplace add`의 출처 분류 규칙 (관측된 전부)
+
+| 인자 모양 | 판별된 출처 | 근거 |
+|---|---|---|
+| 절대 디렉토리 경로 | `directory` | 1차 스모크 7번 |
+| `owner/repo` | `github` | 2차 스모크 9장 |
+| `https://github.com/owner/repo` | `github`(정규화) | 2차 스모크 9장 |
+| `http(s)://…/x.git` | **`git`** | 이 측정 — `Cloning repository (timeout: 120s)`를 찍고 shallow clone을 시도한다 |
+| 그 밖의 `http(s)://…` | **`url`** | 이 측정 — 본문을 마켓플레이스 JSON으로 파싱한다 |
+| `file://…` | **거부, exit 1** | `✘ Invalid marketplace source format. Try: owner/repo, https://..., or ./path` |
+| `.git`으로 끝나는 **로컬 경로** | `directory` | `Marketplace file not found at <경로>/.claude-plugin/marketplace.json`으로 실패 |
+
+**여전히 미측정: `https://github.com/o/r.git`.** github 정규화와 `.git` 규칙 중 어느 쪽이
+이기는지는 네트워크 없이 잴 수 없다. **프로덕션에는 도달 경로가 없다** — `marketplace_arg`가
+github 출처에 내는 것은 `repo` 필드(`"o/r"`)이지 URL이 아니다.
+
+부수 실측 둘:
+
+- **dumb HTTP git 서버로는 등록되지 않는다** — `fatal: dumb http transport does not
+  support shallow capabilities`. CLI가 `--depth`를 쓴다는 뜻이다.
+- 디렉토리 목록 HTML을 `url`로 주면 `Invalid marketplace schema from URL: : Invalid input:
+  expected object, received string`으로 exit 1이고 **`extraKnownMarketplaces`에 키를 만들지 않는다.**
+
+## 15. 이 측정이 고칠 것을 지목하는 자리
+
+| 자리 | 무엇을 |
+|---|---|
+| `tests/plugin_cli.py` 모듈 docstring 10·11번 | **[미확인] → 실측.** 11장·12장이 근거다 |
+| 같은 파일 `marketplace_remove`·`_forget_installed`의 docstring | *"소속 판정 규칙만 실측 없음"* 문장이 낡았다 |
+| `tests/plugin_cli.py::_marketplace_source` | url·git 인자에 `NotImplementedError`를 던진다. **이제 실측된 모양이 있다** — 14장의 표대로 판별하게 고친다 |
+| `lib/plugin_config.py`의 `_SOURCE_ARG_FIELDS` 주석 | *"url·git의 필드 이름은 측정되지 않았으므로"* 가 거짓이 됐다. 둘 다 `url`이다 |
+| spec 8.6의 url·git "복원 가능" 서술 | 미측정 표식을 **실측 표식으로** 바꾼다 |
+| spec 14.5 #3·#4 | #3(소속 판정)이 닫혔다. #4(`defaultEnabled`를 되읽는 파일)는 **여전히 미측정** |
+
+**프로덕션에서 고칠 것은 이 스모크에서도 나오지 않았다** — `marketplace_arg`가 url·git에
+내는 인자가 실측과 일치했다. 틀린 것은 **에뮬레이터 하나와 그것을 인용한 문장들**이다.
