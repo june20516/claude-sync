@@ -20,6 +20,14 @@ SENTINEL = "<REDACTED>"
 SECRET_FIELDS = ("headers", "env")
 SCHEMA_VERSION = 2
 BACKUP_RELPATH = "mcp-servers.json"
+
+# 백업 문서에서 항목이 담기는 섹션. plugin_config.SECTIONS와 같은 뜻이고, 이 문서는
+# 섹션이 하나뿐이라 1-튜플이다. **하나뿐이어도 상수로 둔다** — 이 이름을 읽는 쪽
+# (detect_downgrade의 후보 요약)이 리터럴을 적으면 문서 키가 바뀌어도 조용히 어긋난
+# 이름이 사용자에게 나가고, tests/test_compat.py의 "servers가 객체여야 v2다" 바늘도
+# 뽑아낼 원천이 없어진다.
+# 이 상수가 문서의 실제 키와 갈리는 것은 test_mcp_config가 dump_backup의 출력으로 문다.
+SECTIONS = ("servers",)
 DEFAULT_CLAUDE_JSON = os.path.expanduser("~/.claude.json")
 VALID_NAME = re.compile(r"^[A-Za-z0-9_-]+$")   # claude mcp add-json의 실측 제약
 

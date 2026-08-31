@@ -1656,17 +1656,22 @@ v1 문서(`version` 없음, 두 필드만)는 4.4의 인식 규칙을 통과한�
 
 ### 11.6 다운그레이드 탐지 — `plugins.json`까지 확대한다
 
-현행 `detect_downgrade.py`는 **`mcp-servers.json` 전용**이다(*"레포의 mcp-servers.json이 v1 배열인데
-이 기기의 base는 v2 객체였다면"*). `plugins.json`도 같은 사고를 겪으므로 같은 보호가 필요하다.
+> **이 절은 plan ③ Task 1·2에서 닫혔다(2026-08-31).** 아래 "현행" 서술은 **착수 시점의
+> 상태**이며 지금은 참이 아니다 — 이 절이 요구한 것이 그대로 구현되었기 때문이다.
+> 구현된 결과는 `version-compat` spec 9.1·9.2가 정본이다.
 
-**형태 판정은 `detect_downgrade.py`가 아니라 `lib/compat.py`에 산다** — `shape_of`(객체는
-`servers`가 dict일 때만 `SHAPE_V2_OBJECT`), `downgrade_suspected`(`repo == V1_ARRAY and
-base == V2_OBJECT` 하드코딩),
-`_SHAPES` frozenset. `plugins.json`의 "옛 형식 = 객체인데 `version` 없음"은 **새 shape 상수**를
-요구하고, `tests/test_compat.py`가 그 표를 잠근다.
+착수 시점의 `detect_downgrade.py`는 **`mcp-servers.json` 전용**이었다(*"레포의 mcp-servers.json이
+v1 배열인데 이 기기의 base는 v2 객체였다면"*). `plugins.json`도 같은 사고를 겪으므로 같은 보호가
+필요하다.
 
-그리고 `detect()`의 출력(`downgrade_suspected`·`repo_shape`·`base_shape`·`candidate`·
-`newer_schema_seen`)은 **최상위 단일 값**이다. relpath 둘로 늘리면 **출력 스키마가 바뀌고**
+**형태 판정은 `detect_downgrade.py`가 아니라 `lib/compat.py`에 산다** — 착수 시점에는
+`shape_of`(객체는 `servers`가 dict일 때만 `SHAPE_V2_OBJECT`)와
+`downgrade_suspected`(`repo == V1_ARRAY and base == V2_OBJECT` 하드코딩), `_SHAPES` frozenset이
+있었다. `plugins.json`의 "옛 형식 = 객체인데 `version` 없음"은 **새 shape 상수**를 요구하고,
+`tests/test_compat.py`가 그 표를 잠근다.
+
+그리고 착수 시점 `detect()`의 출력(`downgrade_suspected`·`repo_shape`·`base_shape`·`candidate`·
+`newer_schema_seen`)은 **최상위 단일 값**이었다. relpath 둘로 늘리면 **출력 스키마가 바뀌고**
 그것을 소비하는 세 SKILL.md의 대화 문단이 함께 바뀐다.
 
 `find_last_v2_commit`의 형태 판정 함수를 **relpath별로 파라미터화**한다(코어 추출과 같은 방향):

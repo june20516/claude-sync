@@ -31,7 +31,8 @@ import re
 
 import pytest
 
-import plugin_config as pc   # conftest.py가 lib를 sys.path에 넣는다
+import compat               # conftest.py가 lib를 sys.path에 넣는다
+import plugin_config as pc
 
 ROOT = os.path.abspath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
@@ -503,6 +504,15 @@ def production_sources():
     return out
 
 
+# 프로덕션에서 `"files"`라는 키 이름을 쓰는 파일과, 그것이 metadata의 맵인지.
+# **이름만 더해서는 통과하지 못한다** — 아래 단정이 "metadata를 열지 않는다"를 코드에서
+# 다시 잰다. 목록이 스스로 줄어드는 것은 위 production_sources의 개수 단정이 막는다.
+FILES_KEY_OWNERS = {
+    "generate_metadata.py": "sync-metadata.json의 files 맵을 **쓰는** 쪽이다",
+    "detect_downgrade.py": "자기 출력의 relpath 맵 이름이다. metadata와 무관하다",
+}
+
+
 def test_no_production_code_reads_the_metadata_files_map():
     """`sync-metadata.json`의 `files` 맵은 **쓰기만 하고 아무도 읽지 않는다.**
 
@@ -516,11 +526,25 @@ def test_no_production_code_reads_the_metadata_files_map():
 
     여기가 빨개졌다면 `files` 맵에 소비자가 생긴 것이니, 위 두 파일의
     `sync-metadata.json` 줄("기록일 뿐 판정 입력이 아니다")을 **함께** 고친다.
+
+    **`"files"`라는 이름을 쓴다고 곧 metadata의 소비자는 아니다.** 이름만으로 걸면
+    자기 출력에 같은 이름을 쓰는 스크립트가 생길 때 이 가드를 지우고 싶어진다.
+    그래서 목록에 이름을 더하는 것만으로는 통과하지 못하게 한다 — 쓰는 쪽
+    (`generate_metadata.py`) 말고는 **metadata 파일을 아예 열지 않는다**를 함께 건다.
+    열지 않으면 그 맵의 소비자일 수 없다.
     """
-    writers = [path for path, src in production_sources() if '"files"' in src]
-    assert [os.path.basename(p) for p in writers] == ["generate_metadata.py"], writers
-    src = open(writers[0], encoding="utf-8").read()
+    mentions = [(path, src) for path, src in production_sources() if '"files"' in src]
+    names = sorted(os.path.basename(p) for p, _ in mentions)
+    assert names == sorted(FILES_KEY_OWNERS), names
+    writer = os.path.join(BACKUP_SCRIPTS, "generate_metadata.py")
+    src = open(writer, encoding="utf-8").read()
     assert 'metadata = {"files"' in src, "generate_metadata.py가 더 이상 쓰는 쪽이 아니다"
+    for path, other in mentions:
+        if os.path.basename(path) == "generate_metadata.py":
+            continue
+        # 바늘을 compat에서 뽑는다 — 리터럴을 적으면 파일 이름이 바뀌어도 초록이다.
+        assert compat.METADATA_RELPATH not in other, path
+        assert "load_metadata(" not in other, path
 
 
 def test_the_only_metadata_reader_reads_the_version_markers():

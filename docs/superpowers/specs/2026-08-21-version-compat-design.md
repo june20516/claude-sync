@@ -643,10 +643,15 @@ status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 
 옛 버전 기기가 레포를 덮어썼다는 **확정적 신호**다.
 
 ```
-레포의 mcp-servers.json이 v1 배열   AND   내 base는 v2 객체였다
+레포가 그 문서의 옛 형식   AND   내 base는 v2 객체였다
 ```
 
-- 레포가 v1인 것만으로는 부족하다 — 정말 오래된 레포일 수 있다.
+**"옛 형식"은 relpath마다 다르다** — `mcp-servers.json`은 최상위 배열(`v1_array`),
+`plugins.json`은 `version` 키가 없는 객체(`v1_object`)다. 규칙은 하나이고 이 상수만
+갈린다(`compat._OLD_SHAPE`). 두 relpath가 상수를 공유하면 한쪽의 옛 형식이 다른 쪽의
+옛 형식으로 읽힌다.
+
+- 레포가 옛 형식인 것만으로는 부족하다 — 정말 오래된 레포일 수 있다.
 - base가 v2였다는 것은 **내가 v2를 본 적이 있다**는 뜻이다. 그 뒤 v1이 되었다면 누군가 되돌린 것이다.
 - base를 못 읽으면(`None`) 판정하지 않는다. **신뢰할 수 없는 이력은 근거가 될 수 없다**(불변식 2).
 
@@ -661,40 +666,70 @@ status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 
 잡으므로 status에서도 `$SYNC_ROOT/skills/sync-backup/scripts/detect_downgrade.py`로 명시적으로
 부른다 — 복사본을 만들지 않는다. 읽기 전용이므로 status가 불러도 안전하다.
 
-`mcp-servers.json`을 건드린 커밋을 최신순으로 훑어 **`version`이 2인 마지막 커밋**을 찾는다.
+**백업 문서 둘 각각**(`mcp-servers.json`·`plugins.json`)에 대해, 그 문서를 건드린 커밋을
+최신순으로 훑어 **그 문서가 마지막으로 v2였던 커밋**을 찾는다.
 
 ```bash
-git log --format=%H -- mcp-servers.json
-git show "<sha>:mcp-servers.json"
+git log --format=%H -- <relpath>
+git show "<sha>:<relpath>"
 ```
 
-출력(JSON):
+**v2인가는 `compat.shape_of(blob, relpath)`가 판정한다 — `parse_base`가 아니다.**
+어댑터의 인식 조건이 답하는 질문은 *"이 문서를 읽을 수 있는가"* 이지 *"v2인가"* 가 아니고,
+**두 어댑터 모두 v1 문서를 그대로 인식한다**(실측 — `mcp_config`는 v1 배열을 인식 함수가
+명시적으로 받고, `plugin_config`는 인식 조건 2가 *"`version`이 없거나 `SCHEMA_VERSION` 이하"*
+이다). 그래서 `parse_base`로 v2를 판정하면 2.x가 쓴 v1 커밋이 "마지막 정상 판본"으로
+제시된다 — 탐지가 사고를 복구하는 대신 고착시킨다(plugins-sync spec 11.6).
+`parse_base`는 **항목을 셀 수 있는가**만 답한다(`None`이면 `newer_schema_seen`).
+
+출력(JSON) — 최상위는 relpath 맵이다:
 
 ```json
 {
   "status": "ok",
-  "downgrade_suspected": true,
-  "repo_shape": "v1_array",
-  "base_shape": "v2_object",
-  "newer_schema_seen": false,
-  "candidate": {
-    "sha": "a1b2c3d",
-    "date": "2026-08-20",
-    "subject": "backup: 2026-08-20",
-    "server_count": 11,
-    "server_names": ["context7", "playwright", "..."]
+  "reason": null,
+  "files": {
+    "mcp-servers.json": {
+      "status": "ok",
+      "reason": null,
+      "downgrade_suspected": true,
+      "repo_shape": "v1_array",
+      "base_shape": "v2_object",
+      "newer_schema_seen": false,
+      "candidate": {
+        "sha": "a1b2c3d",
+        "date": "2026-08-20",
+        "subject": "backup: 2026-08-20",
+        "entries": {"servers": ["context7", "playwright", "..."]}
+      }
+    },
+    "plugins.json": { "...": "같은 모양" }
   }
 }
 ```
 
+- **최상위 `status`와 파일별 `status`는 다른 것을 말한다.** 최상위는 git 자체가 없거나 레포가
+  git이 아니어서 **어느 문서의 히스토리도** 훑을 수 없는 경우, 파일별은 **그 문서의** 히스토리
+  훑기가 실패한 경우다. 한쪽으로 합치면 "탐지할 수 없었다"와 "사고가 없다"의 구별(불변식 6)이
+  파일 단위에서 무너진다.
+- **최상위가 `skipped`여도 `files` 맵은 채워서 낸다.** 비우면 그 맵을 도는 SKILL.md의 루프가
+  0회 돌아 아무것도 보고되지 않고, 그것이 다시 "사고 없음"으로 읽힌다. 형태 판정은 git 없이도
+  되므로 그 결과는 여전히 실린다.
+- **base는 문서마다 따로 읽는다.** 한 번 읽어 두 판정에 돌려 쓰면 `plugins.json`의 base 부재가
+  `mcp-servers.json`의 base로 가려져, 근거 없는 판정이 근거 있는 것처럼 나간다.
+- `candidate.entries`는 **relpath 중립**인 `{섹션: [이름…]}`이다. `mcp-servers.json`은 섹션이
+  하나(`servers`), `plugins.json`은 셋(`enabledPlugins`·`extraKnownMarketplaces`·
+  `pluginConfigs`)이다. 버킷 이름은 어댑터 모듈의 `SECTIONS`/`parse_base` 출력에서 뽑는다 —
+  스크립트에 리터럴로 적으면 문서 키가 바뀌어도 어긋난 이름이 조용히 사용자에게 나간다.
 - 후보를 못 찾으면 `"candidate": null`. 그때는 사고를 알리되 복구는 제안하지 않는다.
-- git 명령이 실패하면 `{"status": "skipped", "reason": ...}`. **탐지 실패가 백업을 막지 않는다.**
-  `skipped`도 **정상 경로와 같은 키 모양을 유지한다** — 소비하는 쪽이 `downgrade_suspected`를
-  볼 때 키가 없으면 `None`(falsy)이 되어 또 한 번 "사고 없음"처럼 읽힌다(불변식 6).
+- git 명령이 실패하면 그 자리의 `status`가 `"skipped"`가 되고 `reason`이 실린다.
+  **탐지 실패가 백업을 막지 않는다.** `skipped`도 **정상 경로와 같은 키 모양을 유지한다** —
+  소비하는 쪽이 `downgrade_suspected`를 볼 때 키가 없으면 `None`(falsy)이 되어 또 한 번
+  "사고 없음"처럼 읽힌다(불변식 6).
 - **`repo_shape`·`base_shape`를 항상 싣는다.** 탐지하지 못한 경우에도 왜 못 했는지가 드러나야
   SKILL.md가 "확인하지 못했다"와 "사고가 없다"를 구별해 보고할 수 있다.
 - **`newer_schema_seen`**: 히스토리를 훑다가 이 버전이 알아보지 못하는 문서(상위 스키마)를
-  건너뛰었는가. "후보 없음"과 "상위 버전 문서라 건너뜀"은 다른 말이다. 후보를 제시할 때는
+  건너뛰었는가. "후보 없음"과 "알아보지 못해 건너뜀"은 다른 말이다. 후보를 제시할 때는
   그것이 건너뛴 문서보다 오래된 것임을 함께 알린다.
 - 후보 탐색은 `git log --diff-filter=d`로 **삭제 커밋을 목록에서 애초에 뺀다.** 그러면 남은
   커밋에는 파일이 반드시 있으므로 `git show` 실패는 곧 레포 손상이며, 그대로 전파해

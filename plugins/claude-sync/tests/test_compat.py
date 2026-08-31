@@ -566,6 +566,20 @@ VERSION_MARKED_BUT_NOT_V2 = {
 NEWER_SCHEMA_VERSION = pc.SCHEMA_VERSION + 1
 VERSION_VALUES_STILL_V2 = (pc.SCHEMA_VERSION, NEWER_SCHEMA_VERSION, None, "2", 0)
 
+# 각 relpath에서 "그 문서의 섹션 키는 있으나 값이 **객체가 아닌**" 문서.
+# mcp-servers.json의 v2 조건은 `servers`가 객체인 것이므로 그런 문서가 있고,
+# plugins.json의 v2 조건은 `version`의 **존재**라 섹션 값과 무관하다 — 해당 없음.
+#
+# **이 문서가 mcp의 v2 조건을 재는 유일한 입력이다.** 판정표에서 이 행이 빠지면
+# 프로덕션의 `isinstance(obj.get("servers"), dict)`를 `"servers" in obj`로 약화해도
+# 아무 테스트도 빨개지지 않고, 그때 `{"servers": []}`가 v2_object가 되어
+# 다운그레이드 판정의 base 쪽이 조용히 참이 된다.
+# 바늘(섹션 이름)을 mcp_config.SECTIONS에서 뽑는다 — 리터럴을 적으면 문서 키가 바뀌어도
+# "섹션 키는 있는데 객체가 아니다"를 재지 않는 값이 되어 조용히 초록이 된다.
+SECTION_KEY_BUT_NOT_OBJECT = {
+    mc.BACKUP_RELPATH: json.dumps({mc.SECTIONS[0]: []}).encode("utf-8"),
+}
+
 
 def test_every_selector_has_the_shape_its_assertions_assume():
     """**선택자가 비면 그 위를 도는 단정이 0회 돌아 초록이 된다**(공허해지는 형태 ②).
@@ -596,9 +610,35 @@ def test_every_selector_has_the_shape_its_assertions_assume():
     # 파라미터 없이 조용히 사라진다. 스키마 버전과 그 상위 버전이 반드시 들어 있어야 한다.
     assert {pc.SCHEMA_VERSION, NEWER_SCHEMA_VERSION} <= set(VERSION_VALUES_STILL_V2)
 
+    # SECTION_KEY_BUT_NOT_OBJECT — mcp에만 있는 성질이다("섹션 키는 있으나 값이 객체가
+    # 아니다"). 비면 test_section_key_alone_is_not_v2와 그 완전성 단정이 함께 사라진다.
+    assert set(SECTION_KEY_BUT_NOT_OBJECT) == {mc.BACKUP_RELPATH}
+
     # TWO_X_KEY_VALUES — 개수는 lattice 테스트가 잠근다. 여기서는 키가 실재하는
     # 섹션 이름인지를 본다(오타면 2.x 문서가 아니라 아무 문서나 재게 된다).
     assert set(TWO_X_KEY_VALUES) < set(pc.SECTIONS)
+
+
+def test_parsable_rows_are_filtered_by_relpath():
+    """**선택자가 relpath로 가르지 않으면 그 위의 완전성 단정 셋이 함께 넓어진다.**
+
+    `parsable_rows`의 `rp == relpath` 필터를 지우면 두 relpath가 판정표 **전체**를
+    받는다. 그러면 아래 완전성 단정 넷이 "어느 relpath에든 그 문서가 있으면 통과"로
+    넓어져, **한쪽 표에서 행을 빼도 다른 쪽에 같은 문서가 남아 있으면 초록**이 된다.
+    (이 단정을 넣기 전 실측: 필터를 지워도 1047개가 전부 통과했다.)
+
+    바늘은 손으로 적지 않는다 — 이 파일이 이미 mcp 전용으로 뽑아 둔 문서를 쓴다.
+    """
+    mcp_rows = parsable_rows(mc.BACKUP_RELPATH)
+    plugins_rows = parsable_rows(pc.BACKUP_RELPATH)
+    assert mcp_rows and plugins_rows, "선택자가 비면 그 위의 단정 넷이 공허해진다"
+    # 필터를 지우면 둘이 같은 집합(합집합)이 되어 두 차집합이 함께 빈다.
+    assert mcp_rows - plugins_rows, "mcp 전용 행이 없다 — 필터가 사라졌는가"
+    assert plugins_rows - mcp_rows, "plugins 전용 행이 없다 — 필터가 사라졌는가"
+    # 위 두 줄은 필터를 **뒤집어도**(rp != relpath) 살아남는다. 이 바늘이 방향을 문다.
+    needle = canonical(VERSION_MARKED_BUT_NOT_V2[mc.BACKUP_RELPATH])
+    assert needle in mcp_rows, "mcp 전용 바늘이 mcp 쪽에 없다"
+    assert needle not in plugins_rows, "선택자가 relpath를 뒤집어 읽는다"
 
 
 @pytest.mark.parametrize("relpath,data,expected", SHAPE_TABLE)
@@ -650,6 +690,28 @@ def test_shape_table_contains_every_version_marked_non_v2_document():
     표 자신이 아니라 이 단정이 본다.
     """
     for relpath, raw in VERSION_MARKED_BUT_NOT_V2.items():
+        assert canonical(raw) in parsable_rows(relpath), (
+            "%s 판정표에 %r 행이 없다" % (relpath, raw))
+
+
+@pytest.mark.parametrize("relpath,raw", sorted(SECTION_KEY_BUT_NOT_OBJECT.items()))
+def test_section_key_alone_is_not_v2(relpath, raw):
+    """섹션 키의 **존재**만으로 v2가 되어서는 안 되는 relpath가 있다.
+
+    mcp-servers.json의 v2 조건은 `servers`가 **객체**인 것이다. 그 조건을
+    `"servers" in obj`로 약화하면 `{"servers": []}`가 v2_object가 되고, 그 문서가
+    base였을 때 다운그레이드 판정의 base 쪽이 조용히 참이 된다(불변식 6).
+    """
+    assert compat.shape_of(raw, relpath) == compat.SHAPE_UNKNOWN
+
+
+def test_shape_table_contains_every_section_key_without_object_document():
+    """입력 축 완전성 — 표에서 `mcp-servers.json + {"servers":[]}` 행을 빼면 여기서 잡힌다.
+
+    바늘을 mcp_config.SECTIONS에서 뽑았으므로 표가 스스로 줄어드는 것을 표 자신이
+    아니라 이 단정이 본다.
+    """
+    for relpath, raw in SECTION_KEY_BUT_NOT_OBJECT.items():
         assert canonical(raw) in parsable_rows(relpath), (
             "%s 판정표에 %r 행이 없다" % (relpath, raw))
 

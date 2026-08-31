@@ -170,6 +170,23 @@ def test_dump_writes_v2_envelope(tmp_path):
     assert payload["servers"] == {"a": {"command": "x"}}
 
 
+def test_sections_names_the_bucket_dump_backup_writes(tmp_path):
+    """SECTIONS는 **백업 문서의 실제 섹션 이름**이어야 한다.
+
+    이 상수 하나뿐인 원천을 두 곳이 읽는다 — detect_downgrade의 후보 요약(사용자에게
+    나가는 버킷 이름)과 test_compat의 "servers가 객체여야 v2다" 바늘이다. 상수가
+    문서의 키와 갈리면 양쪽 다 조용히 엉뚱한 것을 재게 되므로, 문서를 실제로 쓰는
+    dump_backup의 출력으로 문다(리터럴로 다시 적으면 같이 갈린다).
+    """
+    path = str(tmp_path / "mcp-servers.json")
+    mc.dump_backup({"a": {"command": "x"}}, path)
+    payload = json.loads(open(path, encoding="utf-8").read())
+    assert mc.SECTIONS, "섹션 목록이 비면 이 단정도 후보 요약도 함께 공허해진다"
+    assert set(mc.SECTIONS) <= set(payload)
+    for section in mc.SECTIONS:
+        assert isinstance(payload[section], dict)
+
+
 def test_dump_is_byte_stable_regardless_of_key_order(tmp_path):
     p1, p2 = str(tmp_path / "a.json"), str(tmp_path / "b.json")
     mc.dump_backup({"b": {"y": 1, "x": 2}, "a": {"command": "c"}}, p1)
