@@ -529,9 +529,13 @@ def test_no_production_code_reads_the_metadata_files_map():
 
     **`"files"`라는 이름을 쓴다고 곧 metadata의 소비자는 아니다.** 이름만으로 걸면
     자기 출력에 같은 이름을 쓰는 스크립트가 생길 때 이 가드를 지우고 싶어진다.
-    그래서 목록에 이름을 더하는 것만으로는 통과하지 못하게 한다 — 쓰는 쪽
-    (`generate_metadata.py`) 말고는 **metadata 파일을 아예 열지 않는다**를 함께 건다.
-    열지 않으면 그 맵의 소비자일 수 없다.
+    그래서 목록에 이름을 더하는 것만으로는 통과하지 못하게, 쓰는 쪽
+    (`generate_metadata.py`) 말고는 **소스에 표식 파일 이름의 리터럴도 `load_metadata(`
+    호출도 없다**를 함께 건다.
+
+    **이것은 텍스트 검사다.** 경로를 상수 심볼로만 조립하는 미래 소비자는 이 두 바늘을
+    피할 수 있다. 그래도 조용한 fail-open은 아니다 — 그런 파일도 `"files"`를 쓰는 한
+    위 목록에 이름을 **명시적으로** 더해야 통과하고, 그 순간 사람이 판단을 하게 된다.
     """
     mentions = [(path, src) for path, src in production_sources() if '"files"' in src]
     names = sorted(os.path.basename(p) for p, _ in mentions)

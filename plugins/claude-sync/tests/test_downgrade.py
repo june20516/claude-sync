@@ -178,6 +178,9 @@ def test_two_x_fixture_is_the_shape_2x_actually_writes():
     - 키는 pc.SECTIONS의 실재하는 섹션 이름이어야 한다(오타면 아무 문서나 재게 된다)
     - version 표식이 없어야 한다 — 있으면 v2_object가 되어 사고가 탐지되지 않는다
     """
+    # 비면 아래 셋이 전부 공허하게 참이 된다(set() < ...도, "version" not in {}도).
+    # 가드는 자기 입력이 비어 있으면 스스로 실패해야 한다.
+    assert TWO_X_SECTIONS, "픽스처가 비면 이 가드도 그 위의 회귀도 함께 공허해진다"
     assert set(TWO_X_SECTIONS) < set(pc.SECTIONS)
     assert "version" not in TWO_X_SECTIONS
     assert compat.shape_of(p_v1(), pc.BACKUP_RELPATH) == compat.SHAPE_V1_OBJECT
@@ -604,6 +607,78 @@ def test_corrupt_repo_is_skipped_not_reported_as_no_candidate(tmp_path):
     for key in ("downgrade_suspected", "repo_shape", "base_shape", "candidate",
                 "newer_schema_seen"):
         assert key in entry
+
+
+def test_skipped_entry_has_exactly_the_keys_of_the_ok_entry(tmp_path):
+    """**두 경로의 키 집합이 같아야 한다.** _skipped_file의 docstring이 그렇게 단언한다.
+
+    두 dict가 손으로 쓴 두 벌이라 단언만으로는 지켜지지 않는다(실측 — 정상 경로에만
+    키를 하나 더하는 변조가 SURVIVED였다). 키가 갈리면 소비자가 skipped 항목에서
+    .get("downgrade_suspected")를 볼 때 None(falsy)이 되어 **"사고 없음"으로 읽힌다**
+    — 그 docstring이 존재하는 이유가 정확히 그것이다(불변식 6).
+
+    바늘을 손으로 적지 않고 두 산출물에서 뽑는다. 둘이 함께 비는 경우는 키 존재를
+    직접 보는 test_corrupt_repo_is_skipped_not_reported_as_no_candidate와
+    test_global_skip_still_reports_every_file이 이미 막는다 — 층을 더 쌓지 않는다.
+    """
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v2({"a": {"command": "a"}}), "backup")
+    out = dd.detect(str(repo), base_dir=base_dir_with(tmp_path))
+    assert mcp_of(out)["status"] == "ok", "정상 경로에서 나온 항목이 아니다"
+    assert set(mcp_of(out)) == set(dd._skipped_file("사유"))
+    # 전역도 같은 성질이다 — files 맵을 포함한 최상위 키 모양이 갈리면 안 된다.
+    assert set(out) == set(dd._skipped_all("사유"))
+
+
+def test_a_judgment_error_is_not_folded_into_one_file(tmp_path, monkeypatch):
+    """판정 코드가 깨진 것(ValueError)은 파일별로 접지 않고 전역으로 올린다.
+
+    **detect_file이 파일별로 접는 것은 환경 실패다** — git이 없다, 레포가 손상됐다.
+    그것은 그 문서에만 해당하고 다른 문서의 판정은 여전히 사실이므로, 전역으로 접으면
+    멀쩡한 판정까지 "확인하지 못했다"가 된다(_git_unusable_reason의 분리).
+
+    **판정 함수가 던지는 ValueError는 다르다** — 알 수 없는 shape·relpath·섹션 수는
+    전부 프로그래밍 오류이고 오늘은 구성상 도달할 수 없다. 그것을 한 문서의 skipped로
+    접으면 코드 결함이 "그 파일만 환경 문제였다"로 묻힌다. main()의 마지막 방어선이
+    _skipped_all로 받아 **전체를** skipped로 알리고, 키 모양은 그대로라 손실은 없다.
+
+    이 테스트가 그 선택을 잠근다 — except 절에 ValueError를 더하면 여기서 빨개진다.
+    **그 except가 감싸는 것은 후보 탐색뿐이므로 ValueError도 거기서 나와야 한다** —
+    실제로 그 자리에서 나올 수 있는 것이 _adapter의 "모르는 relpath"와 _mcp_buckets의
+    섹션 수 언패킹이다. 판정 함수(downgrade_suspected)는 try 밖이라 늘 전파되고,
+    그것을 흉내 내면 except를 넓혀도 초록이다(실측 — 그렇게 짰다가 SURVIVED였다).
+    """
+    def boom(*_args, **_kwargs):
+        raise ValueError("어댑터를 모르는 relpath")
+    monkeypatch.setattr(dd, "find_last_v2_commit", boom)
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v1(["a"]), "backup")     # 후보 탐색이 실제로 돌도록 사고를 만든다
+    base_dir = base_dir_with(tmp_path, mcp=v2({"a": {"command": "a"}}))
+    with pytest.raises(ValueError):
+        dd.detect(str(repo), base_dir=base_dir)
+
+
+def test_global_skip_does_not_make_a_healthy_file_skipped(tmp_path):
+    """전역 skipped + 파일별 ok 조합. **이 조합이 산문(Task 5)의 입력이다.**
+
+    git을 못 써도 형태 판정은 사실이고, 사고가 없는 문서는 후보 탐색을 애초에 하지
+    않으므로 그 문서에서는 아무것도 실패하지 않았다. 그 자리를 skipped로 물들이면
+    산문이 "확인하지 못했다"를 사고 없는 문서에까지 붙인다.
+    """
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / mc.BACKUP_RELPATH).write_text(v2({"a": {"command": "a"}}), encoding="utf-8")
+    (plain / pc.BACKUP_RELPATH).write_text(p_v2(), encoding="utf-8")
+    out = dd.detect(str(plain),
+                    base_dir=base_dir_with(tmp_path, mcp=v2({"a": {"command": "a"}}),
+                                           plugins=p_v2()))
+    assert out["status"] == "skipped"
+    assert out["reason"]
+    for entry in out["files"].values():
+        assert entry["status"] == "ok"
+        assert entry["reason"] is None
+        assert entry["downgrade_suspected"] is False
+        assert entry["repo_shape"] == compat.SHAPE_V2_OBJECT
 
 
 def test_global_skip_still_reports_every_file(tmp_path):

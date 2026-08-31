@@ -12,6 +12,10 @@ git 히스토리를 훑어 그 문서가 마지막으로 v2였던 커밋을 후�
 
 **자동으로 복구하지 않는다** — 옛 기기가 의도적으로 지운 항목까지 되살리기 때문이다.
 탐지 실패가 백업을 막아서도 안 된다. 부가 기능이므로 status=skipped로 물러난다.
+
+**공개 단위는 셋이다** — `detect`·`detect_file`·`find_last_v2_commit`. spec 9.2가 이름으로
+부르며 각각의 계약을 서술하는 것들이다. 나머지(`_git`·`_adapter`·`_shape_of_file`·
+`_base_shape`·`_git_unusable_reason`·`_skipped_*`)는 구현 세부이므로 비공개다.
 """
 import json
 import os
@@ -231,6 +235,13 @@ def detect_file(repo_path, relpath, base_dir):
             out["candidate"], out["newer_schema_seen"] = find_last_v2_commit(
                 repo_path, relpath)
         except (RuntimeError, OSError) as e:
+            # **ValueError를 여기서 잡지 않는다(의도).** 파일별로 접는 것은 *환경 실패*
+            # 뿐이다 — 그것은 이 문서에만 해당하고 다른 문서의 판정은 여전히 사실이다.
+            # 판정 함수가 던지는 ValueError(알 수 없는 shape·relpath·섹션 수)는
+            # 프로그래밍 오류이고 오늘은 구성상 도달할 수 없다. 그것을 한 문서의
+            # skipped로 접으면 코드 결함이 "그 파일만 환경 문제였다"로 묻히므로,
+            # main()의 마지막 방어선이 받아 **전체를** skipped로 알린다(키 모양은 유지).
+            # 이 선택은 test_a_judgment_error_is_not_folded_into_one_file이 잠근다.
             return _skipped_file(str(e), suspected, repo_shape, base_shape)
     return out
 
