@@ -1,9 +1,12 @@
-# 다음 세션 인계 — plan ② 실행 중 (15 / 16)
+# 다음 세션 인계 — plan ② **완료**, spec 4차 개정 반영됨
 
-- 갱신: 2026-08-28
-- 브랜치: `feat/plugin-config` (푸시 안 됨), HEAD `13812c6`
-- 테스트: **817 passed** (착수 시 446)
-- **상태: Task 1~14 완료. 남은 것은 Task 15(문서 정정) 하나다.**
+- 갱신: **2026-08-31**
+- 브랜치: `feat/plugin-config` (푸시 안 됨), HEAD `63f87e5`
+- 테스트: **898 passed** (착수 시 446)
+- **상태: Task 1~15 전부 완료. plan ②는 끝났다.**
+  그 뒤 전체 감사 2건 + 실환경 스모크 2회가 **spec을 고쳐야 하는 다섯**을 확정했고,
+  **spec 4차 개정(0.3장)과 plan 본문 파급이 반영됐다**(`e1f4968`·`63f87e5`).
+- **다음은 코드 라운드다** — spec 4차 개정을 코드에 반영한다. 목록은 **spec 12.1**.
 - **task 수가 15 → 16이다** — 사용자 결정으로 Task 10.5(설치 집합 읽기)를 중간 삽입했다.
 
 ---
@@ -11,13 +14,14 @@
 ## 붙여넣을 프롬프트
 
 ```
-claude-sync 저장소에서 plan ②(플러그인 동기화 본체) 실행을 이어간다.
+claude-sync 저장소에서 spec 4차 개정(0.3장)을 코드에 반영하는 라운드를 시작한다.
 
 먼저 이 문서를 읽어라: docs/superpowers/2026-08-26-plan2-progress-HANDOFF.md
+그다음 spec 12.1(파일별 목록)과 0.3장(왜 바뀌었는가), 그리고
+docs/superpowers/2026-08-29-plugin-cli-smoke.md(모든 근거가 여기 있다).
 
-Task 1~14가 완료됐다. 마지막 Task 15(문서 정정 여덟 곳)부터 재개한다.
-실행 방식은 subagent-driven이다 — task마다 새 subagent, task 사이에 spec 준수 review와
-code quality review.
+plan ②는 끝났다. 이 라운드가 고칠 것은 프로덕션 코드·에뮬레이터·세 SKILL.md다.
+/sync-backup과 세 스킬을 실행하지 마라 — 이 기기의 캐시가 옛 버전이라 레포가 파괴된다.
 ```
 
 ---
@@ -33,10 +37,12 @@ code quality review.
 | 12 | ✅ | CLI 에뮬레이터 `tests/plugin_cli.py` (품질 4라운드) |
 | 13 | ✅ | 교대 시나리오 열둘 + `tests/test_plugin_cli.py` 분리 (품질 3라운드) |
 | **14** | ✅ | **세 스킬 배선 — 사용자 가치가 여기서 나왔다** (spec 2 + 품질 3라운드) |
-| **15** | ⬜ | **문서 정정 여덟 곳 — 마지막** |
+| **15** | ✅ | 문서 정정 여덟 곳 + `tests/test_user_docs.py` (새 한계 일곱을 네 문서에 잠갔다) |
+| — | ✅ | **감사 3건 + 실환경 스모크 2회** → **spec 4차 개정**(0.3장)과 plan 본문 파급 |
 
-**다음 행동:** Task 15의 implementer를 dispatch한다. 규정은
-`~/.claude/suberpowers/plan2-tasks/task-15.md`.
+**다음 행동:** spec 4차 개정을 **코드에 반영**한다. 파일별 목록은 **spec 12.1**이고,
+왜 바뀌었는지는 **spec 0.3장**, 근거 실측은 `docs/superpowers/2026-08-29-plugin-cli-smoke.md`다.
+plan 본문의 해당 task에는 `[2026-08-31 갱신]` 블록이 붙어 있다(Task 5·6·7·8·9·10.5·12·14).
 
 ---
 
@@ -120,7 +126,7 @@ dispatch 프롬프트마다 `t15-<주제>.json` 같은 규칙을 넣는다.
 
 ---
 
-## Task 15가 밟을 지뢰 (전부 실측)
+## Task 15가 밟을 지뢰 (전부 실측) — **Task 15는 끝났다. 아래는 이력이다**
 
 **① `sync-backup/SKILL.md:33·36·42`가 같은 파일의 5단계와 정면으로 어긋난다.**
 앞머리는 아직 *"두 필드만 추출"*, *"매 백업마다 통째로 새로 생성되어 덮어쓰인다"*라고 말하는데
@@ -166,7 +172,7 @@ Task 14 품질 리뷰의 I4가 그대로 재발한다.** 파일이 이미 **1,23
 
 ---
 
-## 미확인 둘 — 2026-08-29 실환경 스모크가 하나를 닫았다
+## 미확인 둘 — 스모크 1·2차가 ⑴을 닫았고 ⑵의 절반을 닫았다
 
 이 plan 전체에서 **실제 `claude plugin` CLI로는 아무것도 재지 않았다**(검증은 에뮬레이터·
 하네스·테스트뿐이었다). 그 유예를 `docs/superpowers/2026-08-29-plugin-cli-smoke.md`가
@@ -190,39 +196,88 @@ spec 9.3.1의 순서 규정에서 나오는 **설계상의 귀결**이다. 레�
 (순서를 바꾸거나 4단계를 값 보존형으로) → **plan ③.** `pluginConfigs`의 모양
 `{id: {"options": {k: v}}}`도 구현과 일치함이 함께 확인됐다.
 
-**⑵ url·git 출처의 왕복 — 여전히 미확인. 다만 절반이 좁혀졌다.** 에뮬레이터의
-`marketplace add`는 언제나 github 모양을 쓴다(6번). `marketplace_arg`는 url·git에 대해 URL
-문자열을 내는데 에뮬레이터가 그것을 **github 값의 `repo` 필드**에 담는다. 복원 직후 로컬 값이
-레포 값과 달라 `_next_base_sections`의 "로컬과 merged가 같은 키만 전진"에 걸리고 다음 백업이
-같은 차이를 다시 보고한다 — **수렴 자체가 깨진다**(코드를 따라간 귀결, 실측 없음).
-스모크가 확인한 것은 둘이다 — **실제 CLI가 인자에서 출처 종류를 판별한다**는 것(디렉토리
-경로를 주니 `directory` 출처로 썼다)과 **directory 출처 값의 모양**이 가정과 정확히 같다는 것
-(`{"source": {"source": "directory", "path": "<절대경로>"}}`). **url·git 두 출처의 값 모양은
-재지 않았다** — 그 픽스처는 네트워크를 타지 않는 로컬 마켓플레이스 하나뿐이었다. 시나리오를
-쓰려면 `plugin_cli.marketplace_add`를 **먼저 고쳐야 한다**는 인계는 그대로다.
+**⑵ url·git 출처의 왕복 — 여전히 미측정. 다만 github 갈래는 닫혔다** (2차 스모크 9장).
 
-**스모크가 닫지 못한 셋**(에뮬레이터 추정 1·8·10)은 `tests/plugin_cli.py` 모듈 docstring에
-"미확인 셋을 닫는 방법"으로 픽스처 설계까지 적어 인계했다.
+| 인자 | CLI가 기록한 값 |
+|---|---|
+| 디렉토리 절대경로 | `{"source": {"source": "directory", "path": "<절대경로>"}}` |
+| `anthropics/claude-code` | `{"source": {"source": "github", "repo": "anthropics/claude-code"}}` |
+| `https://github.com/anthropics/claude-code` | **같은 github 값으로 정규화** |
+
+**github 왕복은 닫혔다** — `marketplace_arg`가 내는 `"o/r"`와 CLI가 쓰는 `repo` 필드가 일치한다.
+**`url` 갈래는 여전히 미측정이다**: https github URL이 github으로 정규화되므로 그 갈래는
+**raw `.json` URL이나 비-github 호스트**에서만 나오고, 2차 픽스처로도 만들 수 없었다.
+실제 CLI가 **인자에서 출처를 판별한다**는 것은 확인됐으므로 **틀린 것은 프로덕션이 아니라
+에뮬레이터일 가능성이 높다**(`marketplace_add`가 여전히 언제나 github 모양을 쓴다).
+spec 8.6이 이제 그 행에 **미측정 표식**을 달고, 정본 목록은 **spec 14.5**다.
+
+**2차 스모크가 추정 1·8·10을 닫았다** — 셋 다 **에뮬레이터가 맞았다**:
+`marketplace remove`가 `pluginConfigs`까지 지우고(추정 1), `install`이 다른 스코프 항목을
+보존하며(추정 8), 소속 플러그인이 **둘 다** 사라진다(추정 10 — false-positive 규칙 자체는
+여전히 미측정). `tests/plugin_cli.py`의 모듈 docstring이 아직 1·10을 *"추정"* 이라 적으므로
+**다음 라운드가 정정한다.**
 
 ---
 
-## plan ③으로 넘길 것
+## 다음 라운드로 넘길 것 — **셋 다 spec에서 결론이 났다. 남은 것은 코드다.**
 
-`99-completion.md`의 "다음 plan으로 넘길 것"이 정본이다. 큰 것 셋:
+`99-completion.md`의 "다음 plan으로 넘길 것"이 정본이고, 파일별 목록은 **spec 12.1**이다.
 
-**① 깨진 레포 JSON의 restore 취급.** `ks.load_backup`은 구문이 깨진 파일을 예외가 아니라
-**빈 문서(`{}`)로 degrade**한다. 그 degrade의 근거는 **backup 방향으로만** 쓰여 있다.
-restore에서는 `local_stale`이 **`uninstall --scope user` 제안**으로 이어져, 파일 하나가 깨졌을
-뿐인데 계획이 "이 기기의 플러그인을 전부 지웁시다"를 최상위 `ok`와 함께 낸다(실측 재현됨).
-`plan_mcp.py`도 같은 구조다 — 선재하는 계열 문제다.
+**① 깨진 레포 JSON의 restore 취급 — spec 9.3.6이 규정했다(4차 개정 ①).**
+`ks.load_backup`은 구문이 깨진 파일을 **빈 문서(`{}`)로 degrade**하는데, 그 근거는
+**backup 방향으로만** 쓰여 있었다. restore에서는 `local_stale`이 **`uninstall --scope user`
+제안**으로 이어져, 파일 하나가 깨졌을 뿐인데 계획이 "이 기기의 플러그인을 전부 지웁시다"를
+최상위 `ok`와 함께 낸다(실측 재현됨).
+→ **사용자 결정: restore는 전체 skip(`status: "skipped"`), backup은 지금대로 유지.**
+`plan_plugins.py`와 **`plan_mcp.py` 둘 다** 고친다 — 같은 코어를 쓴다.
 
-**② `defaultEnabled: false`인 플러그인의 복원이 조용히 실패한다.** `disable_after_install`의
-현재 상태 추정 `local_masked.get(k, True)`의 기본값 `True`가 **매니페스트 가정**이다. 설치돼
-있고 로컬 키가 없으며 매니페스트가 `defaultEnabled: false`면 실제로 꺼져 있는데 레포가 `true`면
-`value_command(True, True) = None`이라 **아무 명령도 나가지 않는다.** 로컬 문서만으로는 닫을 수 없다.
+**② `defaultEnabled` 걱정은 대부분 사라졌다 — 2차 스모크가 없앴다(7장 귀결 1).**
+`install`이 설치 시 키를 **명시적으로** 쓰므로, **설치된 플러그인**에 대해서는
+`local_masked.get(k, True)`의 기본값에 도달하는 경로가 없다. 남은 것은 좁은 갈래 하나다:
+**2·4단계 어느 명령의 대상도 아니면서 로컬 `enabledPlugins`에 키가 없는 id.**
+그 갈래의 `disable` exit 1은 **상태를 파괴하지 않는 거짓 실패**이고, spec 10.2가
+*"이미 그 상태입니다"* 로 구별해 실패로 렌더링하지 않게 규정했다.
+완전히 닫으려면 설치된 플러그인의 `defaultEnabled`를 되읽어야 하는데 **그 파일이 미측정**이다
+(spec 14.5 #4).
 
-**③ 위 「미확인」 ⑴** — **(ㄱ)으로 판명됐다**(2026-08-29 스모크 4장). 조건부가 아니라
-확정된 항목이다. spec 9.3.1의 단계 순서 자체를 고쳐야 한다.
+**③ 「미확인」 ⑴ — spec 9.3.1이 규정했다(4차 개정 ②③).**
+복원 실행 순서를 **`1 → 2 → 4 → 3`**으로 바꾸고 **번호는 유지한다**(9.3.2가 번호로
+`depends_on`을 참조한다). 3단계의 *"현재 상태와 다를 때만"* 판정은 **실행 시점의 로컬 값**을
+본다. *"4단계를 값 보존형으로"* 는 **CLI에 `configure` 서브커맨드가 없어**(스모크 10장)
+존재하지 않는 선택지였다.
+
+**④ 새로 열린 것 — backup 방향의 `{}` degrade**(spec 15장 오픈이슈 6).
+그 degrade의 근거(*"다음 백업이 되돌린다"*)는 **base가 없을 때만 참이다**(실측). base가 있으면
+레포의 모든 키가 **케이스 4**로 떨어져 병합 결과가 `{}`가 되고 그것이 레포에 쓰인다 —
+`status: "ok"`인 채로, 그리고 다음 백업도 같은 판정을 반복하므로 **자기 회복이 아니라 안정된
+소실**이다. 사용자 결정이 "유지"였으므로 이 라운드는 **동작을 바꾸지 않고 근거만 좁혔다.**
+
+---
+
+## 다음 라운드가 고칠 자리 (전수 — spec 개정을 인용하는 자리를 훑었다)
+
+**세 `SKILL.md`는 spec 절 번호를 하나도 인용하지 않는다**(전수 grep 0건). 절 번호가 아니라
+**규정 문장**이 어긋나므로 아래는 문장 단위 목록이다.
+
+| 파일:행 | 지금 뭐라고 하는가 | 무엇으로 |
+|---|---|---|
+| `sync-restore/SKILL.md:255-266` | `5-3 값 맞추기` → `5-4 설정 채우기` 순서 | **실행을 `5-4 → 5-3`으로.** 절 번호는 유지 (spec 9.3.1) |
+| `sync-restore/SKILL.md:257` | *"설치 직후 값은 `true`이므로 그 외에는 부를 것이 없다"* | `install`은 매니페스트 `defaultEnabled`를 쓴다. **5-3 직전에 로컬 `settings.json`을 다시 읽어** 그 값으로 판정한다 |
+| `sync-restore/SKILL.md:229` 부근 | 최상위 `status` 분기 | 구문 깨짐이 `"skipped"`로 오는 갈래를 함께 안내 (spec 9.3.6) |
+| `sync-restore/SKILL.md:302-315` (5-6) | *"이 기기는 버전 제약을 표현할 수 없어 레포의 값을 보존합니다"* | **"그리고 이 기기에서 그 플러그인은 꺼진 상태입니다"** 를 더한다 (스모크 3장) |
+| `lib/keyed_sync.py:146-168` `load_backup` | 구문 깨짐을 `{}`로 degrade. docstring이 *"다음 백업이 정상 내용으로 되돌린다"* | restore가 구별할 수 있는 갈래를 준다. degrade의 근거를 **base가 없을 때만 참**으로 좁힌다 |
+| `skills/sync-restore/scripts/plan_plugins.py:143·390` | `pc.load_backup`의 `{}`를 그대로 받는다 | 구문 깨짐 → 최상위 `{"status": "skipped"}` |
+| `skills/sync-restore/scripts/plan_mcp.py:34·66` | 같음 | 같음 — **같은 코어를 쓰므로 같은 결함이다** |
+| `plan_plugins.py:129-145` docstring | *"3단계가 되돌려 주지도 않는다 — 그 목록은 **계획 시점의** 로컬 값으로 정해진다"* | 순서가 바뀌면 이 문장이 반대가 된다. 함께 고칠 것 |
+| `lib/plugin_config.py:961` `value_command` | *"9.3.1의 3단계"* | 판정 시점(실행 시점)을 명시 |
+| `lib/plugin_config.py:351` `read_hold_inputs` | *"두 실패는 범위가 다르다(spec 9.1.2·9.3.6)"* | **spec 3.5**를 함께 가리킨다 — 그 절이 이제 *"접는 값 × 그 값을 읽는 자리"* 표의 정본이다(지금은 이 docstring이 유일한 정본이었다) |
+| `tests/plugin_cli.py` `install` | 언제나 `True` | **매니페스트 `defaultEnabled` 규칙.** 이것이 없으면 교대 테스트가 "4단계가 3단계를 되돌린다"를 재현할 수 없다 |
+| `tests/plugin_cli.py` `marketplace_add` | 언제나 github 모양 | 인자에서 출처 판별 (url·git 시나리오의 선행 조건) |
+| `tests/plugin_cli.py` 모듈 docstring 1·10 | *"실측 없음 — 추정"* | **2차 스모크가 닫았다**(추정 1·8·10 전부 에뮬레이터가 맞았다) |
+| `tests/plugin_cli.py:340-352` docstring | *"url·git 출처도 마찬가지이므로 6번을 먼저 고칠 것"* | 그대로 유효 — github 갈래만 닫혔다 |
+
+**spec 14.1이 회귀 테스트 다섯 줄을 새로 요구한다**(4차 개정 ①②③⑤). 그 다섯이 없으면
+이 개정은 되돌릴 수 있는 상태로 남는다.
 
 ---
 
