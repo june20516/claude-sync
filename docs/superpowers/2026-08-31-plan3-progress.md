@@ -13,13 +13,13 @@
 | 2 `detect_downgrade.py` relpath 맵 | **완료** | `d543feb`·`ea4c136`·`e92f721`·`687913b` | ✅ (1라운드) | **With fixes → 해소** |
 | 3 v1→v2 승격이 사고를 삼키지 않는다 | **완료** | `a721e79` | ✅ (1라운드) | 〃 (2·3 합동) |
 | 4 `generate_metadata.py`의 `schema` 맵 | 미착수 | | | |
-| 5 세 `SKILL.md`의 다운그레이드 대화 | 미착수 | | | |
+| 5 세 `SKILL.md`의 다운그레이드 대화 | **완료** | `2e3f4a5`·`83d53ed`·`bbc8008` | ✅ (2라운드) | — |
 | 6 2.x 배포 순서 경고 + `.bak` 정리 안내 | 미착수 | | | |
 | 7 3차 스모크 반영 | 미착수 | | | |
 | 8 4단계가 로컬 확장 값을 평탄화하지 않는다 | 미착수 | | | |
 | 9 비원자적 로컬 쓰기 + `.tmp` 위생 | 미착수 | | | |
 
-현재 **1070 passed**. 리뷰 보고서는 `~/.claude/suberpowers/reviews/2026-08-31-claude-sync-task-1-*.md` 여섯 벌.
+현재 **1107 passed**. 리뷰 보고서는 `~/.claude/suberpowers/reviews/2026-08-31-claude-sync-task-1-*.md` 여섯 벌.
 
 ## Task 1이 남긴 것 — Task 2가 이어받을 자리
 
@@ -94,7 +94,7 @@ Goal에 직접 방해가 된다.
 
 ---
 
-## Task 2·3 완료 — 그리고 **세 `SKILL.md`가 지금 깨져 있다** (Task 5가 릴리즈 필수 선행)
+## Task 2·3·5 완료 — 깨졌던 세 `SKILL.md` 계약은 **닫혔다** (아래는 그 이력)
 
 Task 2가 `detect()`의 출력을 relpath 맵으로 바꾸면서 **세 `SKILL.md`의 계약을 깼다.**
 plan(task-02.md)이 산문 수정을 Task 5로 미루라고 명시적으로 금지했으므로 **의도된 순서**지만,
@@ -115,8 +115,10 @@ plan(task-02.md)이 산문 수정을 Task 5로 미루라고 명시적으로 금�
 **`version-compat` spec §9.3**(복구 UX — *"후보 커밋의 날짜·서버 수·서버 이름"*)도 같은 이유로
 낡았고, 산문 결정과 붙어 있어 Task 5에 남겼다.
 
-> **Task 5는 선택이 아니라 이 릴리즈의 필수 선행이다.** 지금 상태로 배포하면 세 스킬의 탐지 절이
-> **존재하지 않는 키를 읽는다.** Task 14(릴리즈 게이트)가 이것을 반드시 확인해야 한다.
+> **닫혔다 (Task 5, `2e3f4a5`~`bbc8008`).** 네 자리를 파일 맵 위에 다시 세웠고, **다섯째 자리**를
+> 새로 발견해 세웠다 — `sync-restore` **5-5**절에도 같은 거짓(*"다른 기기가 지웠습니다"* → `uninstall`
+> 권유)이 플러그인 쪽에 생기므로 `files["plugins.json"]`로 억제한다. `grep -rn "server_count\|server_names"
+> plugins/` → 출력 없음.
 
 **Task 5에 넘기는 추가 입력:** 「전역 skipped + 파일별 ok」 조합(git을 못 쓰는데 어느 문서도
 suspected가 아닌 경우)을 산문이 어떻게 렌더링할지 정해야 한다. Task 2·3의 quality 리뷰 m5가
