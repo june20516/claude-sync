@@ -136,3 +136,64 @@ after : enabledPlugins={"demo@smoke-mkt": true}
 **구현(프로덕션)에서 고칠 것은 이 스모크에서 나오지 않았다.** 틀린 것은 전부 **에뮬레이터와 그 위에
 쓰인 문장**이고, 프로덕션의 보수적 선택(H3를 값 보류로 두고 명령을 내지 않는 것)은 3장이 실측으로
 뒷받침한다.
+
+---
+
+# 스모크 2차 (같은 날, 픽스처 확장)
+
+마켓플레이스 하나(`m2`)에 플러그인 둘 — `alpha`(**`defaultEnabled: false`** + `userConfig`)와
+`beta`(기본값). 스코프 둘, 그리고 github 출처 하나.
+
+## 7. `install`의 실제 규칙 — "언제나 `true`"가 아니다
+
+| 매니페스트 | 기존 값 | `install` 후 |
+|---|---|---|
+| `defaultEnabled: false` | (키 없음) | **`false`** |
+| `defaultEnabled: false` | `false` | **`false` 유지** |
+| `defaultEnabled: false` | `true` | **`true` 유지** |
+| 기본값(=true) | (키 없음) | `true` |
+| 기본값(=true) | `false` | **`true`로 뒤집힘** |
+| 기본값(=true) | `["1.0.0"]` | **배열 보존** |
+| 기본값(=true) | `{"version":"1.0.0"}` | `true` |
+
+**규칙: `install`은 기존 값이 배열이면 보존하고, 그 외에는 매니페스트의 `defaultEnabled`를 쓴다.**
+1차가 "언제나 `true`"로 읽은 것은 픽스처의 `defaultEnabled`가 전부 기본값(true)이었기 때문이다.
+
+### 귀결 셋
+
+1. **`defaultEnabled: false` 걱정은 존재하지 않는다.** CLI가 설치 시 키를 **명시적으로** 쓰므로
+   `local_masked.get(k, True)`의 기본값에 도달하는 경로가 없다(설치된 플러그인에 대해).
+2. **4단계가 3단계를 되돌리는 것은 `defaultEnabled: true`인 플러그인에만 해당한다** — 다만
+   `defaultEnabled`는 선택 필드이고 기본이 true이므로 **대다수가 여기 해당한다.**
+3. **새로 드러난 것 — 3단계가 거짓 실패를 낼 수 있다.** 레포가 `false`이고 매니페스트도
+   `defaultEnabled: false`인 미설치 id는, 계획이 `local_masked.get(k, True)`로 "켜져 있다"고
+   추정해 `disable_after_install`에 싣는다. 그런데 2단계 install이 이미 `false`를 써 두므로
+   3단계 `disable`은 **exit 1(already disabled)** 로 죽는다. 최종 상태는 옳지만 사용자는
+   실패를 본다.
+
+## 8. 나머지 추정 셋 — 전부 에뮬레이터가 맞았다
+
+| 추정 | 실측 | 판정 |
+|---|---|---|
+| 1 `marketplace remove`가 `pluginConfigs`까지 지우는가 | 지운다 (`cfg={}`) | **맞음** |
+| 8 `install`이 다른 스코프 항목을 보존하는가 | 보존 — `["project", "user"]` 둘 다 남음 | **맞음** |
+| 10 `marketplace remove`의 소속 판정 | 소속 **둘 다** 사라짐(`en={}`·`inst=[]`) | **맞음**(false-positive 규칙 자체는 여전히 미측정) |
+
+## 9. 마켓플레이스 출처의 값 모양
+
+| 인자 | 기록된 값 |
+|---|---|
+| 디렉토리 절대경로 | `{"source": {"source": "directory", "path": "<절대경로>"}}` |
+| `anthropics/claude-code` | `{"source": {"source": "github", "repo": "anthropics/claude-code"}}` |
+| `https://github.com/anthropics/claude-code` | **같은 github 값으로 정규화** |
+
+**github 왕복은 닫혔다** — `marketplace_arg`가 내는 `"o/r"`와 CLI가 쓰는 `repo` 필드가 일치한다.
+**`url` 출처는 여전히 미측정**이다(https github URL이 github으로 정규화되므로, url 갈래는 raw
+`.json` URL이나 비-github 호스트에서만 나온다). 틀린 것이 **에뮬레이터뿐일 가능성이 높다** —
+실제 CLI가 인자로 출처를 판별한다는 것은 확인됐으므로 프로덕션은 정상 왕복할 수 있다.
+
+## 10. CLI에 `configure` 서브커맨드가 없다
+
+`claude plugin --help`의 명령 목록에 `enable`·`disable`만 있고 `configure`는 없다.
+`/plugin configure`는 **세션 안 슬래시 명령**이라 스킬이 부를 수 없다 —
+**"4단계를 값 보존형으로 바꾼다"는 선택지는 존재하지 않는다.**
