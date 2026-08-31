@@ -355,6 +355,71 @@ def test_the_syncignore_example_is_the_same_in_every_document():
         assert syncignore_patterns(read_doc(name)) == expected, name
 
 
+# `.syncignore`의 **뜻**을 사용자 문서가 말하는가.
+#
+# 규정의 정본은 `lib/syncignore.py` 모듈 docstring이다 — "올리지 않는다", backup 방향
+# 전용. 세 스킬의 행동이 거기서 유도된다. 사용자에게 도달하는 절반이 README 두 벌이라
+# 여기서 잰다. **바늘을 문구에만 두지 않는다** — 산문만 보는 검사는 코드가 반대로
+# 바뀌어도 초록이므로, "restore가 무시한다"는 절반은 reconcile_restore.py가
+# `.syncignore`를 부르지 않는다는 **코드 사실**에 묶는다.
+RESTORE_RECONCILE = os.path.join(
+    ROOT, "plugins", "claude-sync", "skills", "sync-restore", "scripts",
+    "reconcile_restore.py")
+SYNCIGNORE_LIB = os.path.join(
+    ROOT, "plugins", "claude-sync", "lib", "syncignore.py")
+
+SYNCIGNORE_MEANING = {
+    "README.md": (
+        '**`.syncignore` means one thing — "do not upload" — and it applies to the '
+        'backup direction only.**',
+        "**Restore ignores `.syncignore`.**",
+        "**Excluding a path does not protect the local file from being overwritten**",
+    ),
+    "README.ko.md": (
+        '**`.syncignore`의 뜻은 "올리지 않는다" 하나이고, backup 방향에만 적용됩니다.**',
+        "**복원은 `.syncignore`를 무시합니다.**",
+        "**경로를 제외해도 로컬 파일이 덮어쓰이지 않게 보호되지는 않습니다**",
+    ),
+}
+
+
+def test_restore_really_does_ignore_syncignore():
+    """문서가 말하는 "restore는 무시한다"를 **코드에서** 잰다.
+
+    reconcile_restore.py가 `.syncignore`를 보기 시작하면 여기가 빨개진다 — 그때
+    고칠 것은 이 단정이 아니라 `lib/syncignore.py`의 정본과 아래 두 README다.
+    이 저장소가 반복해서 만난 형태가 "문장이 코드와 어긋난다"이므로, 결정을 산문에만
+    두지 않는다.
+    """
+    with open(RESTORE_RECONCILE, encoding="utf-8") as f:
+        src = f.read()
+    # 산문의 언급이 아니라 **쓰는 것**을 본다 — docstring에 이름이 나왔다고 죽으면
+    # 다음 사람이 이 단정을 못 믿게 되고, 그러면 가드가 아니라 소음이 된다.
+    assert "import syncignore" not in src and "syncignore." not in src, (
+        "reconcile_restore.py가 `.syncignore`를 쓴다 — 결정이 바뀌었다면 "
+        "lib/syncignore.py의 정본과 README 두 벌을 함께 고친다")
+    # **정본이 코드와 같은 말을 하는가.** 정본이 뒤집히면 그것을 읽고 유도하는 다음
+    # 사람이 restore·status를 반대로 고친다 — 이 라운드의 출발점이 바로 그 형태였다.
+    with open(SYNCIGNORE_LIB, encoding="utf-8") as f:
+        canon = f.read()
+    assert "**restore — 무시한다(결정).**" in canon, (
+        "lib/syncignore.py의 정본이 restore의 결정을 적지 않는다 — 코드는 무시한다")
+
+
+@pytest.mark.parametrize("name", sorted(SYNCIGNORE_MEANING))
+def test_readme_states_what_syncignore_means(name):
+    """세 문장이 함께 있어야 뜻이 온전하다.
+
+    "올리지 않는다"만 적으면 사용자는 복원도 막힌다고 읽고, 제외한 경로의 로컬 파일이
+    레포 내용으로 덮어쓰일 수 있다는 것을 모른 채 `/sync-restore`를 돌린다. 개수를
+    함께 걸어 한 문장이 조용히 빠지는 것을 막는다.
+    """
+    assert len(SYNCIGNORE_MEANING[name]) == 3
+    text = read_doc(name)
+    for phrase in SYNCIGNORE_MEANING[name]:
+        assert phrase in text, "%s: %r" % (name, phrase)
+
+
 # (문서, 옛 문구, 정정 문안). CORRECTIONS와 같은 짝 형태이지만 그 표에 넣지 않는다 —
 # 그쪽 바늘은 저장소 안의 **원천 문서가 인용한 것**이어야 하고, 이 두 문구는 정정 전
 # README에만 있었을 뿐 어느 원천도 인용하지 않는다. 개수는 아래에서 함께 건다.
