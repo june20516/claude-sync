@@ -254,8 +254,11 @@ _SHAPES = frozenset({
     SHAPE_V1_ARRAY, SHAPE_V1_OBJECT, SHAPE_V2_OBJECT, SHAPE_UNKNOWN,
 })
 
-# 백업 문서의 relpath. **mcp_config·plugin_config에서 import하지 않는다** — 저수준인
-# 이 모듈이 그 둘을 향하면 순환 import가 열린다. 대신 tests/test_compat.py가 두 모듈의
+# 백업 문서의 relpath. **mcp_config·plugin_config에서 import하지 않는다** — compat은
+# 형태·버전 판정만 하는 저수준 모듈이라 도메인 어댑터 쪽을 향하는 간선을 만들지 않는다.
+# (지금 그 간선을 만들어도 **순환은 아니다** — lib/의 import 그래프는 순환 없는 DAG다.
+#  다만 반대 방향이 생기는 날 순환이 된다. 계층을 지키는 것이 그 값이다.)
+# 그 대가로 relpath 원천이 두 벌이 되므로, tests/test_compat.py가 두 모듈의
 # BACKUP_RELPATH를 import해 아래 두 표의 키 집합과 대조한다(완전성 단정).
 # **비공개다.** 공개하면 호출부가 mc.BACKUP_RELPATH 대신 이쪽을 쓰기 시작해 relpath의
 # 원천이 둘이 된다 — 그때 대조 테스트는 초록인 채로 두 벌이 갈린다.
@@ -302,8 +305,10 @@ _OLD_SHAPE = {
 }
 
 
-def _rule_for(table, relpath, what):
-    """relpath로 표를 찾는다. 모르는 relpath는 조용한 fail-open 대신 ValueError다.
+def _for_relpath(table, relpath, what):
+    """relpath로 표를 찾는다(표의 값은 판정 함수일 수도 shape 상수일 수도 있다).
+
+    모르는 relpath는 조용한 fail-open 대신 ValueError다.
 
     같은 파일의 _upgrade_message가 모르는 reason에 예외를 던지는 것과 같은 관례다.
     """
@@ -340,7 +345,7 @@ def shape_of(data, relpath):
     파싱된 객체를 넘기는 것은 "깨진 문서"가 아니라 호출자 오류이므로 TypeError로 드러낸다.
     fail-open 방향의 반환값으로 삼키면 그 실수가 "사고 없음"이라는 결론이 된다(불변식 6).
     """
-    rule = _rule_for(_SHAPE_RULES, relpath, "형태 규칙")
+    rule = _for_relpath(_SHAPE_RULES, relpath, "형태 규칙")
     if data is None:
         return SHAPE_ABSENT
     if not isinstance(data, (str, bytes, bytearray)):
@@ -368,7 +373,7 @@ def downgrade_suspected(repo_shape, base_shape, relpath):
     모르는 reason에 예외를 던지는데 여기만 조용하면 관례가 갈리고,
     조용한 쪽이 fail-open이다(불변식 6).
     """
-    old_shape = _rule_for(_OLD_SHAPE, relpath, "옛 형식")
+    old_shape = _for_relpath(_OLD_SHAPE, relpath, "옛 형식")
     for name, value in (("repo_shape", repo_shape), ("base_shape", base_shape)):
         if value not in _SHAPES:
             raise ValueError("알 수 없는 %s: %r" % (name, value))

@@ -532,6 +532,18 @@ SHAPE_TABLE = (
 )
 
 
+def parsable_rows(relpath):
+    """그 relpath의 판정표 행 중 **파싱 가능한** 문서의 정규형 집합.
+
+    아래 완전성 단정 셋이 같은 필터를 쓴다. 손으로 세 벌 적으면 조건이 갈라지고,
+    갈라진 쪽이 조용히 덜 잡는다 — 이 파일이 스스로 경계하는 드리프트다.
+    absent(data가 None)와 broken(구문 오류)은 정규형이 없으므로 뺀다.
+    """
+    return {canonical(raw) for rp, raw, exp in SHAPE_TABLE
+            if rp == relpath
+            and exp not in (compat.SHAPE_ABSENT, compat.SHAPE_BROKEN)}
+
+
 # 각 relpath의 "옛 형식" 문서 표본. 이 문서를 **다른** relpath에서 읽으면 그쪽의
 # 옛 형식이 되어서는 안 된다 — 두 relpath가 상수나 규칙을 공유하면 여기서 깨진다.
 FOREIGN_OLD_FORM_SAMPLES = {
@@ -638,10 +650,8 @@ def test_shape_table_contains_every_version_marked_non_v2_document():
     표 자신이 아니라 이 단정이 본다.
     """
     for relpath, raw in VERSION_MARKED_BUT_NOT_V2.items():
-        rows = {canonical(r) for rp, r, exp in SHAPE_TABLE
-                if rp == relpath
-                and exp not in (compat.SHAPE_ABSENT, compat.SHAPE_BROKEN)}
-        assert canonical(raw) in rows, "%s 판정표에 %r 행이 없다" % (relpath, raw)
+        assert canonical(raw) in parsable_rows(relpath), (
+            "%s 판정표에 %r 행이 없다" % (relpath, raw))
 
 
 def test_foreign_old_form_is_not_an_old_form_here():
@@ -657,9 +667,7 @@ def test_foreign_old_form_is_not_an_old_form_here():
 def test_shape_table_contains_every_foreign_old_form():
     """입력 축 완전성 — 표에서 `plugins.json + []` 행을 빼면 여기서 잡힌다."""
     for relpath in FOREIGN_OLD_FORM_SAMPLES:
-        rows = {canonical(raw) for rp, raw, exp in SHAPE_TABLE
-                if rp == relpath
-                and exp not in (compat.SHAPE_ABSENT, compat.SHAPE_BROKEN)}
+        rows = parsable_rows(relpath)
         missing = [raw for owner, samples in FOREIGN_OLD_FORM_SAMPLES.items()
                    if owner != relpath
                    for raw in samples if canonical(raw) not in rows]
@@ -689,9 +697,7 @@ def test_shape_table_contains_every_2x_document():
     바늘을 표 밖(2.x 스크립트의 동작)에서 뽑아 왔으므로, 표가 스스로 줄어드는 것을
     표 자신이 아니라 이 단정이 본다.
     """
-    rows = {canonical(raw) for relpath, raw, exp in SHAPE_TABLE
-            if relpath == pc.BACKUP_RELPATH
-            and exp not in (compat.SHAPE_ABSENT, compat.SHAPE_BROKEN)}
+    rows = parsable_rows(pc.BACKUP_RELPATH)
     missing = [d for d in TWO_X_PLUGINS_DOCUMENTS if canonical(d) not in rows]
     assert not missing, "판정표에 2.x 문서가 빠졌다: %r" % (missing,)
 
