@@ -258,7 +258,9 @@ Task 1로 보면 `compat.py`의 판정은 **중**, spec의 옛 arity 서술은 *
 
 - [ ] **Step 2.** `find_last_v2_commit(repo_path, relpath)` — **v2 판정을 `parse_base`가 아니라 `compat.shape_of(blob, relpath) == SHAPE_V2_OBJECT`로 한다.**
 
-  > **여기가 이 task에서 가장 조용히 틀리는 자리다.** mcp에서는 `mc.parse_base`가 v2 판정을 겸했다 — v1 배열은 dict가 아니라 인식이 `None`이었기 때문이다. **`plugins.json`은 다르다**: `_recognized_sections`의 조건 2가 *"version이 **없거나** SCHEMA_VERSION 이하"* 이므로 **v1 문서도 인식된다.** mcp 패턴을 그대로 옮기면 `find_last_v2_commit`이 **2.x가 쓴 v1 커밋을 "마지막 정상 판본"으로 제시**하고, 대화가 그 sha를 `git checkout`하라고 지시한다 — **탐지가 사고를 복구하는 대신 고착시킨다.**
+  > **여기가 이 task에서 가장 조용히 틀리는 자리다.** `parse_base`는 **어느 relpath에서도 v2 판정이 아니다.** 두 어댑터 모두 v1 문서를 인식한다 — plugins는 `_recognized_sections`의 조건 2가 *"version이 **없거나** SCHEMA_VERSION 이하"* 여서, mcp는 **v1 배열을 그대로 파싱해서**다(**실측**: `mc.parse_base(b'[{"name":"a","command":"a"}]')` → `{'a': {'command': 'a'}}`). `parse_base`로 v2를 판정하면 `find_last_v2_commit`이 **2.x가 쓴 v1 커밋을 "마지막 정상 판본"으로 제시**하고, 대화가 그 sha를 `git checkout`하라고 지시한다 — **탐지가 사고를 복구하는 대신 고착시킨다.**
+  >
+  > **이 문단의 초판은 근거를 틀리게 적었다** — *"mcp에서는 v1 배열이 dict가 아니라 인식이 `None`이라 `parse_base`가 v2 판정을 겸했다"*. 결론(= `shape_of`를 쓴다)은 옳았으나 그 참이 코드에서 나오지 않았고, 실제로는 함정이 **두 relpath 모두**에 있다. 이 저장소가 이름 붙여 경계하는 **(b) 결론은 맞는데 근거가 틀린** 형태이고, 이번에는 **plan이 만들었다.**
 
   `parse_base`는 계속 쓰되 역할을 나눈다: `shape_of`가 **v2인가**를, `parse_base`가 **항목을 셀 수 있는가**(`None`이면 `newer_schema_seen`)를 답한다.
 
