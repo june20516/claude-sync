@@ -1792,7 +1792,7 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 |---|---|---|
 | `README.md:74` / `README.ko.md:74` | `mcp-servers.json`·"명령에 공백이 든 서버" | **`plugins.json`도 함께** — 타 기기 플러그인·설정 키 목록이 사라진다 |
 | `backup-readme.md:45` / `.ko.md:45` | 같음 | 같음. **`:43`과 한 문단이므로 함께 고친다** |
-| `sync-backup/SKILL.md:425` | 같음 | 같음 |
+| `sync-backup/SKILL.md:486` (12. 결과 보고의 표식 안내) | 같음 | 같음 |
 | `sync-restore/SKILL.md` 2.5절 | 같음 | **닫혔다** — 다운그레이드 대화를 파일 맵 위에 다시 세우면서 손실 방식이 문서별 표가 됐다(`mcp-servers.json`은 공백이 든 서버, `plugins.json`은 타 기기의 플러그인·마켓플레이스·설정 키). 나머지 세 곳은 그대로 남았다 |
 
 **영어 README를 빠뜨리지 말 것.** `README.ko.md:98`에 해당하는 문장이 영어판에는 없으므로,

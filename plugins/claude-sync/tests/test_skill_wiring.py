@@ -599,22 +599,33 @@ def test_downgrade_prose_names_every_key_of_a_file_entry(skill, detect_output):
     assert not missing, "%s: 탐지 결과의 키를 부르지 않는다: %s" % (skill, missing)
 
 
+# 루프 **선언**의 문구. 세 절이 같은 말로 이유를 댄다("첫 항목에서 멈추면 …") — 그 이유가
+# 곧 이 줄이 선언이라는 표식이고, 판정 대상을 나열하기만 하는 다른 줄과 갈라 준다.
+LOOP_DECLARATION = "첫 항목에서 멈추면"
+
+
 @pytest.mark.parametrize("skill", SKILLS)
 def test_downgrade_prose_walks_every_backed_up_document(skill):
     """대화가 **파일 맵을 돈다.** 한 문서만 이름을 대면 다른 문서의 사고가 지나간다.
 
     **절 어딘가에 두 이름이 있기만 하면 되는 검사는 안 된다.** 실측으로, restore 2.5에서
     "항목마다 한 번씩, 둘 다 본다"는 지시를 지우고 한 문서만 보게 해도 스위트 전체가
-    통과했다 — 바로 아래 손실 방식 표가 문서마다 **따로** 한 이름씩 대고 있어서다
-    (불변식 7). 그래서 **한 줄이 판정 대상 전부를 불러야 한다**: 그 줄이 곧 "이 맵의
-    키는 이것들이고 전부 돈다"는 선언이고, 표의 행 하나는 그 선언이 될 수 없다.
+    통과했다 — 바로 아래 손실 방식 표가 문서마다 **따로** 한 이름씩 대고 있어서다(불변식 7).
+
+    **한 줄이 전부를 부르기만 해도 안 된다.** 두 번째 실측: 그렇게 고쳤더니 sync-backup
+    4.5의 순서 preamble("5단계가 plugins.json을, 6단계가 mcp-servers.json을 덮어쓰면")이
+    조건을 우연히 만족해, 정작 루프 선언을 한 문서짜리로 줄여도 통과했다. 목적이 다른
+    줄이 선언을 가려 준 것이다. 그래서 **선언 문구를 가진 줄만 후보로 삼고**, 그중 하나가
+    판정 대상 전부를 불러야 한다.
 
     목록을 탐지 스크립트에서 뽑는다 — 손으로 적으면 판정 대상이 늘어도 산문은 낡은 채다.
     """
     assert dd.RELPATHS, "판정 대상 목록이 비었다 — 추출이 죽었다"
     lines = DOWNGRADE_PROSE[skill]().splitlines()
-    assert any(all(relpath in line for relpath in dd.RELPATHS) for line in lines), (
-        "%s: 백업 문서 전부(%s)를 한 줄에서 부르는 선언이 없다"
+    declarations = [line for line in lines if LOOP_DECLARATION in line]
+    assert declarations, "%s: 루프 선언(%r)이 없다" % (skill, LOOP_DECLARATION)
+    assert any(all(relpath in line for relpath in dd.RELPATHS) for line in declarations), (
+        "%s: 루프 선언이 백업 문서 전부(%s)를 부르지 않는다"
         % (skill, ", ".join(dd.RELPATHS))
     )
 
@@ -646,6 +657,87 @@ def test_downgrade_prose_distinguishes_a_global_skip_from_an_unchecked_file(skil
     assert prose.index(GLOBAL_SKIP_PHRASE) < prose.index(PER_FILE_LOOP), (
         "%s: 전역 문단이 파일별 루프보다 뒤에 있다" % skill
     )
+
+
+# ── 탐지 절의 갈래 전수 ───────────────────────────────────────────────────
+#
+# **절에서 갈래(분기·문단) 하나를 통째로 지워도 나머지가 초록이면 그 갈래는 아무것도
+# 재지 않는다** — "목록이 자기 축소를 탐지 못 함"(6.2의 셋째)의 산문 판이다. 실측으로,
+# status 1.5의 `true` 불릿과 인용문을 통째로 지워도, restore 2.5의 경고 문단과 사용자
+# 인용문을 통째로 지워도(그러면 "이때 반드시 함께 알린다"만 남아 "이때"가 무엇인지 없는
+# 문서가 된다) 1087개가 전부 통과했다. 절 단위 존재 검사가 바로 위 `false` 갈래 줄에
+# 가려지고, 갈래 **뒤**의 불릿이 바늘을 대신 충족시켰기 때문이다(불변식 7).
+#
+# 그래서 갈래마다 (표식, 그 갈래 **안**에 반드시 있어야 할 것)을 짝지어 걸고, 슬라이스를
+# **다음 표식 직전**에서 끊는다 — 갈래 밖의 문장이 갈래를 대신 충족시키면 안 된다.
+DOWNGRADE_BRANCHES = (
+    ('최상위 `status`가 `"skipped"`면', "최상위 `reason`을 알린다",
+     "전역 사유를 삼키면 '확인하지 못했다'가 '사고가 없다'로 읽힌다(불변식 6)"),
+    ('`status`가 `"skipped"`면 **그 문서', "확인하지 못했다",
+     "파일별 판정 불가를 사고 없음으로 접지 않는다"),
+    ("`downgrade_suspected`가 `false`면", "조용히",
+     "사고 없는 문서까지 경고하면 사용자가 진짜 경고를 못 가려낸다"),
+    ("`downgrade_suspected`가 `true`면",
+     "백업 레포의 `<relpath>`가 옛 형식으로 되돌아가 있습니다",
+     "사용자에게 실제로 보일 경고. 지워지면 사고가 통째로 조용해진다"),
+    ("`newer_schema_seen`이 `true`면", "알아보지 못하는 백업",
+     "'후보 없음'과 '알아보지 못해 건너뜀'은 다른 말이다"),
+    ("`candidate`가 있으면", "`entries`",
+     "후보 요약은 relpath 중립 버킷 맵이다 — mcp 전용 키를 읽으면 안 된다"),
+)
+DOWNGRADE_BRANCH_MARKERS = [marker for marker, _, _ in DOWNGRADE_BRANCHES]
+
+
+def branch_slice(prose, marker):
+    """갈래 표식부터 **다음 갈래 표식 직전**까지. 갈래 밖의 문장은 세지 않는다."""
+    start = prose.index(marker)
+    after = start + len(marker)
+    ends = [prose.index(other, after) for other in DOWNGRADE_BRANCH_MARKERS
+            if other != marker and other in prose[after:]]
+    return prose[start:min(ends) if ends else len(prose)]
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+@pytest.mark.parametrize("marker,needle,why", DOWNGRADE_BRANCHES)
+def test_downgrade_prose_keeps_every_branch(skill, marker, needle, why):
+    """탐지 절의 갈래 하나를 통째로 지우면 여기서 죽는다.
+
+    세 절이 같은 갈래 집합을 갖는다. 한 절에서만 갈래가 사라지는 것이 이 저장소가
+    반복해 온 형태이고(같은 언어의 두 문서를 똑같이 고치는 산문 편집), 그때 그 스킬의
+    사용자만 조용히 다른 안내를 받는다.
+    """
+    prose = DOWNGRADE_PROSE[skill]()
+    assert marker in prose, "%s: 갈래가 통째로 없다 — %s (%s)" % (skill, marker, why)
+    branch = branch_slice(prose, marker)
+    assert needle in branch, (
+        "%s: 갈래 %s 안에 %r가 없다 — %s" % (skill, marker, needle, why)
+    )
+
+
+def test_the_downgrade_branch_table_did_not_shrink():
+    """표가 스스로 줄면 그 갈래가 아무 소리 없이 검사에서 빠진다.
+
+    대조할 외부 진실 원천이 없는 손으로 고른 목록이라(어느 갈래를 둘지는 산문의 결정이다)
+    개수를 함께 건다 — `SCRIPT_CONTRACT_PHRASES`와 같은 처방이다.
+    """
+    assert len(DOWNGRADE_BRANCHES) == 6, DOWNGRADE_BRANCHES
+    assert len(set(DOWNGRADE_BRANCH_MARKERS)) == len(DOWNGRADE_BRANCHES), "표식이 겹친다"
+
+
+def test_backup_says_what_to_do_when_there_is_no_candidate():
+    """후보 없는 갈래를 지우면 "복구한다"만 남아 사용자가 없는 후보를 기다린다.
+
+    `candidate`가 `null`인 것은 "히스토리에 그 문서의 v2 커밋이 없다"는 결론이고,
+    **사고 자체는 여전히 참이다.** 갈래가 사라지면 "사고는 알린다"도 함께 사라져
+    그 문서의 사고가 조용해진다(불변식 6). 복구를 제안할 수 없다는 것과 사고가 없다는
+    것은 다른 말이다.
+    """
+    sec = DOWNGRADE_PROSE["sync-backup"]()
+    marker = "`candidate`가 `null`이면"
+    assert marker in sec, "후보가 없는 갈래가 없다"
+    branch = sec[sec.index(marker):]
+    assert "사고는 알리되" in branch, "사고를 알린다는 말이 없다"
+    assert "복구는 제안하지 않는다" in branch, "복구를 제안하지 않는다는 말이 없다"
 
 
 def test_backup_recovery_command_restores_the_document_it_is_talking_about():
@@ -770,6 +862,10 @@ def test_restore_reports_downgrade_and_points_at_the_writable_path():
 # 어댑터에서 뽑는다 — 손으로 적으면 BACKUP_RELPATH가 바뀌어도 두 절이 낡은 채 초록이다.
 DOWNGRADE_REF = '`files["%s"]`의 `downgrade_suspected`'
 
+# 표기 형식과 무관하게 **읽는 문서를 뽑는다.** 위 상수를 뒤집어 쓰는 검사는 다른 표기의
+# 교차 참조를 놓치고, 놓친 것이 곧 초록이 된다.
+FILES_REF = re.compile(r'''files\[\s*['"]([^'"]+)['"]\s*\]''')
+
 LOCAL_STALE_BRANCH = {
     # 절 → (읽어야 할 문서, 억제 대상인 거짓 문구, 갈래 뒤에 오는 표의 첫 칸)
     "6-5. ": (mc.BACKUP_RELPATH, "다른 기기가 이 서버를 삭제했습니다", "| 선택 |"),
@@ -820,16 +916,26 @@ def test_local_stale_branch_reads_only_its_own_document(heading):
     백업까지 조용히 남는다. 반대 방향은 더 나쁘다: 플러그인만 사고가 났는데 MCP 억제가
     풀려 있으면 마지막 사본을 제거하라는 거짓 문구가 그대로 나간다.
 
-    바늘을 relpath 목록에서 만든다 — `not in` 가드는 바늘이 틀리면 부재가 곧 초록이다.
+    **바늘을 표기 형식에 고정하지 않는다.** `DOWNGRADE_REF`를 그대로 뒤집는 검사는
+    `files['plugins.json']`(작은따옴표)이나 `files[<다른 표기>]`를 놓친다 — 부재가 곧
+    초록인 `not in` 가드의 전형적인 구멍이다. 대신 **읽는 문서를 전부 뽑아** 집합으로
+    대조하고, `downgrade_suspected`를 부르는 **모든 줄**이 제 문서의 항목을 지목하는지
+    본다. 후자가 최상위 단일 값 참조(Task 2 이전 계약)까지 함께 막는다.
     """
     relpath = LOCAL_STALE_BRANCH[heading][0]
     sub = subsection("sync-restore", heading)
-    others = [r for r in dd.RELPATHS if r != relpath]
-    assert others, "대조할 다른 문서가 없다 — RELPATHS 추출이 죽었다"
-    for other in others:
-        assert (DOWNGRADE_REF % other) not in sub, (
-            "%s가 다른 문서(%s)의 판정으로 안내를 억제한다" % (heading, other)
-        )
+    assert relpath in dd.RELPATHS, "탐지하지 않는 문서를 읽고 있다: %r" % relpath
+    referenced = set(FILES_REF.findall(sub))
+    assert referenced, "%s가 files 맵을 전혀 읽지 않는다 — 추출이 죽었다" % heading
+    assert referenced == {relpath}, (
+        "%s가 제 문서(%s) 아닌 것을 읽는다: %s" % (heading, relpath, sorted(referenced))
+    )
+    for line in sub.splitlines():
+        if "downgrade_suspected" in line:
+            assert ('files["%s"]' % relpath) in line, (
+                "%s: 그 문서의 항목 없이 downgrade_suspected를 부르는 줄이 있다 — %r"
+                % (heading, line)
+            )
 
 
 def test_restore_mcp_removal_row_matches_the_prose():
