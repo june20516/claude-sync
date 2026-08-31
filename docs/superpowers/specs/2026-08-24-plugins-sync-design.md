@@ -1772,9 +1772,15 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 | `sync-backup/SKILL.md:42` | "매 백업마다 통째로 새로 생성되어 덮어쓰인다" | 키 단위 병합 |
 | `sync-status/SKILL.md:116·120` | MCP 호출·skipped 분기 문단 | 플러그인용 **호출줄과 skipped 분기 문단 신규** |
 | `sync-restore/SKILL.md:215` | "없는 것만 설치한다. 기존 플러그인은 제거하지 않는다" | 3상태·삭제 전파·`held` |
-| `sync-backup/SKILL.md:262-278` | 다운그레이드 3선택지 대화 — `mcp-servers.json` 문구·`git show` 명령이 리터럴 | `plugins.json`도 다루도록 (11.6) |
-| `sync-restore/SKILL.md:142·144·331-338` | 같은 대화의 restore 판 | 같음 |
-| `sync-status/SKILL.md:96` | 탐지 결과 보고 | 같음 |
+| `sync-backup/SKILL.md` 4.5절 | 다운그레이드 3선택지 대화 — `mcp-servers.json` 문구·`git show` 명령이 리터럴 | `files` 맵을 **도는 형태**로. relpath와 sha가 그 항목의 것이어야 한다 (11.6) |
+| `sync-restore/SKILL.md` 2.5절 `다운그레이드 탐지 결과` | 같은 대화의 restore 판 | 같음 |
+| `sync-status/SKILL.md` 1.5절 | 탐지 결과 보고 | 같음 |
+| `sync-restore/SKILL.md` **6-5** | `local_stale` 안내가 *"다른 기기가 이 서버를 삭제했습니다"* 라는 **거짓 문구를 억제**하는 갈래. `downgrade_suspected`를 **최상위 단일 값**으로 참조했다 | `files["mcp-servers.json"]`의 판정만 읽는다 |
+| `sync-restore/SKILL.md` **5-5** | 같은 거짓이 플러그인 쪽에도 생긴다 — *"다른 기기가 지웠습니다"* 는 `uninstall`을 권한다. **억제 갈래가 아예 없었다** | `files["plugins.json"]`의 판정으로 억제하는 갈래를 **새로 세운다** |
+
+> **두 억제는 서로 다른 문서의 판정을 읽어야 한다.** 한 값이 둘을 함께 억제하면 MCP만 사고가
+> 났을 때 멀쩡한 플러그인 안내가 사라지고, 반대 방향에서는 마지막 사본을 제거하라는 거짓
+> 문구가 그대로 나간다. **restore는 막지 않고 경고만 한다**(8.3의 규정 유지).
 
 ### 2.x 배포 순서 경고 — 네 곳이 전부 MCP 전용이다
 
@@ -1787,7 +1793,7 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 | `README.md:74` / `README.ko.md:74` | `mcp-servers.json`·"명령에 공백이 든 서버" | **`plugins.json`도 함께** — 타 기기 플러그인·설정 키 목록이 사라진다 |
 | `backup-readme.md:45` / `.ko.md:45` | 같음 | 같음. **`:43`과 한 문단이므로 함께 고친다** |
 | `sync-backup/SKILL.md:425` | 같음 | 같음 |
-| `sync-restore/SKILL.md:148` | 같음 | 같음 |
+| `sync-restore/SKILL.md` 2.5절 | 같음 | **닫혔다** — 다운그레이드 대화를 파일 맵 위에 다시 세우면서 손실 방식이 문서별 표가 됐다(`mcp-servers.json`은 공백이 든 서버, `plugins.json`은 타 기기의 플러그인·마켓플레이스·설정 키). 나머지 세 곳은 그대로 남았다 |
 
 **영어 README를 빠뜨리지 말 것.** `README.ko.md:98`에 해당하는 문장이 영어판에는 없으므로,
 한국어판 기준으로만 지시하면 **영어 README는 아무것도 고쳐지지 않는다.**

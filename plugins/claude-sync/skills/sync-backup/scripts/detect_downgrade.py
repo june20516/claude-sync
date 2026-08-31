@@ -154,8 +154,8 @@ def find_last_v2_commit(repo_path, relpath):
             "sha": sha,
             "date": date,
             "subject": subject,
-            # relpath 중립이다. 버킷 이름은 어댑터가 정한다 — 여기서 server_count 같은
-            # mcp 전용 키를 내면 plugins.json 쪽 대화가 쓸 이름이 없다.
+            # relpath 중립이다. 버킷 이름은 어댑터가 정한다 — 여기서 mcp 전용 키
+            # (서버 개수·서버 이름)를 내면 plugins.json 쪽 대화가 쓸 이름이 없다.
             "entries": buckets_of(entries),
         }, newer_seen
     return None, newer_seen

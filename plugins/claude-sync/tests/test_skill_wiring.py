@@ -27,12 +27,18 @@ import json
 import os
 import re
 import subprocess
+import sys
 
 import pytest
 
-import plugin_config as pc   # conftest.py가 lib를 sys.path에 넣는다
+import mcp_config as mc   # conftest.py가 lib를 sys.path에 넣는다
+import plugin_config as pc
 import syncignore   # 4단계 bash와 대조할 매칭 규칙 한 벌
 from skill_paths import SKILLS, SKILLS_DIR   # 목록은 한 벌이다 — 그 파일의 docstring 참조
+
+# 다운그레이드 대화가 읽는 키는 **탐지 스크립트의 실제 출력**에서 뽑는다(아래 detect_keys).
+sys.path.insert(0, os.path.join(SKILLS_DIR, "sync-backup", "scripts"))
+import detect_downgrade as dd   # noqa: E402
 
 # restore의 검사 절은 두 방향(상위 버전 / 다운그레이드)을 다 다루므로 제목이 다르다.
 RESTORE_CHECK_SECTION = "2.5 호환성·다운그레이드 검사"
@@ -443,11 +449,14 @@ def test_downgrade_detection_is_actually_called(skill):
 #  - backup : 수집이 레포 파일을 v2로 덮어쓰면 "레포가 옛 형식"이라는 증거가 사라진다.
 #             **가장 앞선 수집 단계**를 앵커로 쓴다 — plan ③이 탐지를 plugins.json으로
 #             넓히면 그 순서가 곧 정확도가 된다.
-#  - restore: 6-5의 local_stale 안내 문구가 이 판정에 기대므로 그 앞이어야 한다
+#  - restore: 5-5(플러그인)와 6-5(MCP)의 local_stale 안내 문구가 이 판정에 기대므로
+#             그 앞이어야 한다. **가장 앞선 소비자**인 플러그인 계획을 앵커로 쓴다 —
+#             MCP 계획만 걸면 탐지가 5단계 뒤로 밀려도 통과하고, 그때 5-5는 억제할
+#             근거 없이 "다른 기기가 지웠습니다"를 낸다.
 # status는 읽기 전용이라 순서가 결과를 바꾸지 않으므로 표에 없다.
 DOWNGRADE_BEFORE = {
     "sync-backup": COLLECT_PLUGINS_CALL,
-    "sync-restore": 'python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json"',
+    "sync-restore": 'python3 "$SYNC_SCRIPTS/plan_plugins.py" plan "$SYNC_REPO/plugins.json"',
 }
 
 
@@ -463,6 +472,190 @@ def test_downgrade_detection_precedes_what_it_informs(skill):
     assert call < index_of(text, DOWNGRADE_BEFORE[skill], skill), (
         "%s: 다운그레이드 탐지가 %r보다 뒤에 있다" % (skill, DOWNGRADE_BEFORE[skill])
     )
+
+
+# 탐지 **결과를 렌더링하는** 절. 호출 절과 같지 않다 — status와 restore는 compat.py의
+# 산문(`blocked`·`message`와 그 reason 값들)과 한 절을 쓰므로, 그 안의 하위 절만 잘라야
+# 아래 어휘 대조가 남의 키를 이 스크립트의 것으로 세지 않는다.
+DOWNGRADE_RESULT_SUBSECTION = "다운그레이드 탐지 결과"
+DOWNGRADE_PROSE = {
+    "sync-backup": lambda: section("sync-backup", DOWNGRADE_SECTION["sync-backup"]),
+    "sync-status": lambda: subsection("sync-status", DOWNGRADE_RESULT_SUBSECTION),
+    "sync-restore": lambda: subsection("sync-restore", DOWNGRADE_RESULT_SUBSECTION),
+}
+
+# 백틱 안의 **맨 소문자 식별자**만 키 이름으로 본다. `files[<relpath>]`·`"skipped"`·
+# `mcp-servers.json`처럼 괄호·따옴표·점·대문자가 든 것은 키 이름이 아니라 자연히 빠진다.
+BARE_IDENT = re.compile(r"^[a-z][a-z0-9_]*$")
+JSON_LITERALS = frozenset({"true", "false", "null"})   # 스키마가 아니라 JSON 문법이다
+
+
+def prose_key_tokens(skill):
+    """그 절이 부르는 키 이름. **손으로 적지 않고 산문에서 뽑는다.**"""
+    return {tok for tok in re.findall(r"`([^`\n]+)`", DOWNGRADE_PROSE[skill]())
+            if BARE_IDENT.match(tok)} - JSON_LITERALS
+
+
+# 전역·시스템 git 설정을 끊는다(test_downgrade.py와 같은 이유 — 심긴 훅에 걸리면
+# 다른 기기·CI에서 원인 추적이 매우 어렵다).
+GIT_ENV = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+
+
+@pytest.fixture(scope="module")
+def detect_output(tmp_path_factory):
+    """`detect`를 **실제로 돌려** 나온 출력. 아래 어휘 대조의 유일한 진실 원천이다.
+
+    손으로 적은 키 목록을 쓰면 스키마가 또 바뀌어도 초록이다 — 실측으로, Task 2가
+    출력을 relpath 맵으로 바꿨을 때 세 SKILL.md는 사라진 키(mcp 전용 서버 개수·서버
+    이름과 최상위 판정 필드들)를 계속 읽었고 1070개가 전부 통과했다.
+
+    두 문서 모두에 **사고와 후보가 잡히는** 히스토리를 만든다. 후보가 없으면
+    `candidate`가 None이라 그 아래 키(`entries`…)를 뽑을 수 없고, 어휘가 조용히
+    좁아져 대조가 공허해진다. 아래 detect_keys가 그것을 자기 몸통에서 실패로 만든다.
+    """
+    tmp = tmp_path_factory.mktemp("downgrade-keys")
+    repo, base = tmp / "repo", tmp / "base"
+    repo.mkdir()
+    base.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(repo)] + list(args),
+                       check=True, capture_output=True, env=GIT_ENV)
+
+    mcp_v2 = json.dumps({"version": mc.SCHEMA_VERSION, "scope": "user",
+                         "servers": {"a": {"command": "a"}}})
+    mcp_v1 = json.dumps([{"name": "a", "command": "a"}])
+    plugins_v2 = json.dumps({"version": pc.SCHEMA_VERSION, "scope": "user",
+                             "enabledPlugins": {"a@m": True}})
+    plugins_v1 = json.dumps({"enabledPlugins": {"a@m": True}})
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    for payloads, message in (((mcp_v2, plugins_v2), "backup: v2"),
+                              ((mcp_v1, plugins_v1), "backup: 2.x가 되돌림")):
+        for relpath, payload in zip((mc.BACKUP_RELPATH, pc.BACKUP_RELPATH), payloads):
+            (repo / relpath).write_text(payload, encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", message)
+    # base는 v2였다 — 그래야 판정이 사고로 선다(9.1의 두 조건).
+    (base / mc.BACKUP_RELPATH).write_text(mcp_v2, encoding="utf-8")
+    (base / pc.BACKUP_RELPATH).write_text(plugins_v2, encoding="utf-8")
+    return dd.detect(str(repo), base_dir=str(base))
+
+
+@pytest.fixture(scope="module")
+def detect_keys(detect_output):
+    """출력이 실제로 내는 키 전부(최상위·파일별·후보·후보 요약의 버킷 이름).
+
+    **비면 스스로 실패한다.** 픽스처가 사고를 만들지 못하면 후보가 None이고, 그러면
+    아래 대조가 "산문이 읽는 키가 하나도 없어도 통과"로 공허해진다(6.2의 두 번째 형태).
+    """
+    keys = set(detect_output)
+    for entry in detect_output["files"].values():
+        keys |= set(entry)
+        candidate = entry["candidate"]
+        assert candidate, "후보가 잡히지 않았다 — 픽스처가 사고를 만들지 못했다"
+        keys |= set(candidate)
+        keys |= set(candidate["entries"])
+    assert keys, "detect 출력에서 키를 하나도 뽑지 못했다"
+    return keys
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_downgrade_prose_reads_only_keys_detect_emits(skill, detect_keys):
+    """대화가 부르는 키가 `detect`의 **실제 출력**에 다 있는가.
+
+    실측으로, Task 2가 출력을 relpath 맵으로 바꿨을 때 세 SKILL.md는 사라진 키를
+    계속 읽었고 스위트 전체가 통과했다 — 그 키를 산문에 묶는 단정이 하나도 없었다.
+    배포했다면 세 스킬의 탐지 절이 존재하지 않는 키를 읽는다.
+
+    바늘을 손으로 적지 않는다. 적으면 스키마가 또 바뀔 때 이 단정이 낡은 채로 초록이다.
+    """
+    tokens = prose_key_tokens(skill)
+    assert tokens, "%s: 산문에서 키를 하나도 뽑지 못했다 — 추출이 죽었다" % skill
+    unknown = sorted(tokens - detect_keys)
+    assert not unknown, "%s: detect가 내지 않는 키를 읽는다: %s" % (skill, unknown)
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_downgrade_prose_names_every_key_of_a_file_entry(skill, detect_output):
+    """⊆ 방향만 걸면 산문이 키를 하나씩 잃어도 초록이다 — 완전성을 짝짓는다(6.2의 셋째).
+
+    파일별 항목의 키를 빼먹으면 그 사실이 사용자에게 닿을 자리가 없어진다.
+    `repo_shape`·`base_shape`가 빠지면 "왜 판정하지 못했는가"가, `newer_schema_seen`이
+    빠지면 "후보가 그보다 오래됐다"가 어디에도 안 나온다(불변식 6).
+    """
+    entry = next(iter(detect_output["files"].values()))
+    # 이름을 핀한다 — 바뀌면 여기서 죽어 산문과 함께 고치게 된다("가드가 따라간다"가 아니다).
+    assert "files" in detect_output and "entries" in entry["candidate"]
+    required = set(entry) | {"files", "entries"}
+    missing = sorted(required - prose_key_tokens(skill))
+    assert not missing, "%s: 탐지 결과의 키를 부르지 않는다: %s" % (skill, missing)
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_downgrade_prose_walks_every_backed_up_document(skill):
+    """대화가 **파일 맵을 돈다.** 한 문서만 이름을 대면 다른 문서의 사고가 지나간다.
+
+    **절 어딘가에 두 이름이 있기만 하면 되는 검사는 안 된다.** 실측으로, restore 2.5에서
+    "항목마다 한 번씩, 둘 다 본다"는 지시를 지우고 한 문서만 보게 해도 스위트 전체가
+    통과했다 — 바로 아래 손실 방식 표가 문서마다 **따로** 한 이름씩 대고 있어서다
+    (불변식 7). 그래서 **한 줄이 판정 대상 전부를 불러야 한다**: 그 줄이 곧 "이 맵의
+    키는 이것들이고 전부 돈다"는 선언이고, 표의 행 하나는 그 선언이 될 수 없다.
+
+    목록을 탐지 스크립트에서 뽑는다 — 손으로 적으면 판정 대상이 늘어도 산문은 낡은 채다.
+    """
+    assert dd.RELPATHS, "판정 대상 목록이 비었다 — 추출이 죽었다"
+    lines = DOWNGRADE_PROSE[skill]().splitlines()
+    assert any(all(relpath in line for relpath in dd.RELPATHS) for line in lines), (
+        "%s: 백업 문서 전부(%s)를 한 줄에서 부르는 선언이 없다"
+        % (skill, ", ".join(dd.RELPATHS))
+    )
+
+
+# 「전역 skipped + 파일별 ok」의 렌더링 규칙. 전역 status는 **git 히스토리를 훑지
+# 못했다**만 뜻하고, 형태 비교는 git 없이 완결되므로 파일별 판정은 여전히 사실이다.
+# 그 조합은 실제로 나온다(test_downgrade.py::test_global_skip_does_not_make_a_healthy_file_skipped).
+GLOBAL_SKIP_PHRASE = "파일별 판정은 여전히 사실"
+PER_FILE_LOOP = "`files`의 항목마다 — 그 항목의 키를 `<relpath>`라 하자"
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_downgrade_prose_distinguishes_a_global_skip_from_an_unchecked_file(skill):
+    """전역 skipped를 곧바로 "확인하지 못했다"로 옮겨 적으면 **거짓이다.**
+
+    못 한 것은 후보 커밋 탐색이고, 어느 문서가 사고 상태인지는 형태만으로 판정된다.
+    뭉개면 사고가 없는 문서까지 판정 불가로 보고돼 사용자는 무엇을 봐야 할지 모른 채
+    "확인이 안 됐다"만 듣는다. 반대로 전역 사유를 아예 삼키면 "확인하지 못했다"가
+    "사고가 없다"로 읽힌다(불변식 6) — 그래서 **알리되 층을 가른다.**
+
+    순서까지 건다. 전역 문단이 루프 뒤에 있으면 소비자가 루프를 먼저 돌다 전역 사유를
+    놓친다.
+    """
+    prose = DOWNGRADE_PROSE[skill]()
+    assert GLOBAL_SKIP_PHRASE in prose, (
+        "%s: 전역 skipped여도 파일별 판정이 사실이라고 말하지 않는다" % skill
+    )
+    assert PER_FILE_LOOP in prose, "%s: 파일별 루프를 말하지 않는다" % skill
+    assert prose.index(GLOBAL_SKIP_PHRASE) < prose.index(PER_FILE_LOOP), (
+        "%s: 전역 문단이 파일별 루프보다 뒤에 있다" % skill
+    )
+
+
+def test_backup_recovery_command_restores_the_document_it_is_talking_about():
+    """복구 명령의 relpath가 **지금 보고 있는 항목의 키**여야 한다.
+
+    한 문서 이름이 리터럴로 박혀 있으면 `plugins.json` 사고에서 사용자가 "복구한다"를
+    골랐을 때 엉뚱한 파일을 덮어쓴다 — 사고를 고치는 대신 두 번째 사고를 낸다.
+    금지할 리터럴을 **탐지 대상 목록에서 만들어** 쓴다(`not in` 가드의 바늘을 뽑는다).
+    """
+    sec = DOWNGRADE_PROSE["sync-backup"]()
+    assert 'show "<sha>:<relpath>"' in sec, "복구 명령이 항목의 relpath를 쓰지 않는다"
+    assert dd.RELPATHS, "판정 대상 목록이 비었다 — 바늘을 만들지 못했다"
+    for relpath in dd.RELPATHS:
+        needle = 'show "<sha>:%s"' % relpath
+        assert needle not in sec, "복구 명령에 문서 이름이 박혀 있다: %r" % needle
 
 
 @pytest.mark.parametrize("skill", ["sync-status", "sync-restore"])
@@ -484,8 +677,9 @@ def test_every_skill_on_disk_is_covered_by_the_contract():
     안 적으면 위 검사들이 그 스킬을 아예 보지 않는다 — 통과하지만 아무것도 안 지킨다.
     새 스킬을 더할 때는 계약을 어떻게 할지 정하고 두 곳에 적어라.
 
-    표 셋(`SKILLS`·`COMPAT_WIRING`·`PLUGIN_STEP`)을 함께 걸므로 어느 위치에 두어도
-    한쪽은 앞서 참조하게 된다. `PLUGIN_STEP`은 플러그인 단계 가드들과 함께 아래에 있다.
+    표 넷(`SKILLS`·`COMPAT_WIRING`·`PLUGIN_STEP`·`DOWNGRADE_PROSE`)을 함께 걸므로 어느
+    위치에 두어도 한쪽은 앞서 참조하게 된다. `PLUGIN_STEP`은 플러그인 단계 가드들과 함께
+    아래에 있다.
     """
     on_disk = {
         d for d in os.listdir(SKILLS_DIR)
@@ -501,6 +695,11 @@ def test_every_skill_on_disk_is_covered_by_the_contract():
     # 섹션 단위 status 검사를 아무 소리 없이 빠져나간다(실측 — 빼도 스위트 전체가 통과했다).
     assert set(PLUGIN_STEP) == set(SKILLS), "PLUGIN_STEP이 SKILLS와 다르다: %s" % sorted(
         set(PLUGIN_STEP).symmetric_difference(SKILLS)
+    )
+    # 탐지 결과를 렌더링하는 절의 표도 같다. 스킬 하나를 빼면 그 스킬의 대화가 옛 키를
+    # 읽어도 아무 단정이 보지 않는다 — 이 릴리즈에서 실제로 벌어진 형태다.
+    assert set(DOWNGRADE_PROSE) == set(SKILLS), "DOWNGRADE_PROSE가 SKILLS와 다르다: %s" % sorted(
+        set(DOWNGRADE_PROSE).symmetric_difference(SKILLS)
     )
 
 
@@ -561,26 +760,42 @@ def test_restore_reports_downgrade_and_points_at_the_writable_path():
     assert "reason" in sub
 
 
-def test_restore_local_stale_does_not_claim_deletion_when_downgraded():
-    """다운그레이드 의심 시 "다른 기기가 삭제했습니다"는 거짓이고, 제거로 이끈다.
+# local_stale 안내를 다운그레이드가 억제하는 자리는 **문서마다 하나씩**이다.
+# 6-5는 MCP 서버를, 5-5는 플러그인 항목을 다룬다. 참조 형태만 상수로 두고 relpath는
+# 어댑터에서 뽑는다 — 손으로 적으면 BACKUP_RELPATH가 바뀌어도 두 절이 낡은 채 초록이다.
+DOWNGRADE_REF = '`files["%s"]`의 `downgrade_suspected`'
+
+LOCAL_STALE_BRANCH = {
+    # 절 → (읽어야 할 문서, 억제 대상인 거짓 문구, 갈래 뒤에 오는 표의 첫 칸)
+    "6-5. ": (mc.BACKUP_RELPATH, "다른 기기가 이 서버를 삭제했습니다", "| 선택 |"),
+    "5-5. ": (pc.BACKUP_RELPATH, "다른 기기가 지웠습니다", "| 버킷 "),
+}
+
+
+@pytest.mark.parametrize("heading", sorted(LOCAL_STALE_BRANCH))
+def test_restore_local_stale_does_not_claim_deletion_when_downgraded(heading):
+    """다운그레이드 의심 시 "다른 기기가 지웠습니다"는 거짓이고, 제거로 이끈다.
 
     아무도 지우지 않았다. 낮은 버전 기기가 레포를 되돌리며 흘린 것이고, 그렇다면
     **로컬에 남은 값이 마지막 사본**이다. 여기서 제거를 권하면 이 릴리즈가 막으려는
     사고가 완성된다 — restore가 그 마지막 피해를 내는 자리다.
 
-    기본 문구가 `downgrade_suspected` 분기 **뒤에** 와야 한다. 순서를 걸지 않으면
-    분기를 지워도 문장이 남아 통과한다(불변식 7).
+    기본 문구가 그 문서의 `downgrade_suspected` 분기 **뒤에** 와야 한다. 순서를 걸지
+    않으면 분기를 지워도 문장이 남아 통과한다(불변식 7).
     """
-    sub = subsection("sync-restore", "6-5. ")
-    assert "downgrade_suspected" in sub, "6-5가 탐지 결과로 분기하지 않는다"
-    guard = sub.index("`downgrade_suspected`가 거짓일 때")
-    assert guard < sub.index("다른 기기가 이 서버를 삭제했습니다"), (
+    relpath, false_claim, table_head = LOCAL_STALE_BRANCH[heading]
+    assert relpath in dd.RELPATHS, "탐지하지 않는 문서를 읽고 있다: %r" % relpath
+    ref = DOWNGRADE_REF % relpath
+    sub = subsection("sync-restore", heading)
+    assert ref in sub, "%s가 %s로 분기하지 않는다" % (heading, ref)
+    guard = sub.index("**%s가 거짓일 때**" % ref)
+    assert guard < sub.index(false_claim), (
         "기본 문구가 분기보다 앞에 있다 — 분기를 지워도 통과한다"
     )
     # 절 전체에 대한 존재 검사는 안 된다 — 같은 표현이 표에도, 작성자용 설명문에도 있어
     # 정작 사용자에게 보일 문장이 지워져도 가려 준다. 실측으로 그렇게 세 갈래를
     # 놓쳤다(불변식 7). 갈래를 자르고, 그 안에서 다시 인용문만 자른다.
-    true_branch = sub[sub.index("**`downgrade_suspected`가 참일 때**"):sub.index("| 선택 |")]
+    true_branch = sub[sub.index("**%s가 참일 때**" % ref):sub.index(table_head)]
 
     # 사용자에게 실제로 보일 문구. 설명문이 아니라 이것이 행동을 바꾼다.
     quote = "\n".join(ln for ln in true_branch.splitlines() if ln.startswith("> "))
@@ -590,7 +805,31 @@ def test_restore_local_stale_does_not_claim_deletion_when_downgraded():
 
     assert "권하지 않는다" in true_branch, "제거를 권하지 않는다고 말해야 한다"
 
-    # 표의 '제거' 행도 같은 말을 해야 한다. 산문과 표가 갈리면 표가 이긴다.
+
+@pytest.mark.parametrize("heading", sorted(LOCAL_STALE_BRANCH))
+def test_local_stale_branch_reads_only_its_own_document(heading):
+    """**한 값이 두 안내를 함께 억제하면 안 된다.**
+
+    MCP만 사고가 났을 때 플러그인 쪽 `local_stale`은 참인 안내다 — 그것까지 억제하면
+    "다른 기기가 지웠습니다"를 들어야 할 사용자가 아무 말도 못 듣고, 그 항목은 다음
+    백업까지 조용히 남는다. 반대 방향은 더 나쁘다: 플러그인만 사고가 났는데 MCP 억제가
+    풀려 있으면 마지막 사본을 제거하라는 거짓 문구가 그대로 나간다.
+
+    바늘을 relpath 목록에서 만든다 — `not in` 가드는 바늘이 틀리면 부재가 곧 초록이다.
+    """
+    relpath = LOCAL_STALE_BRANCH[heading][0]
+    sub = subsection("sync-restore", heading)
+    others = [r for r in dd.RELPATHS if r != relpath]
+    assert others, "대조할 다른 문서가 없다 — RELPATHS 추출이 죽었다"
+    for other in others:
+        assert (DOWNGRADE_REF % other) not in sub, (
+            "%s가 다른 문서(%s)의 판정으로 안내를 억제한다" % (heading, other)
+        )
+
+
+def test_restore_mcp_removal_row_matches_the_prose():
+    """표의 '제거' 행도 산문과 같은 말을 해야 한다. 산문과 표가 갈리면 표가 이긴다."""
+    sub = subsection("sync-restore", "6-5. ")
     table = sub[sub.index("| 선택 |"):]
     remove_row = next(ln for ln in table.splitlines() if ln.startswith("| **제거**"))
     assert "권하지 않는다" in remove_row, remove_row
