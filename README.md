@@ -73,10 +73,10 @@ v3.0.0 changes the `mcp-servers.json` and `plugins.json` schemas and **is not ba
 
 > **While any machine is still on v2.x, do not run `/sync-backup` on it — this holds even if you use no MCP servers at all.** The v2 backup step rebuilds *both* backed-up documents from that machine alone, without reading the repo copy, so a single run undoes the repo copy of each:
 >
-> - `mcp-servers.json` — rewritten back to the old array format, and servers whose command contains spaces are dropped entirely.
-> - `plugins.json` — rebuilt from that machine's `settings.json`, of which v2 copies only `enabledPlugins` and `extraKnownMarketplaces`. Plugins and marketplaces that exist **only on another machine** are erased from the repo, and `pluginConfigs` and `additionalMarketplaces` are erased **including that machine's own**, because v2 does not know those keys at all.
+> - `mcp-servers.json` — rebuilt in the old array format from that machine's `claude mcp list` output alone, so servers that exist **only on another machine** are erased from the repo, and servers whose command contains spaces are erased **including that machine's own**.
+> - `plugins.json` — rebuilt from that machine's `settings.json`, of which v2 copies only `enabledPlugins` and `extraKnownMarketplaces`. Entries that exist **only on another machine** are erased from the repo, and `pluginConfigs` and `additionalMarketplaces` are erased **including that machine's own**, because v2 does not know those keys at all.
 >
-> A v2 `/sync-status` will also abort with a `TypeError`. And nothing on the v2.x machine stops it: v3.0.0 writes a `min_reader_version` marker that a v3 machine reads and halts on, but **v2.x has no such guard and never reads the marker** — upgrade order is the only thing that prevents this.
+> A v2 `/sync-status` will also abort with a `TypeError`. And nothing stops the v2.x machine itself: the `min_reader_version` marker v3.0.0 writes only blocks a reader **older than** the version it names, and **v2.x has no code that reads the marker** — that guard first shipped in v3.0.0. Upgrade order is the only thing that prevents this.
 
 Upgrade every machine first, then back up:
 
@@ -95,8 +95,8 @@ claude-sync uses a **content-hash, git-like 3-way reconcile** — modification t
 - **New files are always added.** Files that exist only in the repo (new agents, skills) are always applied to the local machine, independent of any conflicts in other files. Plugins and MCP entries follow the same intent but are not unconditional: a plugin whose marketplace fails to register is reported as blocked, an entry this machine cannot reproduce is reported as unrestorable, and an MCP server whose secret you skip is not registered.
 - **Conflicts arise only when both sides diverged from the last shared base.** In that case the tool attempts a `git merge-file` 3-way merge. If the changes do not overlap, the result is committed automatically (`auto_merge`). If the same lines were changed on both sides, the file is listed as a `conflict` and the local copy is left untouched. You then choose one of: keep local / adopt backup / merge manually / defer.
 - **`pull_only` machines never back up.** Machines designated as read-only consumers will never push their state to the repo.
-- **MCP servers merge per server name.** `mcp-servers.json` is reconciled key by key, so a backup from one machine never drops servers that only exist on another. Deletions do propagate, and `/sync-restore` asks per server before removing anything locally.
-- **`plugins.json` merges key by key.** Plugin entries, marketplaces, and plugin config keys are reconciled individually, so a backup from one machine never drops entries that only exist on another. Deletions propagate, and `/sync-restore` asks before removing anything locally.
+- **MCP servers merge per server name.** `mcp-servers.json` is reconciled key by key, so a backup from one machine never drops servers that only exist on another — **as long as every machine is on v3.0.0 or later** (a v2.x backup erases them; see *Upgrading to v3.0.0* above). Deletions do propagate, and `/sync-restore` asks per server before removing anything locally.
+- **`plugins.json` merges key by key.** Plugin entries, marketplaces, and plugin config keys are reconciled individually, so a backup from one machine never drops entries that only exist on another — **as long as every machine is on v3.0.0 or later** (a v2.x backup erases them; see *Upgrading to v3.0.0* above). Deletions propagate, and `/sync-restore` asks before removing anything locally.
 
 Not synced:
 

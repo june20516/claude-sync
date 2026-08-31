@@ -40,22 +40,24 @@ Then in Claude Code:
 
 > **Do not run `/sync-backup` on a machine still running claude-sync v2.x** — this holds even if that machine uses no MCP servers at all. v2 rebuilds *both* backed-up documents from that machine alone, without reading what is in this repository, so a single run undoes the repo copy of each:
 >
-> - `mcp-servers.json` — rewritten in the old array format, and servers whose command contains spaces are dropped entirely.
-> - `plugins.json` — rebuilt from that machine's `settings.json`, of which v2 copies only `enabledPlugins` and `extraKnownMarketplaces`. Plugins and marketplaces that exist **only on another machine** are erased, and `pluginConfigs` and `additionalMarketplaces` are erased **including that machine's own**, because v2 does not know those keys at all.
+> - `mcp-servers.json` — rebuilt in the old array format from that machine's `claude mcp list` output alone, so servers that exist **only on another machine** are erased from the repo, and servers whose command contains spaces are erased **including that machine's own**.
+> - `plugins.json` — rebuilt from that machine's `settings.json`, of which v2 copies only `enabledPlugins` and `extraKnownMarketplaces`. Entries that exist **only on another machine** are erased from the repo, and `pluginConfigs` and `additionalMarketplaces` are erased **including that machine's own**, because v2 does not know those keys at all.
 >
-> A v3 machine reads the `min_reader_version` marker in `sync-metadata.json` and stops itself. **A v2.x machine has no such guard and never reads the marker**, so upgrade order is the only thing that prevents this. Recovering afterwards means restoring the file from this repository's git history.
+> The `min_reader_version` marker in `sync-metadata.json` is there to block a machine too old to understand this backup. **A v2.x machine is exactly that machine — and it has no code that reads the marker**, because the guard first shipped in v3.0.0. Upgrade order is therefore the only thing that prevents this. Recovering afterwards means restoring those files from this repository's git history.
 
 ### About `mcp-servers.json`
 
 Values under `headers` and `env` are stored as `<REDACTED>`; the key names are kept so a restore knows what to ask for. **Secrets passed through `args` or a URL query string are not masked** — keep this repository private. When you restore, `/sync-restore` prompts for each masked value; skipping a prompt leaves that server unregistered rather than creating one with broken auth.
 
-This file is merged **per server name**, so backing up from one machine will not drop servers that only exist on another.
+This file is merged **per server name**, so backing up from one machine will not drop servers that only exist on another — **as long as every machine is on v3.0.0 or later**.
 
-The file is written in schema v2 (`{"version": 2, "scope": "user", "servers": {...}}`) by claude-sync v3.0.0 and later. **A machine still running claude-sync v2.x will overwrite this file with the old array format and drop servers whose command contains spaces** — see *Before backing up: every machine must be on v3.0.0* above, which covers `plugins.json` as well.
+The file is written in schema v2 (`{"version": 2, "scope": "user", "servers": {...}}`) by claude-sync v3.0.0 and later. **A machine still running claude-sync v2.x overwrites this file with the array it builds from its own `claude mcp list`** — see *Before backing up: every machine must be on v3.0.0* above, which covers `plugins.json` as well.
 
 ### About `plugins.json`
 
-`plugins.json` is merged the same way, key by key, across its three sections — plugin entries, marketplaces, and plugin config keys are each reconciled individually, so backing up from one machine will not drop entries that only exist on another.
+`plugins.json` is merged the same way, key by key, across its three sections — plugin entries, marketplaces, and plugin config keys are each reconciled individually, so backing up from one machine will not drop entries that only exist on another — **as long as every machine is on v3.0.0 or later**.
+
+**A machine still running claude-sync v2.x does not do this merge** — it rebuilds the file from its own `settings.json`, so see *Before backing up: every machine must be on v3.0.0* above before you back up from anywhere.
 
 Not synced:
 

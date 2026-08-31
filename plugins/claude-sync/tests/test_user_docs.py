@@ -36,6 +36,7 @@ import pytest
 import compat               # conftest.py가 lib를 sys.path에 넣는다
 import mcp_config as mc
 import plugin_config as pc
+from two_x_facts import TWO_X_CARRIES   # 측정은 한 벌이다 — 그 파일의 docstring 참조
 
 ROOT = os.path.abspath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
@@ -146,8 +147,9 @@ def test_user_doc_list_covers_every_doc_on_disk():
     found |= {n for n in os.listdir(BACKUP_SCRIPTS) if n.startswith("backup-readme")}
     assert found == set(USER_DOCS), (
         "사용자 문서 목록이 디스크와 어긋난다: %s\n"
-        "문서를 더했다면 USER_DOCS·LIMITS_ANCHOR·CORRECTIONS 셋에 모두 더하고 "
-        "test_the_corrections_table_did_not_shrink의 개수도 함께 고친다."
+        "문서를 더했다면 USER_DOCS·LIMITS_ANCHOR·CORRECTIONS 셋과 파일 끝의 배포 순서 표 "
+        "여섯(DEPLOY_ORDER_ANCHOR·_NO_MCP·_OTHERS·_SCOPE·_MARKER·MERGE_PROMISE)에 모두 "
+        "더하고, test_the_corrections_table_did_not_shrink의 개수도 함께 고친다."
         % sorted(found.symmetric_difference(USER_DOCS)))
     assert set(CORRECTIONS) == set(USER_DOCS), sorted(
         set(CORRECTIONS).symmetric_difference(USER_DOCS))
@@ -634,14 +636,19 @@ def test_backup_readme_points_at_the_sync_state_base(name):
 # **배선 계약**(무엇을 어떤 순서로 부르는가)이다. 배포 순서 경고는 배선이 아니라
 # **사용자가 읽는 같은 한 경고가 다섯 파일에 흩어진 것**이라, 표를 두 파일로 가르면
 # 한쪽만 낡는다. 하나의 불변식은 하나의 표로 건다.
+#
+# **아래 표들의 규칙은 하나다.** `DEPLOY_ORDER_ANCHOR`만 parametrize의 원천이므로
+# **완전성 단정이 필요하다**(표가 줄면 케이스가 조용히 사라진다). 나머지 바늘 표는 전부
+# `needle()`로만 읽으며, 행이 없으면 그 자리에서 죽으므로 완전성 단정을 따로 두지 않는다
+# — 가드를 지키는 별도의 가드를 만들지 않는다(기준 ⑵).
 DEPLOY_ORDER_SKILL = "sync-backup/SKILL.md"
 
-# 경고가 사는 절의 제목. `LIMITS_ANCHOR`와 같은 방식이다 — 제목은 **재는 대상이
-# 아니라 위치 지목**이고, 사라지면 아래 추출기가 스스로 죽는다.
+# 경고가 사는 절의 제목. 제목은 **재는 대상이 아니라 위치 지목**이고, 사라지면 아래
+# 추출기가 스스로 죽는다.
 #
 # **접두사가 아니라 제목 전체를 적는다.** 접두사만 핀하면 뒷부분을 개명해도 추출이
-# 계속 성공하고, 그 제목을 인용하는 상호참조(아래 backup-readme 둘)가 조용히 낡는다
-# — Task 5의 I6과 같은 형태다(거기서는 절 번호를 제목에서 뽑아 닫았다).
+# 계속 성공하고, 그 제목을 인용하는 상호참조(backup-readme 둘)가 조용히 낡는다
+# — Task 5의 I6과 같은 형태다.
 DEPLOY_ORDER_ANCHOR = {
     "README.md": "## Upgrading to v3.0.0 (read this first)",
     "README.ko.md": "## v3.0.0으로 올릴 때 (먼저 읽으세요)",
@@ -652,13 +659,12 @@ DEPLOY_ORDER_ANCHOR = {
 
 # 「나에겐 해당 없음」 오독을 닫는 문구. **이 task의 존재 이유가 정확히 이것이다** —
 # 문제는 "손실 목록에 `plugins.json`이 없다"가 아니라 "MCP를 쓰지 않는 사용자가 이
-# 경고를 자기 얘기로 읽지 않는다"였다. 손실 목록에 문서를 **더하는** 것만으로는 그
-# 오독이 닫히지 않는다: 훑는 독자는 절 제목과 머리 문장만 보고 지나간다.
+# 경고를 자기 얘기로 읽지 않는다"였다. 훑는 독자는 절 제목과 머리 문장만 본다.
 #
 # 다섯 문서가 각각 다른 문장으로 쓴다 — 독자와 맥락이 다르므로 **의도된 것이다.**
-# 그래서 문구는 문서별로 적되 **자리는 기계로 건다**(아래 deploy_order_prose) —
-# 불릿이 아니라 경고의 **산문** 안에 있어야 한다. 한 문서의 불릿 속으로 밀려나면
-# 그 문서를 이미 자기 얘기로 읽은 사람만 만나게 되어 아무것도 예방하지 못한다.
+# 그래서 문구는 문서별로 적되 **자리는 기계로 건다**(deploy_order_prose) — 불릿이 아니라
+# 경고의 **산문** 안에 있어야 한다. 한 문서의 불릿 속으로 밀려나면 그 문서를 이미 자기
+# 얘기로 읽은 사람만 만나게 되어 아무것도 예방하지 못한다.
 DEPLOY_ORDER_NO_MCP = {
     "README.md": "even if you use no MCP servers",
     "README.ko.md": "MCP 서버를 하나도 쓰지 않더라도",
@@ -667,26 +673,85 @@ DEPLOY_ORDER_NO_MCP = {
     DEPLOY_ORDER_SKILL: "MCP 서버를 쓰지 않는 기기라도 해당됩니다",
 }
 
-# 손실 **범위**를 말하는 절반. 「타 기기의 것이 사라진다」로만 읽히면 사용자는 자기
-# `pluginConfigs`가 왜 없어졌는지 이 경고에서 읽지 못한다 — 2.x가 모르는 키는 그 기기
-# 것까지 사라진다(sync-restore 손실 표가 같은 이유로 고쳐졌다). 영어판·한국어판이
-# 다르므로 문서마다 적는다. SKILL.md는 한국어지만 `.ko.md`가 아니라 언어를 파일
-# 이름에서 유도할 수 없다.
+# 손실의 두 절반. **불릿마다 둘 다** 있어야 한다.
+#
+# ① 타 기기 것이 사라진다 — 2.x는 두 문서를 **그 기기 것만으로 통째로** 다시 만든다
+#    (plugins는 `settings.json`에서, mcp는 `claude mcp list` 출력에서 — 실측).
+#    정정 전 mcp 불릿은 이 절반을 빼놓았고, 그 빈틈을 몇 줄 아래 "서버 이름 키 단위로
+#    병합되므로 타 기기 서버가 사라지지 않는다"가 **조건 없이** 반대로 메우고 있었다.
+# ② 그 기기 것까지 사라진다 — 2.x가 아예 모르는 키(plugins)와 파싱하지 못하는 서버(mcp).
+#
+# **동사를 바늘에 포함시킨다.** 범위만 재면 "사라진다"를 "보존된다"로 한 단어 뒤집어도
+# 초록이다(리뷰어 변조 R3).
+DEPLOY_ORDER_OTHERS = {
+    "README.md": "**only on another machine** are erased from the repo",
+    "README.ko.md": "**다른 기기에만** 있는 것이 레포에서 사라지고",
+    "backup-readme.md": "**only on another machine** are erased from the repo",
+    "backup-readme.ko.md": "**다른 기기에만** 있는 것이 레포에서 사라지고",
+    DEPLOY_ORDER_SKILL: "**다른 기기에만** 있는 것이 레포에서 사라지고",
+}
 DEPLOY_ORDER_SCOPE = {
-    "README.md": "that machine's own",
-    "README.ko.md": "그 기기 것까지",
-    "backup-readme.md": "that machine's own",
-    "backup-readme.ko.md": "그 기기 것까지",
-    DEPLOY_ORDER_SKILL: "그 기기 것까지",
+    "README.md": "are erased **including that machine's own**",
+    "README.ko.md": "**그 기기 것까지** 사라집니다",
+    "backup-readme.md": "are erased **including that machine's own**",
+    "backup-readme.ko.md": "**그 기기 것까지** 사라집니다",
+    DEPLOY_ORDER_SKILL: "**그 기기 것까지** 사라집니다",
 }
 
-# **바늘을 손으로 적지 않는다.** `not in`이 아니라 `in` 가드이지만 값이 틀리면 같은
-# 방식으로 공허해진다 — 오타 난 relpath는 어느 문서에도 없으니 항상 빨갛거나, 반대로
-# 실재하지 않는 이름을 재게 된다. 두 어댑터의 상수에서 뽑는다.
+# 표식이 **오늘 아무도 막지 못한다**는 사실. `compat._block_reason`은 `mine < required`
+# 일 때만 막고 표식 값은 `MIN_READER_VERSION`이므로 그 버전 기기는 통과한다 — 즉
+# 막아야 할 2.x는 읽지 못하고, 읽는 v3은 충족한다. "v3 기기가 표식을 읽고 멈춘다"는
+# 서술은 그래서 거짓이고, 하필 사용자가 *배포 순서를 지킬 것인가*를 정하는 문단에 있었다.
+DEPLOY_ORDER_MARKER = {
+    "README.md": "no code that reads the marker",
+    "README.ko.md": "그 표식을 읽는 코드가 없습니다",
+    "backup-readme.md": "no code that reads the marker",
+    "backup-readme.ko.md": "그 표식을 읽는 코드가 없습니다",
+    DEPLOY_ORDER_SKILL: "그 표식을 읽는 코드가 없습니다",
+}
+
+# 「타 기기 항목은 사라지지 않는다」는 무조건 약속. **v3.0.0 이상끼리일 때만 참이다.**
+# 조건 없이 두면, 경고를 읽은 독자가 몇 줄 아래에서 반대 문장을 만나 "그럼 2.x 백업이라도
+# 타 기기 것은 남겠네"로 되돌아간다 — 이 task가 없애려던 오독의 재발이다.
+MERGE_PROMISE = {
+    "README.md": "only exist on another",
+    "README.ko.md": "다른 기기에만 있는",
+    "backup-readme.md": "only exist on another",
+    "backup-readme.ko.md": "다른 기기에만 있는",
+}
+
+# **바늘을 손으로 적지 않는다.** 어댑터가 relpath를 개명하면 문서는 낡았는데 손으로 적은
+# 바늘은 옛 이름을 계속 만족시킨다 — 그때 이 가드가 조용히 무의미해진다.
 DEPLOY_ORDER_RELPATHS = (mc.BACKUP_RELPATH, pc.BACKUP_RELPATH)
 assert len(set(DEPLOY_ORDER_RELPATHS)) == 2, DEPLOY_ORDER_RELPATHS
 
+# 2.x가 `plugins.json`에서 **옮기는** 키와 **모르는** 키. 합집합 하나로 재면 두 축이
+# 접혀서, 둘을 맞바꾼 문장("v2가 옮기는 것은 pluginConfigs뿐 …")도 초록이 된다.
+# 맞바꾼 문장은 사용자에게 "당신의 `pluginConfigs`는 안전하다"고 말한다 — 정확히 거짓이다.
+TWO_X_ERASES_EVERYWHERE = tuple(sorted(
+    (set(pc.SECTIONS) | set(pc.MARKETPLACE_ALIASES)) - set(TWO_X_CARRIES)))
+assert set(TWO_X_CARRIES) <= set(pc.SECTIONS) | set(pc.MARKETPLACE_ALIASES), (
+    "2.x가 옮기는 키 이름이 어댑터에 없다 — 핀이 낡았다: %s" % sorted(TWO_X_CARRIES))
+assert TWO_X_ERASES_EVERYWHERE, "떨어지는 키가 없다 — 추출이 죽었다"
+
+# 표식 필드 이름을 `compat.py`가 **실제로 읽는 것**에서 뽑는다.
+with open(os.path.join(LIB_DIR, "compat.py"), encoding="utf-8") as _f:
+    MIN_READER_FIELD = "min_reader_version"
+    assert MIN_READER_FIELD in set(re.findall(r'meta\.get\("([a-z_]+)"', _f.read())), (
+        "compat.py가 %s를 읽지 않는다 — 필드 이름이 바뀌었다" % MIN_READER_FIELD)
+
 _HEADING = re.compile(r"^#{1,6} ", re.M)
+# 불릿 마커에 의존하지 않는다 — `- `만 보면 `* `나 `1. `로 바꾼 편집이 통과한다(변조 R4).
+_BULLET = re.compile(r"(?:[-*+]|\d+\.)\s")
+# 문장 경계. `settings.json,`·`v2.x`처럼 **뒤에 공백이 없는** 마침표는 자르지 않는다.
+_SENTENCE = re.compile(r"(?<=\.)\s+")
+
+
+def needle(table, name, what):
+    """바늘 표의 한 행. 행이 없으면 **그 자리에서** 죽는다(기준 ⑵)."""
+    value = table.get(name)
+    assert value, "%s: %s 바늘이 표에 없다 — 표가 줄었거나 문서가 새로 들어왔다" % (name, what)
+    return value
 
 
 def deploy_order_path(name):
@@ -725,43 +790,63 @@ def deploy_order_warning(name):
 
 
 def deploy_order_prose(name):
-    """경고 블록에서 **불릿을 뺀** 산문. 훑는 독자가 실제로 읽는 부분이다.
+    """경고 블록에서 **불릿을 뺀** 산문.
 
-    문서별 손실 불릿은 "그 문서를 쓰는 사람"에게만 말한다. 「나에겐 해당 없음」
-    오독을 닫는 문장은 그보다 앞, 누구에게나 말하는 자리에 있어야 한다.
+    문서별 손실 불릿은 "그 문서를 쓰는 사람"에게만 말한다. 「나에겐 해당 없음」 오독을
+    닫는 문장과 표식 사실은 **누구에게나 말하는 자리**에 있어야 한다 — 앞뒤 순서는
+    문서마다 다를 수 있으므로(SKILL.md는 지시문 직전에 둔다) 재지 않는다.
     """
     lines = [line for line in deploy_order_warning(name).splitlines()
-             if not line.lstrip("> ").startswith("- ")]
+             if not _BULLET.match(line.lstrip("> "))]
     prose = "\n".join(lines)
     assert prose.strip("> \n"), "%s: 경고에 산문이 없다 — 불릿만 남았다" % name
     return prose
 
 
-def mcp_section(name):
-    """제목에 `mcp-servers.json`이 든 절. **언어별 제목을 손으로 적지 않는다.**"""
+def deploy_order_bullet(name, relpath):
+    """경고 블록에서 그 문서를 말하는 불릿 한 줄.
+
+    **relpath로 찾는다** — 손으로 고른 목록이 아니라 두 어댑터 상수 위를 도는 루프다.
+    """
+    hits = [line for line in deploy_order_warning(name).splitlines()
+            if _BULLET.match(line.lstrip("> ")) and relpath in line]
+    assert len(hits) == 1, (
+        "%s: %s를 말하는 불릿을 하나로 특정하지 못했다(%d개)" % (name, relpath, len(hits)))
+    return hits[0]
+
+
+def sentences_of(text):
+    parts = [s.strip() for s in _SENTENCE.split(text) if s.strip()]
+    assert parts, "문장을 하나도 뽑지 못했다: %r" % text[:60]
+    return parts
+
+
+def section_titled(name, relpath):
+    """제목에 그 relpath가 든 절. **언어별 제목을 손으로 적지 않는다.**"""
     text = read_doc(name)
     heads = [line for line in text.splitlines()
-             if line.startswith("### ") and mc.BACKUP_RELPATH in line]
+             if line.startswith("### ") and relpath in line]
     assert len(heads) == 1, (
-        "%s: %s 절 제목을 하나로 특정하지 못했다: %s" % (name, mc.BACKUP_RELPATH, heads))
+        "%s: %s 절 제목을 하나로 특정하지 못했다: %s" % (name, relpath, heads))
     i = text.index(heads[0])
     m = _HEADING.search(text, i + len(heads[0]))
     return text[i:m.start() if m else len(text)]
 
 
 def test_the_deploy_order_table_covers_every_document_that_carries_the_warning():
-    """표에서 문서 하나를 빼면 그 파일이 아래 두 가드에서 조용히 사라진다(다섯째 축).
+    """표에서 문서 하나를 빼면 그 파일이 아래 가드 전부에서 조용히 사라진다(다섯째 축).
 
     사용자 문서 넷은 **디스크에서 뽑은** USER_DOCS와 짝짓는다 —
     `test_user_doc_list_covers_every_doc_on_disk`가 그 목록을 디스크에 묶고 있으므로
     **영어판만 빼는 변조**가 여기서 죽는다. SKILL.md는 "경고를 지닌 스킬"을 디스크에서
     유도할 방법이 없어 이름을 핀하고, 그 파일이 실재하는지만 함께 묻는다.
+
+    **다른 바늘 표에는 완전성 단정을 두지 않는다.** 전부 `needle()`로만 읽혀 행이 없으면
+    자기 자리에서 죽기 때문이다 — 가드를 지키는 가드를 만들지 않는다(기준 ⑵).
     """
     expected = set(USER_DOCS) | {DEPLOY_ORDER_SKILL}
     assert set(DEPLOY_ORDER_ANCHOR) == expected, sorted(
         set(DEPLOY_ORDER_ANCHOR).symmetric_difference(expected))
-    assert set(DEPLOY_ORDER_SCOPE) == expected, sorted(
-        set(DEPLOY_ORDER_SCOPE).symmetric_difference(expected))
     path = deploy_order_path(DEPLOY_ORDER_SKILL)
     assert os.path.isfile(path), "핀한 SKILL.md가 없다 — 옮겼거나 이름이 바뀌었다: %s" % path
 
@@ -773,32 +858,53 @@ def test_deploy_order_warning_names_both_backed_up_documents(name):
     이것이 이 저장소의 **유일한 예방**이다 — 2.x는 표식을 읽지 못하므로 사고를 막을
     코드가 어디에도 없다.
     """
-    block = deploy_order_warning(name)
-    missing = [rel for rel in DEPLOY_ORDER_RELPATHS if rel not in block]
-    assert not missing, (
-        "%s: 배포 순서 경고가 %s를 말하지 않는다 — 그 문서를 쓰는 사용자는 이 경고를 "
-        "자기 얘기로 읽지 않는다" % (name, missing))
+    for relpath in DEPLOY_ORDER_RELPATHS:
+        deploy_order_bullet(name, relpath)
 
 
 @pytest.mark.parametrize("name", sorted(DEPLOY_ORDER_ANCHOR))
-def test_deploy_order_warning_says_what_2x_erases(name):
-    """`plugins.json`을 **이름만** 덧붙이면 사용자는 무엇을 잃는지 모른다.
+def test_every_bullet_says_both_halves_of_the_loss(name):
+    """**두 문서가 같은 이유로 같은 손실을 입는다** — 불릿마다 두 절반을 다 적어야 한다.
 
-    2.x의 `extract_plugins.py`는 로컬 settings에서 `enabledPlugins`·
-    `extraKnownMarketplaces` 둘만 복사해 통째로 쓴다(실측). 그래서 백업 한 번에
-    **타 기기의** 항목이 사라지고, 2.x가 아예 모르는 나머지 키는 **그 기기 것까지**
-    사라진다. 키 이름은 어댑터에서 **뽑는다** — 손으로 적으면 섹션이 늘어도 경고는
-    낡은 채로 초록이다.
+    정정 전 mcp 불릿은 「옛 배열 형식 + 공백 든 서버」 둘만 적었다. 실측은 더 넓다:
+    2.x의 `parse_mcp.py`가 그 기기의 `claude mcp list` 출력만으로 배열을 통째로 만들고
+    2.x의 백업 절이 그것을 커밋하므로 **다른 기기에만 등록된 서버도 사라진다.**
+    plugins 불릿은 그 손실을 적는데 mcp 불릿만 빼놓으면 사실이 반쪽만 전달되고,
+    몇 줄 아래 무조건 약속이 그 빈틈을 반대로 메운다.
     """
-    keys = sorted(set(pc.SECTIONS) | set(pc.MARKETPLACE_ALIASES))
-    assert keys, "어댑터의 섹션 목록이 비었다 — 바늘을 만들지 못했다"
-    block = deploy_order_warning(name)
-    missing = [key for key in keys if key not in block]
-    assert not missing, "%s: 배포 순서 경고가 말하지 않는 키: %s" % (name, missing)
-    scope = DEPLOY_ORDER_SCOPE[name]
-    assert scope in block, (
-        "%s: 경고가 손실 **범위**를 말하지 않는다(%r) — 「타 기기의 것만」으로 읽히면 "
-        "사용자는 자기 설정 키가 왜 사라졌는지 못 읽는다" % (name, scope))
+    for relpath in DEPLOY_ORDER_RELPATHS:
+        bullet = deploy_order_bullet(name, relpath)
+        for what, table in (("타 기기 손실", DEPLOY_ORDER_OTHERS),
+                            ("그 기기 손실", DEPLOY_ORDER_SCOPE)):
+            phrase = needle(table, name, what)
+            assert phrase in bullet, (
+                "%s: %s 불릿이 %s를 말하지 않는다 — %r" % (name, relpath, what, phrase))
+
+
+@pytest.mark.parametrize("name", sorted(DEPLOY_ORDER_ANCHOR))
+def test_the_plugins_bullet_keeps_the_two_key_sets_apart(name):
+    """「2.x가 옮기는 키」와 「2.x가 모르는 키」를 **맞바꿔도** 초록이면 안 된다(축 분리).
+
+    합집합 하나로 `in`만 재면 두 축이 접힌다. 맞바꾼 문장은 사용자에게
+    *"당신의 `pluginConfigs`는 안전하다"* 고 말하는데 그것이 정확히 거짓이다.
+    두 집합 다 어댑터에서 유도하므로 섹션이 늘면 다섯 문서가 함께 빨개진다.
+    """
+    bullet = deploy_order_bullet(name, pc.BACKUP_RELPATH)
+    scope = needle(DEPLOY_ORDER_SCOPE, name, "그 기기 손실")
+    parts = sentences_of(bullet)
+    erased = [s for s in parts if scope in s]
+    assert len(erased) == 1, (
+        "%s: 「그 기기 것까지」를 말하는 문장을 하나로 특정하지 못했다(%d개)"
+        % (name, len(erased)))
+    erased = erased[0]
+    carried = " ".join(s for s in parts if s != erased)
+    assert carried, "%s: 2.x가 옮기는 키를 말하는 문장이 없다" % name
+    for key in TWO_X_ERASES_EVERYWHERE:
+        assert key in erased, "%s: 사라지는 쪽 문장이 %s를 말하지 않는다" % (name, key)
+        assert key not in carried, "%s: %s를 「2.x가 옮긴다」 쪽에 적었다" % (name, key)
+    for key in TWO_X_CARRIES:
+        assert key in carried, "%s: 2.x가 옮기는 키(%s)를 말하지 않는다" % (name, key)
+        assert key not in erased, "%s: %s를 「사라진다」 쪽에 적었다" % (name, key)
 
 
 @pytest.mark.parametrize("name", sorted(DEPLOY_ORDER_ANCHOR))
@@ -807,36 +913,80 @@ def test_deploy_order_warning_closes_the_not_applicable_to_me_misreading(name):
 
     이 저장소의 유일한 예방이 이 한 마디에 달려 있다. 정정 전 넷이 전부
     `mcp-servers.json` 이야기만 했고, 문제는 목록이 짧다는 것이 아니라 **독자가
-    자기 얘기로 읽지 않는다**는 것이었다. 그 문장을 지워도 스위트가 초록이면
-    다음 편집이 그것을 조용히 지운다.
-
-    바늘 표가 비거나 줄면 `.get`이 None을 내고 이 단정이 **자기 몸통에서** 죽는다 —
-    가드를 지키는 별도의 가드를 세우지 않는다(기준 ⑵).
+    자기 얘기로 읽지 않는다**는 것이었다.
     """
-    needle = DEPLOY_ORDER_NO_MCP.get(name)
-    assert needle, (
-        "%s: 「해당 없음」 오독을 닫는 문구가 바늘 표에 없다 — 표가 줄었다" % name)
-    prose = deploy_order_prose(name)
-    assert needle in prose, (
+    phrase = needle(DEPLOY_ORDER_NO_MCP, name, "MCP 미사용자 포함")
+    assert phrase in deploy_order_prose(name), (
         "%s: 경고의 산문이 MCP 미사용자를 포함시키지 않는다(%r). `plugins.json`을 "
         "손실 목록에 더하는 것만으로는 「나에겐 해당 없음」 오독이 닫히지 않는다"
-        % (name, needle))
+        % (name, phrase))
+
+
+@pytest.mark.parametrize("name", sorted(DEPLOY_ORDER_ANCHOR))
+def test_the_marker_sentence_matches_what_compat_actually_blocks(name):
+    """표식 서술을 `compat`의 판정에 묶는다.
+
+    **표식은 오늘 아무 기기도 막지 못한다.** `_block_reason`은 `mine < required`일 때만
+    막는데 표식 값이 `MIN_READER_VERSION`이므로 그 버전 기기는 통과하고, 막아야 할
+    2.x에는 표식을 읽는 코드가 아예 없다. 그래서 *"v3 기기가 읽고 멈춘다"* 는 서술은
+    거짓이고, 하필 사용자가 **배포 순서를 지킬 것인가**를 정하는 문단에 있었다.
+
+    아래 첫 단정이 그 사실을 코드에서 직접 확인한다 — 판정이 바뀌면 이 문단의 서술이
+    함께 바뀌어야 하고, 그때 여기가 빨개진다.
+    """
+    assert compat._block_reason({}, compat.MIN_READER_VERSION,
+                                compat.MIN_READER_VERSION) is None, (
+        "표식이 같은 버전 기기를 막는다 — 다섯 문서의 표식 문단을 다시 써야 한다")
+    prose = deploy_order_prose(name)
+    assert MIN_READER_FIELD in prose, (
+        "%s: 경고가 표식(%s)을 이름으로 지목하지 않는다" % (name, MIN_READER_FIELD))
+    phrase = needle(DEPLOY_ORDER_MARKER, name, "표식을 읽지 못한다")
+    assert phrase in prose, (
+        "%s: 경고가 「2.x에는 표식을 읽는 코드가 없다」를 말하지 않는다 — 그것이 "
+        "*배포 순서가 유일한 방어*의 근거다: %r" % (name, phrase))
+
+
+@pytest.mark.parametrize("name", sorted(USER_DOCS))
+def test_the_merge_promise_names_the_version_it_depends_on(name):
+    """「타 기기 항목은 사라지지 않는다」에 **버전 조건**이 붙어야 한다.
+
+    경고를 읽은 독자가 몇 줄 아래에서 무조건 약속을 만나면 "그럼 2.x 백업이라도 타 기기
+    것은 남겠네"로 되돌아간다 — 이 task가 없애려던 오독의 재발이고, MCP는 쓰지만 공백
+    명령이 없는 사용자에게 특히 그렇다.
+
+    줄 수를 **relpath 개수에서** 뽑는다 — 문서마다 두 문서에 하나씩이므로, 한쪽 약속이
+    사라지거나 새 문서가 늘면 여기가 먼저 빨개진다.
+    """
+    phrase = needle(MERGE_PROMISE, name, "무조건 약속")
+    version = "v" + compat.MIN_READER_VERSION
+    hits = [line for line in read_doc(name).splitlines() if phrase in line]
+    assert len(hits) == len(DEPLOY_ORDER_RELPATHS), (
+        "%s: 무조건 약속 줄이 %d개다 — 백업 문서마다 하나여야 한다: %s"
+        % (name, len(hits), hits))
+    missing = [line for line in hits if version not in line]
+    assert not missing, (
+        "%s: 무조건 약속에 버전 조건(%s)이 없다: %s" % (name, version, missing))
 
 
 @pytest.mark.parametrize(
-    "name", sorted(n for n in USER_DOCS if n.startswith("backup-readme")))
-def test_the_mcp_section_cites_the_deploy_order_section_by_its_full_title(name):
-    """`mcp-servers.json` 절의 상호참조를 **절 제목 상수에서 유도한다.**
+    "name,relpath",
+    [(n, r) for n in sorted(USER_DOCS) if n.startswith("backup-readme")
+     for r in DEPLOY_ORDER_RELPATHS],
+    ids=lambda v: v)
+def test_each_document_section_cites_the_deploy_order_section_by_its_full_title(name, relpath):
+    """문서별 절 **둘 다** 배포 순서 절을 제목 전체로 가리켜야 한다.
 
-    그 절은 배포 순서 경고를 새 절로 넘기고 제목을 인용한다. 인용을 손으로 적으면
-    제목의 **뒷부분**을 개명했을 때 독자가 없는 절을 찾는다 — Task 5의 I6이 절
-    번호에서 만난 것과 같은 형태다.
+    이 task가 겨냥한 독자는 *MCP를 안 쓰고 플러그인만 쓰는 사용자*다. 그 사람이 찾아
+    들어가는 절이 `plugins.json` 절인데 거기서 무조건적인 안전 보장만 만나면, 경고를
+    한 번도 보지 못한 채 백업을 돌린다. 상호참조를 mcp 절에만 단 것은 역사적 이유
+    (옛 경고가 거기 있었다)이지 독자 때문이 아니었다.
 
-    파라미터를 디스크에서 뽑은 USER_DOCS에서 유도하므로 목록이 비지 않는다.
-    절도 `mc.BACKUP_RELPATH`로 찾아 언어별 제목을 손으로 적지 않는다.
+    인용문을 **절 제목 상수에서 유도한다** — 손으로 적으면 제목의 뒷부분을 개명했을 때
+    독자가 없는 절을 찾는다(Task 5 I6과 같은 형태). 절도 relpath로 찾아 언어별 제목을
+    손으로 적지 않는다.
     """
     title = DEPLOY_ORDER_ANCHOR[name].lstrip("# ").strip()
     assert title, "%s: 절 제목 상수에서 인용할 문자열을 뽑지 못했다" % name
-    assert title in mcp_section(name), (
+    assert title in section_titled(name, relpath), (
         "%s: %s 절이 배포 순서 절을 제목 전체로 가리키지 않는다 — %r"
-        % (name, mc.BACKUP_RELPATH, title))
+        % (name, relpath, title))

@@ -157,7 +157,7 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 | `<relpath>` | 2.x가 흘리는 것 | 뒤에서 거짓 문구가 나오는 자리 |
 |---|---|---|
-| `mcp-servers.json` | 명령에 공백이 든 서버 | **6-5** — "다른 기기가 이 서버를 삭제했습니다" |
+| `mcp-servers.json` | 타 기기에만 등록된 서버, 그리고 명령에 공백이 든 서버 — 2.x는 그 기기의 `claude mcp list` 출력만으로 이 파일을 통째로 다시 만들므로 **이 기기 것까지** 흘린다(실측) | **6-5** — "다른 기기가 이 서버를 삭제했습니다" |
 | `plugins.json` | 타 기기의 플러그인·마켓플레이스, 그리고 **설정 키 전부** — 2.x는 이 파일을 통째로 다시 만들면서 `enabledPlugins`·`extraKnownMarketplaces` **둘만** 옮기므로, `pluginConfigs`와 `additionalMarketplaces`는 **이 기기 것까지** 사라진다(실측) | **5-5** — "다른 기기가 지웠습니다" |
 
 이때 반드시 함께 알린다.

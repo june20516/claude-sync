@@ -40,6 +40,7 @@ import mcp_config as mc   # conftest.py가 lib를 sys.path에 넣는다
 import plugin_config as pc
 import syncignore   # 4단계 bash와 대조할 매칭 규칙 한 벌
 from skill_paths import SKILLS, SKILLS_DIR   # 목록은 한 벌이다 — 그 파일의 docstring 참조
+from two_x_facts import TWO_X_CARRIES        # 측정도 한 벌이다 — 〃
 
 # 다운그레이드 대화가 읽는 키는 **탐지 스크립트의 실제 출력**에서 뽑는다(아래 detect_keys).
 sys.path.insert(0, os.path.join(SKILLS_DIR, "sync-backup", "scripts"))
@@ -757,11 +758,10 @@ def test_backup_says_what_to_do_when_there_is_no_candidate():
 
 
 # 2.x의 `extract_plugins.py`가 실제로 옮기는 키 둘. **그 스크립트는 main에만 있어 이 트리
-# 안에 기계로 대조할 원천이 없다** — 사람이 대조한 실측이고(test_downgrade.py의
-# TWO_X_SECTIONS와 같은 근거), 그래서 **값을 핀하고** 이름이 어댑터에 실재하는지만 기계로
-# 문다. 어느 키가 떨어지는지는 어댑터의 상수에서 계산한다 — 손으로 적으면 섹션이 늘어도
-# 표는 낡은 채다.
-TWO_X_CARRIES = ("enabledPlugins", "extraKnownMarketplaces")
+# 안에 기계로 대조할 원천이 없다** — 사람이 대조한 실측이다. **값은 `two_x_facts.py`
+# 한 곳에 있다** — `test_user_docs.py`의 배포 순서 경고가 같은 측정을 인용하므로
+# 두 벌로 두면 한쪽만 고친 정정이 나머지를 남긴다. 어느 키가 떨어지는지는 어댑터의
+# 상수에서 계산한다 — 손으로 적으면 섹션이 늘어도 표는 낡은 채다.
 
 
 def loss_table_row(relpath):
@@ -799,6 +799,25 @@ def test_restore_loss_table_names_every_key_that_2x_drops():
         "%s 행이 사라지는 범위를 말하지 않는다 — 2.x가 모르는 키는 이 기기 것도 사라진다"
         % pc.BACKUP_RELPATH
     )
+
+
+def test_restore_loss_table_says_both_documents_lose_other_machines_entries():
+    """2.x는 **두 문서를 모두** 그 기기 것만으로 통째로 다시 만든다 — 타 기기 손실은
+    `plugins.json`의 특수 사정이 아니다.
+
+    mcp 행은 「명령에 공백이 든 서버」만 적고 있었다. 실측은 더 넓다 — 2.x의
+    `parse_mcp.py`가 그 기기의 `claude mcp list` 출력만으로 배열을 통째로 만들므로
+    **다른 기기에만 등록된 서버도 사라진다.** 행이 좁으면 6-5의 거짓 문구를 만난
+    사용자가 "내 서버는 공백이 없으니 해당 없다"로 넘긴다.
+
+    **행을 손으로 고르지 않고 탐지 대상 목록을 돈다** — 문서가 늘면 함께 빨개진다.
+    """
+    assert dd.RELPATHS, "판정 대상 목록이 비었다 — 행을 만들지 못했다"
+    for relpath in dd.RELPATHS:
+        row = loss_table_row(relpath)
+        assert "타 기기" in row, (
+            "%s 행이 타 기기 손실을 말하지 않는다 — 2.x는 이 문서도 통째로 다시 쓴다: %s"
+            % (relpath, row))
 
 
 def test_restore_cites_the_backup_step_that_actually_recovers():
@@ -1065,9 +1084,12 @@ def test_backup_notice_does_not_claim_older_devices_stop_themselves():
 
     문제는 부정확이 아니라 **행동을 바꾸는 거짓 안심**이다. 사용자가 이 문장을 읽는
     시점이 정확히 "다른 노트북을 지금 올릴 것인가"를 정하는 순간이다.
+
+    **여기는 금지만 건다.** 그 자리가 무엇을 대신 말해야 하는지(=2.x에는 표식을 읽는
+    코드가 없다)는 `test_user_docs.py`가 **다섯 문서 전부에** 균일하게 건다 — 같은 문장을
+    두 파일에서 따로 핀하면 한쪽만 고친 정정이 나머지를 남긴다.
     """
     sec = section("sync-backup", "12. 결과 보고")
-    assert "2.x 기기는 멈추지 않습니다" in sec
     assert "차단됩니다" not in sec
     assert "차단된다" not in sec
 
