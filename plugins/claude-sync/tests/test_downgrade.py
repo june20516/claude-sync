@@ -101,8 +101,11 @@ def version_without_servers(version=mc.SCHEMA_VERSION):
 # 2.x의 extract_plugins.py가 쓰는 문서다. 그 스크립트는 로컬 settings.json에서
 # enabledPlugins·extraKnownMarketplaces 중 **있는 키만** 담아 dump하고 version을
 # 쓰지 않는다(`git show main:plugins/claude-sync/skills/sync-backup/scripts/
-# extract_plugins.py`로 실측). **손으로 지어낸 v1 모양을 쓰면 2.x가 실제로 쓰는 것과
-# 갈려도 초록이다** — 그래서 모양의 근거를 그 스크립트에 둔다.
+# extract_plugins.py`로 **사람이 대조한 실측**이다 — 그 대조를 기계가 다시 하지는 않는다.
+# **손으로 지어낸 v1 모양을 쓰면 2.x가 실제로 쓰는 것과 갈려도 초록이다.**
+# 기계가 무는 것은 그중 둘이다(test_two_x_fixture_is_the_shape_2x_actually_writes) —
+# 키가 pc.SECTIONS의 진짜 섹션 이름인가, version 표식이 없는가. 값의 모양까지는
+# 이 저장소 안에 기계로 대조할 원천이 없다(2.x 스크립트는 main에만 있다).
 TWO_X_SECTIONS = {
     "enabledPlugins": {"a@m": True, "b@m": True},
     "extraKnownMarketplaces": {"m": {"source": {"source": "github", "repo": "o/r"}}},
@@ -168,7 +171,11 @@ def test_files_map_has_an_entry_for_every_backup_document(tmp_path):
 def test_two_x_fixture_is_the_shape_2x_actually_writes():
     """픽스처가 2.x의 출력에서 벗어나면 아래 회귀가 전부 헛돈다.
 
-    - 키는 실재하는 섹션 이름이어야 한다(오타면 아무 문서나 재게 된다)
+    **바늘은 pc.SECTIONS이지 extract_plugins.py가 아니다.** 그 스크립트는 main에만 있어
+    기계로 대조할 원천이 이 트리 안에 없다 — 값의 모양은 사람이 대조한 실측이고(위 주석),
+    여기서 기계가 무는 것은 다음 둘이다.
+
+    - 키는 pc.SECTIONS의 실재하는 섹션 이름이어야 한다(오타면 아무 문서나 재게 된다)
     - version 표식이 없어야 한다 — 있으면 v2_object가 되어 사고가 탐지되지 않는다
     """
     assert set(TWO_X_SECTIONS) < set(pc.SECTIONS)
@@ -258,6 +265,33 @@ def test_unreadable_repo_file_is_not_absent(tmp_path):
         (repo / mc.BACKUP_RELPATH).chmod(0o644)
     assert mcp_of(out)["repo_shape"] == compat.SHAPE_UNREADABLE
     assert mcp_of(out)["downgrade_suspected"] is False
+
+
+@requires_permission_bits
+def test_unreadable_base_blob_is_not_absent(tmp_path):
+    """**base 쪽도** 못 읽음을 absent로 접지 않는다(불변식 6).
+
+    불리언 판정은 어느 쪽이든 False라 바뀌지 않는다. **바뀌는 것은 사용자에게 그대로
+    출력되는 base_shape다** — "base가 없다"로 보고하면 사용자는 *"이 기기는 아직 base가
+    없으니 탐지할 게 없구나"* 로 읽는데, 실제로는 **확인하지 못한** 것이다. 다운그레이드
+    대화의 존재 이유가 정확히 그 둘을 가르는 것이므로 이 값이 거짓이면 대화가 거짓이 된다.
+
+    레포 파일 쪽 짝은 test_unreadable_repo_file_is_not_absent다. 한쪽만 물려 있으면
+    대칭인 두 자리 중 하나가 조용히 뚫린다.
+    """
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v1(["a"]), "backup")
+    base_dir = base_dir_with(tmp_path, mcp=v2({"a": {"command": "a"}}), plugins=p_v2())
+    blob = os.path.join(base_dir, mc.BACKUP_RELPATH)
+    os.chmod(blob, 0)
+    try:
+        out = dd.detect(str(repo), base_dir=base_dir)
+    finally:
+        os.chmod(blob, 0o644)
+    assert mcp_of(out)["base_shape"] == compat.SHAPE_UNREADABLE
+    assert mcp_of(out)["downgrade_suspected"] is False
+    # base는 문서마다 따로 읽으므로 다른 문서의 base는 영향을 받지 않는다.
+    assert plugins_of(out)["base_shape"] == compat.SHAPE_V2_OBJECT
 
 
 def test_base_without_version_key_is_still_v2(tmp_path):
