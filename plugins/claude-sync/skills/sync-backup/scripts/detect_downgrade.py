@@ -87,7 +87,7 @@ def _git(repo_path, args):
     return proc.stdout
 
 
-def git_unusable_reason(repo_path):
+def _git_unusable_reason(repo_path):
     """이 레포에서 git 자체를 쓸 수 없으면 그 사유(문자열), 쓸 수 있으면 None.
 
     **전역 status와 파일별 status는 다른 것을 말한다.** 전역은 git이 없거나 레포가 git이
@@ -190,13 +190,13 @@ def detect(repo_path, base_dir=ss.BASE_DIR):
     """{"status", "reason", "files": {relpath: {…}}}
 
     파일별 항목은 detect_file이 낸다. 전역 status는 git 자체를 쓸 수 없을 때만 skipped다
-    (git_unusable_reason 참조).
+    (_git_unusable_reason 참조).
 
     **전역이 skipped여도 files 맵은 채워서 낸다.** 비우면 그 맵을 도는 SKILL.md의 루프가
     0회 돌아 아무것도 보고되지 않고, "탐지할 수 없었다"가 "사고가 없다"로 조용히
     읽힌다(불변식 6). 형태 판정은 git 없이도 되므로 그 결과는 여전히 사실이다.
     """
-    unusable = git_unusable_reason(repo_path)
+    unusable = _git_unusable_reason(repo_path)
     files = {relpath: detect_file(repo_path, relpath, base_dir)
              for relpath in RELPATHS}
     if unusable is not None:
