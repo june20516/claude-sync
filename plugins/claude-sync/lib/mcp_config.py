@@ -28,6 +28,7 @@ VALID_NAME = re.compile(r"^[A-Za-z0-9_-]+$")   # claude mcp add-json의 실측 �
 # 갱신을 잊으면 traceback으로 죽어 "읽기 실패로 백업 중단" 결함이 되살아난다.
 LocalConfigUnavailable = ks.LocalConfigUnavailable
 UnknownBackupSchema = ks.UnknownBackupSchema
+BrokenBackupSyntax = ks.BrokenBackupSyntax
 
 
 def read_local_servers(claude_json_path=None):
@@ -162,8 +163,9 @@ def parse_base(data):
 def load_backup(path):
     """레포의 mcp-servers.json을 안전하게 읽는다. 파일이 없으면 {}.
 
-    구문이 깨진 파일은 {}로 degrade한다 — 레포 파일 하나가 깨졌다고 백업 전체를 막지
-    않으며, 다음 백업이 그 파일을 정상 내용으로 되돌린다.
+    구문이 깨진 파일은 BrokenBackupSyntax를 던진다 — 호출부가 이 문서를 건너뛰고 레포
+    파일을 손대지 않는다(5차 개정). "서버 0개"로 읽으면 레포에만 있던 다른 기기의 서버가
+    영구 소실된다.
     구문은 유효한데 형식을 알아볼 수 없으면 UnknownBackupSchema를 던진다. 상위 버전이
     쓴 문서일 수 있고, 그것을 "서버 0개"로 읽으면 이 버전이 그 백업을 덮어써 파괴한다.
     (PermissionError 등 그 외 OSError는 전파한다.)

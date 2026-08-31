@@ -85,6 +85,7 @@ DEGRADED_RELEASE = ("enabledPlugins는 계속 진행하지만 release 판정 불
 # 갈라지고, 갱신을 잊으면 traceback으로 죽어 결함 C가 되살아난다.
 LocalConfigUnavailable = ks.LocalConfigUnavailable
 UnknownBackupSchema = ks.UnknownBackupSchema
+BrokenBackupSyntax = ks.BrokenBackupSyntax
 
 
 class AutoFlagsUnavailable(Exception):
@@ -459,9 +460,9 @@ def with_degraded(entry, reason):
 def _all_sections(mapping):
     """어떤 매핑이든 세 섹션 키를 **전부** 갖게 편다. 호출부의 KeyError를 없앤다.
 
-    parse_backup과 load_backup은 둘 다 "알아볼 수 없음"이나 "파일 부재"를 빈 {}로
-    degrade하는데, 그 {}를 그대로 돌려주면 호출부의 repo["enabledPlugins"]가 KeyError로
-    죽는다 — 읽기 실패를 안전하게 접겠다는 설계가 정반대로 traceback이 된다.
+    parse_backup은 "알아볼 수 없음"을, load_backup은 "파일 부재"를 빈 {}로 접는데,
+    그 {}를 그대로 돌려주면 호출부의 repo["enabledPlugins"]가 KeyError로 죽는다 —
+    읽기 실패를 안전하게 접겠다는 설계가 정반대로 traceback이 된다.
     셋 중 parse_base만 이 평탄화를 쓰지 않는다. 거기서는 {}(이력이 비었다)와
     None(이력을 못 믿는다)의 구별 자체가 반환값의 의미이기 때문이다.
     """
@@ -518,11 +519,12 @@ def parse_base(data):
 
 
 def load_backup(path):
-    """레포의 plugins.json을 안전하게 읽는다. 파일이 없으면 세 섹션 모두 {}.
+    """레포의 plugins.json을 안전하게 읽는다. 파일이 **없으면** 세 섹션 모두 {}.
 
-    구문이 깨진 파일은 **세 섹션이 모두 {}인 dict**로 degrade하고(parse_backup과 같다),
-    구문은 유효한데 형식을 알아볼 수 없으면 UnknownBackupSchema를 던진다.
-    (PermissionError 등 그 외 OSError는 전파한다.)
+    구문이 깨졌으면 BrokenBackupSyntax, 구문은 유효한데 형식을 알아볼 수 없으면
+    UnknownBackupSchema를 던진다. (PermissionError 등 그 외 OSError는 전파한다.)
+    **어느 쪽도 세 섹션 중 하나만의 문제가 아니다** — 문서 하나가 세 섹션을 담으므로
+    호출부는 섹션 단위 skip이 아니라 **문서 단위 skip**으로 접는다(spec 9.1.2·9.3.6).
     """
     return _all_sections(ks.load_backup(path, _recognized_sections))
 

@@ -111,6 +111,148 @@ def test_collect_keeps_other_devices_entries(tmp_path):
     assert sorted(repo_doc(write_repo(tmp_path))["enabledPlugins"]) == ["mine@m", "theirs@m"]
 
 
+# --- 레포 문서의 구문 깨짐 (spec 9.1.2 · 9.3.6, 5차 개정) ------------------
+
+def write_broken_repo(tmp_path, sections):
+    """정상 문서를 **잘린 채로** 둔 레포. ks.dump_bytes가 막으려는 그 상태다.
+
+    **깨진 내용에 theirs@m이 그대로 남아 있는 것이 이 픽스처의 핵심이다.** 구문만 고치면
+    되찾을 수 있는 항목이라야 "레포 파일을 손대지 않았다"가 곧 소실 방지가 된다.
+    내용을 통째로 버리면(예: "{ this is not json") 무엇을 잃었는지 잴 수 없어, 아래 두
+    테스트의 마지막 단정이 구문 깨짐이 아니라 픽스처의 빈약함을 재게 된다.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir(exist_ok=True)
+    path = repo / pc.BACKUP_RELPATH
+    pc.dump_backup(sections, str(path))
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text[:text.rindex("}")], encoding="utf-8")   # 닫는 괄호를 잘라 낸다
+    return str(repo)
+
+
+def broken_or_valid_repo(tmp_path, repo_syntax, sections):
+    return (write_repo(tmp_path, sections) if repo_syntax == "valid"
+            else write_broken_repo(tmp_path, sections))
+
+
+# 두 갈래가 공유하는 픽스처. 네 입력이 **전부** 판별력을 떠받친다(입력 축 변조로 확인):
+#   - 레포의 theirs@m : 이 기기에 없는 항목. 빼면 잃을 것이 없어 마지막 단정이 공허해진다
+#   - 로컬·base의 dropped@m : **레포가 실제로 지운** 항목. 이것이 정상 갈래의 제안
+#                      (local_stale == ["dropped@m"])을 만든다. base를 빼면 합집합
+#                      degrade가 되어 그 목록이 비고, 두 테스트가 "못 읽어서 제안이
+#                      없다"와 "지울 것이 없어서 제안이 없다"를 구별하지 못한다
+#   - 로컬의 mine@m   : 깨진 문서를 "0개"로 읽으면 케이스 4로 떨어지는 항목 —
+#                      개정 전 거짓 제안의 실체다
+#   - 레포의 마켓플레이스 m : restorable 때문이다. 출처를 모르는 id는 설치 대상이 아니라
+#                      unrestorable로 빠져 install == ["theirs@m"]이 빈 목록이 된다(8.1)
+DEVICE_A_LOCAL = {"enabledPlugins": {"mine@m": True, "dropped@m": True}}
+DEVICE_A_BASE = {"enabledPlugins": {"mine@m": True, "dropped@m": True}}
+TWO_DEVICE_REPO = {"enabledPlugins": {"mine@m": True, "theirs@m": True},
+                   "extraKnownMarketplaces": {"m": GH}}
+
+
+@pytest.mark.parametrize("repo_syntax", ["valid", "broken"])
+def test_backup_never_drops_an_entry_that_only_the_repo_has(tmp_path, repo_syntax):
+    """9.1.2 — 레포 문서의 구문이 깨져도 레포에만 있던 항목이 사라지지 않는다.
+
+    **실측(개정 전)**: 깨진 갈래에서 레포 파일이 {"enabledPlugins": {}, ...}로 덮이고
+    보고는 status "ok" · local_stale ["mine@m"]이었다. mine@m은 이 기기에 있으니 다음
+    백업이 되밀지만 **theirs@m은 레포에만 있던 항목이라 영구 소실된다** — 그 뒤 기기 B의
+    백업이 자기 base와 대조해 그 삭제를 전파한다. degrade의 근거였던 "다음 백업이
+    정상 내용으로 되돌린다"가 거짓이 되는 지점이다.
+
+    두 갈래가 **같은 마지막 단정**을 공유하는 것이 이 테스트의 형태다 — 정상 갈래는
+    "픽스처가 원래 theirs@m을 지킨다"를 보이고(대조군), 깨진 갈래는 "구문이 깨져도
+    지킨다"를 보인다. 정상 갈래가 없으면 깨진 갈래의 단정이 판별력을 갖지 못한다.
+    """
+    repo = broken_or_valid_repo(tmp_path, repo_syntax, TWO_DEVICE_REPO)
+    path = os.path.join(repo, pc.BACKUP_RELPATH)
+    before = open(path, encoding="utf-8").read()
+    staging = str(tmp_path / "staging")
+    run = lambda: collect_plugins.collect(                              # noqa: E731
+        repo, staging,
+        settings_path=write_settings(tmp_path, **DEVICE_A_LOCAL),
+        installed_path=write_installed(tmp_path),
+        held_path=str(tmp_path / "none-held.json"),
+        base_dir=write_base_blob(tmp_path, DEVICE_A_BASE))
+    if repo_syntax == "valid":
+        out = run()
+        assert out["status"] == "ok"
+        assert repo_doc(repo)["enabledPlugins"] == {"mine@m": True, "theirs@m": True}
+        # 진짜 삭제(dropped@m)만 케이스 4다 — base를 빼면 이 줄이 죽는다(입력 축 변조).
+        assert out["sections"]["enabledPlugins"]["local_stale"] == ["dropped@m"]
+    else:
+        with pytest.raises(pc.BrokenBackupSyntax):
+            run()
+        # 레포는 **바이트 그대로**다. 구문을 고치면 두 항목이 그대로 돌아온다.
+        assert open(path, encoding="utf-8").read() == before
+        # 스테이징이 없으므로 SKILL.md의 게이트가 거짓이고 base도 전진하지 않는다.
+        assert not os.path.exists(os.path.join(staging, pc.BACKUP_RELPATH))
+    assert "theirs@m" in open(path, encoding="utf-8").read()
+
+
+@pytest.mark.parametrize("repo_syntax", ["valid", "broken"])
+def test_restore_never_proposes_uninstalling_on_a_broken_repo_document(tmp_path, repo_syntax):
+    """9.3.6 — 파일 하나가 깨졌다고 "이 기기의 플러그인을 전부 지웁시다"가 나가지 않는다.
+
+    **실측(개정 전)**: 깨진 갈래의 계획이 {"status": "ok", ...
+    "local_stale": ["mine@m"]}이었다. local_stale은 9.3.3에 따라 uninstall 제안이 되고,
+    그 근거("다른 기기가 지웠다")는 거짓이다 — 레포는 아무것도 지우지 않았고 우리가
+    읽지 못했을 뿐이다. restore가 내는 것은 사용자가 승인하면 되돌릴 수 없는 제안이다.
+    """
+    repo = broken_or_valid_repo(tmp_path, repo_syntax, TWO_DEVICE_REPO)
+    path = os.path.join(repo, pc.BACKUP_RELPATH)
+    run = lambda: plan_plugins.build_plan(                              # noqa: E731
+        path,
+        settings_path=write_settings(tmp_path, **DEVICE_A_LOCAL),
+        installed_path=write_installed(tmp_path),
+        held_path=str(tmp_path / "none-held.json"),
+        base_dir=write_base_blob(tmp_path, DEVICE_A_BASE))
+    if repo_syntax == "valid":
+        plan = run()
+        # 대조군 — 정상 문서에서는 **레포가 실제로 지운 dropped@m만** 제안이 된다.
+        # mine@m이 여기 없는 것이 핵심이다: 개정 전 깨진 갈래는 그 둘을 함께 실었다.
+        # base를 빼면 이 줄이 []를 받아 죽는다(입력 축 변조 — 합집합 degrade).
+        assert plan["sections"]["enabledPlugins"]["local_stale"] == ["dropped@m"]
+        assert plan["install"] == ["theirs@m"]
+    else:
+        with pytest.raises(pc.BrokenBackupSyntax):
+            run()
+
+
+@pytest.mark.parametrize("script,args", [
+    ("sync-backup/scripts/collect_plugins.py", ["<repo>", "<staging>"]),
+    ("sync-status/scripts/compare_plugins.py", ["<backup>"]),
+    ("sync-restore/scripts/plan_plugins.py", ["plan", "<backup>"]),
+])
+def test_a_broken_repo_document_is_a_document_level_skip_from_the_cli(tmp_path, script, args):
+    """세 스크립트가 **같은 갈래**를 낸다 — 종료 코드 0, status "skipped", 무엇을 할지.
+
+    문서 단위 skip이다: sections가 아예 없다. 섹션 단위(skipped_section)로 접으면
+    "항목 0개인 정상 섹션"과 모양이 가까워져 소비자가 삭제로 읽을 수 있다.
+    reason에 "구문이 깨졌다"가 있어야 세 SKILL.md가 형식 문제(플러그인 업데이트 안내)와
+    구문 문제(레포 파일을 고치라는 안내)를 가른다 — 두 안내는 서로 쓸모가 없다.
+    """
+    repo = write_broken_repo(tmp_path, TWO_DEVICE_REPO)
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps(DEVICE_A_LOCAL), encoding="utf-8")     # 로컬 읽기는 성공해야 한다
+    subst = {"<repo>": repo, "<staging>": str(tmp_path / "staging"),
+             "<backup>": os.path.join(repo, pc.BACKUP_RELPATH)}
+    proc = subprocess.run(
+        [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "..", "skills", script)]
+        + [subst.get(a, a) for a in args],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)))
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "skipped"
+    assert "sections" not in out
+    assert "구문이 깨졌다" in out["reason"]
+    assert pc.BACKUP_RELPATH in out["reason"]
+
+
 def test_collect_reports_value_change_not_just_key_set(tmp_path):
     """결함 B — true→false가 보고되어야 한다."""
     out = collect(tmp_path,

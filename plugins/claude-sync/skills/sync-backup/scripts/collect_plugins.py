@@ -48,6 +48,11 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
     그래서 이 뒤집기가 조용하다. 네 종류 중 셋이 멀쩡히 동작하고 H2 하나만 무증상으로
     죽으므로, 순서를 지키는 것 말고는 드러날 자리가 없다.
 
+    **레포 문서의 구문이 깨졌으면 2단계가 BrokenBackupSyntax를 던진다** — 쓰기 앞이므로
+    레포도 스테이징도 손대지 않은 채 main()이 문서 단위 skipped로 접는다(spec 9.1.2).
+    그 문서를 "항목 0개"로 읽고 병합을 계속하면 레포에만 있던 다른 기기의 항목이
+    케이스 4로 지워지고 결과가 status "ok"로 보고된다(실측).
+
     **보고를 쓰기보다 먼저 만든다.** held_kinds가 분류 불가에 ValueError를 던지는데,
     레포를 이미 고친 뒤라면 그 예외가 부르는 skipped의 표준 문구("레포 파일은 손대지
     않았다")가 거짓이 된다.
@@ -149,7 +154,11 @@ def main():
     # 키 집합을 바꿈), held_kinds의 분류 불가, dump_backup의 "섹션이 객체가 아님"(쓰기 전에
     # 던지므로 손상 파일이 레포에 들어가지 않는다). 셋 다 backup 흐름 전체를 세우지 않는다.
     # AutoFlagsUnavailable·HeldStateUnavailable은 여기 없다 — 섹션 단위로 이미 흡수됐다.
-    except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema, OSError, ValueError) as e:
+    # BrokenBackupSyntax는 **문서 단위**다 — 문서 하나가 세 섹션을 담으므로 섹션 단위로
+    # 접을 수 없다. **레포 쓰기 앞에서** 던지므로 아래 skipped의 "레포 파일은 손대지
+    # 않았다"가 참이고, 스테이징도 쓰이지 않아 base가 전진하지 않는다(spec 9.1.2).
+    except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema,
+            pc.BrokenBackupSyntax, OSError, ValueError) as e:
         # 모양이 pc.skipped_section과 같지만 그것을 쓰지 않는다 — 층위가 다르다. 이쪽은
         # sections 자체가 없는 **문서 전체**의 갈래이고, 같은 리터럴이 plugin_config를
         # import하지 않는 mcp 계열 셋에도 있다. 소비자가 읽는 자리도 다르다.

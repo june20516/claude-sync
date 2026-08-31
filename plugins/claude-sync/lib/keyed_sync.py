@@ -32,6 +32,27 @@ class UnknownBackupSchema(Exception):
     """
 
 
+class BrokenBackupSyntax(Exception):
+    """레포의 백업 파일이 JSON으로 파싱되지 않는다 — 구문 오류, 잘린 파일, 잘못된 UTF-8.
+
+    **"항목 0개"로 읽어서는 안 된다.** 초판은 이것을 {}로 degrade하고 근거를 이렇게
+    적었다: *"레포 파일 하나가 깨졌다고 백업 전체를 막지 않으며, 다음 백업이 그 파일을
+    정상 내용으로 되돌린다."* **뒷 절이 실측으로 거짓이었다.** base가 있으면 레포의 모든
+    키가 케이스 4(타 기기가 삭제)로 떨어져 merge 결과가 {}가 되고 그 {}가 레포에 쓰인다.
+    이 기기에 있는 항목은 다음 백업이 되밀지만 **레포에만 있던 다른 기기의 항목은 영구
+    소실된다** — 자기 회복이 아니라 안정된 소실이다.
+
+    실측(2026-08-31): 로컬 {a@m} · base {a@m} · 레포 파일이 {a@m, b@m}을 담은 채 구문만
+    깨진 경우 → 백업 후 레포 = {} 이고 status는 "ok". 그다음 기기 B의 백업이 b@m 삭제를
+    자기 base와 대조해 전파하고, B의 restore가 "b@m을 지웁시다"를 제안한다.
+
+    UnknownBackupSchema가 "구문은 유효한데 형식을 모른다"에서 하는 역할을 "구문 자체를
+    읽지 못했다"에서 한다. 앞 절(*"백업 전체를 막지 않는다"*)은 **문서 단위 skip**으로
+    그대로 지켜진다 — 깨진 문서 하나만 건너뛰고 다른 백업 문서와 파일 동기화는 진행한다
+    (spec 9.1.2·9.3.6).
+    """
+
+
 def claims_newer_schema(version, schema_version):
     """version이 schema_version보다 높다고 주장하는가.
 
@@ -73,16 +94,18 @@ def dump_bytes(data, path):
     """바이트를 원자적으로, 내구성 있게 쓴다 — 같은 디렉토리의 .tmp에 쓰고 os.replace한다.
 
     직접 open(path, "wb")하면 truncate가 먼저 일어나므로, 쓰기 도중 실패(ENOSPC/EIO)가
-    **파일을 잘린 채로 남긴다.** 잘린 백업 파일은 다음 load_backup에서 구문 오류로 {}로
-    degrade하고, 그러면 모든 항목이 케이스 4로 판정되어 restore가 "다른 기기가
-    삭제했습니다"라는 거짓 문구를 띄운다. 이 프로젝트가 이미 한 번 고친 거짓 문구다.
+    **파일을 잘린 채로 남긴다.** 잘린 백업 파일은 다음 load_backup에서 구문 오류가 되고,
+    그러면 그 문서의 backup·status·restore가 전부 BrokenBackupSyntax로 접혀 **사용자가
+    손으로 고칠 때까지 그 파일의 동기화가 멈춘다.** (초판은 여기에 "{}로 degrade해 모든
+    항목이 케이스 4로 판정되고 restore가 '다른 기기가 삭제했습니다'를 띄운다"라고 적었다.
+    그 degrade는 5차 개정에서 예외로 바뀌었다 — 결론은 같다: 잘린 파일을 만들지 않는다.)
 
     실패하면 임시 파일을 지운다 — 레포 디렉토리에 남으면 `git add -A`가 그것을 커밋한다.
 
     쓰기 뒤·교체(os.replace) 전에 flush + fsync한다 — os.replace의 rename 자체는
     원자적이지만, tmp의 데이터 블록이 디스크에 내려갔음을 보장하지 않는다. rename과
     writeback 사이에 크래시가 끼면 대상 파일이 0바이트나 쓰레기로 남는데, 그것은 이
-    함수가 막으려던 "잘린 백업 → 전 항목 케이스 4 → 거짓 삭제 문구"와 같은 상태다.
+    함수가 막으려던 "잘린 백업 → 구문 깨짐 → 그 문서의 동기화 정지"와 같은 상태다.
     한계: 파일 데이터만 fsync하고 **디렉토리 엔트리는 fsync하지 않는다** — rename 자체의
     durable 보장까지는 가지 않는다. 다만 "내용이 잘린 파일이 publish되는" 최악 케이스는
     이것으로 사라진다. macOS(APFS)에서 os.fsync는 F_FULLFSYNC가 아니라 장치 캐시까지만
@@ -144,12 +167,15 @@ def parse_base(data, recognize):
 
 
 def load_backup(path, recognize):
-    """레포의 백업 파일을 안전하게 읽는다. 파일이 없으면 {}.
+    """레포의 백업 파일을 안전하게 읽는다. 파일이 **없으면** {}.
 
-    구문이 깨진 파일은 {}로 degrade한다 — 레포 파일 하나가 깨졌다고 백업 전체를 막지
-    않으며, 다음 백업이 그 파일을 정상 내용으로 되돌린다.
-    구문은 유효한데 형식을 알아볼 수 없으면 UnknownBackupSchema를 던진다.
-    (PermissionError 등 그 외 OSError는 전파한다.)
+    구문이 깨졌으면 BrokenBackupSyntax, 구문은 유효한데 형식을 알아볼 수 없으면
+    UnknownBackupSchema를 던진다. (PermissionError 등 그 외 OSError는 전파한다.)
+    **{}가 되는 것은 파일 부재 하나뿐이다** — 그것만이 읽어 낸 사실("이력이 비어
+    있었다")이고, 나머지 셋은 전부 "읽지 못했다"이기 때문이다.
+
+    호출부는 두 예외를 **문서 단위 skip**으로 접는다: 그 문서의 레포 파일도 base도
+    손대지 않고, 다른 백업 문서와 파일 동기화는 그대로 진행한다(spec 9.1.2·9.3.6).
     """
     try:
         with open(path, "rb") as f:
@@ -158,7 +184,11 @@ def load_backup(path, recognize):
         return {}
     obj = decode(raw)
     if obj is BROKEN:
-        return {}
+        raise BrokenBackupSyntax(
+            "%s의 JSON 구문이 깨졌다 — '항목 0개'로 읽으면 다른 기기의 항목이"
+            " 사라지므로 이 문서를 건너뛴다. 파일을 정상 JSON으로 고친 뒤 다시 실행한다"
+            % path
+        )
     recognized = recognize(obj)
     if recognized is None:
         raise UnknownBackupSchema(

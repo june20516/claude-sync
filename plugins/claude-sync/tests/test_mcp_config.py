@@ -649,11 +649,20 @@ def test_load_backup_raises_on_unrecognized_schema(tmp_path):
         mc.load_backup(path)
 
 
-def test_load_backup_stays_lenient_on_broken_json(tmp_path):
-    """구문이 깨진 파일은 여전히 {}로 degrade한다 — 미지의 스키마와 구별한다."""
+def test_load_backup_raises_broken_syntax_on_broken_json(tmp_path):
+    """구문 깨짐은 BrokenBackupSyntax다 — 미지의 스키마(UnknownBackupSchema)와 구별한다.
+
+    **spec 5.5의 회귀 금지 목록에 있던 동작을 5차 개정이 바꾼 유일한 자리다.**
+    이전에는 {}로 degrade했고, 그 근거("다음 백업이 되돌린다")가 base가 있을 때
+    거짓이었다(spec 9.1.2·9.3.6). 시그니처와 나머지 예외 타입은 그대로다.
+    """
     path = str(tmp_path / "mcp-servers.json")
     open(path, "wb").write(b"{not json")
-    assert mc.load_backup(path) == {}
+    with pytest.raises(mc.BrokenBackupSyntax):
+        mc.load_backup(path)
+    # 두 예외가 한 클래스로 합쳐지지 않았다 — 안내 문구와 복구 방법이 다르다.
+    assert not issubclass(mc.BrokenBackupSyntax, mc.UnknownBackupSchema)
+    assert not issubclass(mc.UnknownBackupSchema, mc.BrokenBackupSyntax)
 
 
 # --- 상위 스키마 게이트 (spec 7장) ---

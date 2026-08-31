@@ -135,7 +135,11 @@ def main():
     # ValueError의 출처는 둘이다 — 코어의 normalize 계약 위반(훅이 키 집합을 바꿈)과
     # held_kinds의 분류 불가. 어느 쪽도 status 흐름 전체를 세울 이유가 없다.
     # AutoFlagsUnavailable·HeldStateUnavailable은 여기 없다 — 섹션 단위로 이미 흡수됐다.
-    except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema, OSError, ValueError) as e:
+    # BrokenBackupSyntax는 **문서 단위**다(세 섹션을 한 문서가 담는다). 접지 않으면 레포
+    # 문서가 "항목 0개"로 읽혀 레포에만 있는 항목이 사라지고 로컬 항목이 전부 only_local
+    # 로 뒤집힌다 — 읽지 못한 것을 0개로 접지 않는 규율이 여기에도 걸린다(spec 9.3.6).
+    except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema,
+            pc.BrokenBackupSyntax, OSError, ValueError) as e:
         # 모양이 pc.skipped_section과 같지만 그것을 쓰지 않는다 — 층위가 다르다. 이쪽은
         # sections 자체가 없는 **문서 전체**의 갈래이고, 같은 리터럴이 plugin_config를
         # import하지 않는 mcp 계열 셋에도 있다. 소비자가 읽는 자리도 다르다.

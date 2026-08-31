@@ -120,6 +120,120 @@ def test_collect_raises_without_touching_repo_or_staging(tmp_path):
     assert not os.path.exists(os.path.join(staging, mc.BACKUP_RELPATH))
 
 
+# --- 레포 문서의 구문 깨짐 (spec 9.1.2 · 9.3.6, 5차 개정) ------------------
+#
+# **MCP는 코어를 공유하므로 플러그인과 같은 결함을 갖는다.** 한쪽만 고치면 같은 결함이
+# 다른 파일에 남고, 코어를 공유한다는 사실 때문에 더 찾기 어렵다(spec 9.3.6).
+# tests/test_plugin_scripts.py의 같은 이름 짝과 함께 읽을 것.
+
+def write_broken_repo(tmp_path, servers):
+    """정상 문서를 **잘린 채로** 둔 레포. ks.dump_bytes가 막으려는 그 상태다.
+
+    깨진 내용에 theirs가 그대로 남아 있어야 "레포 파일을 손대지 않았다"가 곧 소실
+    방지가 된다 — 내용을 통째로 버리면 무엇을 잃었는지 잴 수 없다.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir(exist_ok=True)
+    path = repo / mc.BACKUP_RELPATH
+    mc.dump_backup(servers, str(path))
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text[:text.rindex("}")], encoding="utf-8")   # 닫는 괄호를 잘라 낸다
+    return str(repo)
+
+
+def broken_or_valid_repo(tmp_path, repo_syntax, servers):
+    return (write_repo(tmp_path, servers) if repo_syntax == "valid"
+            else write_broken_repo(tmp_path, servers))
+
+
+@pytest.mark.parametrize("repo_syntax", ["valid", "broken"])
+def test_backup_never_drops_a_server_that_only_the_repo_has(tmp_path, repo_syntax):
+    """9.1.2 — 레포 문서의 구문이 깨져도 레포에만 있던 서버가 사라지지 않는다.
+
+    **실측(개정 전)**: 깨진 갈래에서 레포 파일이 {"servers": {}}로 덮이고 보고는
+    status "ok" · local_stale ["mine"]이었다. mine은 이 기기에 있으니 다음 백업이
+    되밀지만 **theirs는 레포에만 있던 서버라 영구 소실된다.**
+
+    네 입력이 전부 판별력을 떠받친다(입력 축 변조로 확인) — 레포의 theirs(잃을 것),
+    로컬·base의 dropped(**레포가 실제로 지운** 서버. 정상 갈래의 제안을 만든다),
+    로컬의 mine(깨진 문서를 "서버 0개"로 읽으면 케이스 4로 떨어지는 것). base를 빼면
+    합집합 degrade가 되어 local_stale이 비고, "못 읽어서 제안이 없다"와 "지울 것이
+    없어서 제안이 없다"가 같아진다.
+    """
+    repo = broken_or_valid_repo(tmp_path, repo_syntax, {"mine": A, "theirs": B})
+    path = os.path.join(repo, mc.BACKUP_RELPATH)
+    before = open(path, encoding="utf-8").read()
+    staging = str(tmp_path / "staging")
+    run = lambda: collect_mcp.collect(                                  # noqa: E731
+        repo, staging,
+        claude_json_path=write_local(tmp_path, {"mine": A, "dropped": B}),
+        base_dir=write_base_blob(tmp_path, {"mine": A, "dropped": B}))
+    if repo_syntax == "valid":
+        out = run()
+        assert out["status"] == "ok"
+        assert repo_servers(repo) == {"mine": A, "theirs": B}
+        # 진짜 삭제(dropped)만 케이스 4다 — base를 빼면 이 줄이 죽는다(입력 축 변조).
+        assert out["local_stale"] == ["dropped"]
+    else:
+        with pytest.raises(mc.BrokenBackupSyntax):
+            run()
+        assert open(path, encoding="utf-8").read() == before      # 바이트 그대로
+        assert not os.path.exists(os.path.join(staging, mc.BACKUP_RELPATH))
+    assert "theirs" in open(path, encoding="utf-8").read()
+
+
+@pytest.mark.parametrize("repo_syntax", ["valid", "broken"])
+def test_restore_never_proposes_removing_on_a_broken_repo_document(tmp_path, repo_syntax):
+    """9.3.6 — 깨진 레포 문서에서 "이 기기의 서버를 지웁시다"가 나가지 않는다.
+
+    **실측(개정 전)**: 깨진 갈래의 계획이 status "ok" · local_stale ["mine"]이었다.
+    그 근거("다른 기기가 지웠다")는 거짓이다 — 레포는 아무것도 지우지 않았다.
+    """
+    repo = broken_or_valid_repo(tmp_path, repo_syntax, {"mine": A, "theirs": B})
+    path = os.path.join(repo, mc.BACKUP_RELPATH)
+    run = lambda: plan_mcp.build_plan(                                  # noqa: E731
+        path, claude_json_path=write_local(tmp_path, {"mine": A, "dropped": B}),
+        base_dir=write_base_blob(tmp_path, {"mine": A, "dropped": B}))
+    if repo_syntax == "valid":
+        plan = run()
+        # 대조군 — 정상 문서에서는 **레포가 실제로 지운 dropped만** 제안이 된다.
+        # base를 빼면 이 줄이 []를 받아 죽는다(입력 축 변조 — 합집합 degrade).
+        assert plan["local_stale"] == ["dropped"]
+        assert plan["add"] == ["theirs"]
+    else:
+        with pytest.raises(mc.BrokenBackupSyntax):
+            run()
+
+
+@pytest.mark.parametrize("script,args", [
+    ("sync-backup/scripts/collect_mcp.py", ["<repo>", "<staging>"]),
+    ("sync-status/scripts/compare_mcp.py", ["<backup>"]),
+    ("sync-restore/scripts/plan_mcp.py", ["plan", "<backup>"]),
+])
+def test_a_broken_repo_document_is_a_document_level_skip_from_the_cli(tmp_path, script, args):
+    """세 스크립트가 같은 갈래를 낸다 — 종료 코드 0, status "skipped", 무엇을 할지.
+
+    reason에 "구문이 깨졌다"가 있어야 SKILL.md가 형식 문제(플러그인 업데이트 안내)와
+    구문 문제(레포 파일을 고치라는 안내)를 가른다 — 두 안내는 서로 쓸모가 없다.
+    """
+    repo = write_broken_repo(tmp_path, {"mine": A, "theirs": B})
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"mine": A}}),
+                                       encoding="utf-8")   # 로컬 읽기는 성공해야 한다
+    subst = {"<repo>": repo, "<staging>": str(tmp_path / "staging"),
+             "<backup>": os.path.join(repo, mc.BACKUP_RELPATH)}
+    proc = subprocess.run(
+        [sys.executable, os.path.join(SCRIPTS_DIR, script)]
+        + [subst.get(a, a) for a in args],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)))
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "skipped"
+    assert "구문이 깨졌다" in out["reason"]
+    assert mc.BACKUP_RELPATH in out["reason"]
+
+
 def test_collect_cli_exits_zero_on_skip(tmp_path):
     """MCP 단계 실패로 backup 전체를 실패시키지 않는다 — 종료 코드 0."""
     home = tmp_path / "home"

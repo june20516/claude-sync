@@ -114,7 +114,11 @@ def main():
     # json.JSONDecodeError도 ValueError의 하위다)와, 코어(keyed_sync)가 normalize 계약
     # 위반 — 훅이 키 집합을 바꾼 경우 — 을 ValueError로 던질 때다. 어느 쪽도 restore
     # 흐름 전체를 traceback으로 세우지 않는다.
-    except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema, OSError, ValueError) as e:
+    # BrokenBackupSyntax = 레포 문서의 구문 깨짐 → **MCP 단계 전체 skip**(spec 9.3.6).
+    # 접지 않고 "서버 0개"로 읽으면 레포의 모든 서버가 케이스 4로 떨어져, 파일 하나가
+    # 깨졌을 뿐인데 "다른 기기가 지웠으니 이 기기에서도 지웁시다"가 status ok로 나간다.
+    except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema,
+            mc.BrokenBackupSyntax, OSError, ValueError) as e:
         out = {"status": "skipped", "reason": str(e)}
         print("MCP 단계 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))

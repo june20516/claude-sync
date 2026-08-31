@@ -102,8 +102,11 @@ def load_metadata(path):
     열지 못했으면 UNREADABLE.
 
     깨진 metadata를 차단 근거로 삼으면 데드락이 된다 — 그 파일을 정상으로 되돌리는 것이
-    다음 백업인데 그 백업이 막힌다. load_backup이 깨진 파일을 {}로 degrade하는 것과 같은
-    이유다("레포 파일 하나가 깨졌다고 전체를 막지 않는다").
+    다음 백업인데 그 백업이 막힌다. **여기서는 "다음 백업이 되돌린다"가 참이다**:
+    generate_metadata가 이 파일을 매 백업 통째로 다시 쓰고, 그 내용은 이 기기만으로
+    결정되기 때문이다. 백업 문서(plugins.json·mcp-servers.json)는 그렇지 않아 5차
+    개정이 그쪽 degrade를 BrokenBackupSyntax로 바꿨다 — 다른 기기의 항목이 그 문서에만
+    있어서, 못 읽은 채 병합하면 영구 소실된다(keyed_sync.BrokenBackupSyntax).
 
     **못 읽음은 다르다.** 표식 없음은 "2.x가 썼다"는 의미 있는 결론이라 통과로 이어지는데,
     못 읽은 파일이 그 결론을 참칭하면 상위 버전이 쓴 레포를 통과시킨다. 환경의 문제라

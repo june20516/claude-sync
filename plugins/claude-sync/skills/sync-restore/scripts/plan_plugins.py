@@ -451,7 +451,11 @@ def main():
     # 바꾼 경우 — 과, 선택 결과 JSON이 객체가 아니거나 깨진 경우(read_choices,
     # json.JSONDecodeError도 ValueError의 하위다). 어느 쪽도 restore 흐름 전체를
     # traceback으로 세우지 않는다(10.3).
-    except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema, OSError, ValueError) as e:
+    # BrokenBackupSyntax = 레포 문서의 구문 깨짐 → **플러그인 단계 전체 skip**(9.3.6).
+    # 접지 않고 "항목 0개"로 읽으면 로컬의 모든 항목이 local_stale로 떨어져, 파일 하나가
+    # 깨졌을 뿐인데 "이 기기의 플러그인을 전부 지웁시다"가 최상위 ok와 함께 나간다.
+    except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema,
+            pc.BrokenBackupSyntax, OSError, ValueError) as e:
         out = {"status": "skipped", "reason": str(e)}
         print("플러그인 복원 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))

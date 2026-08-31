@@ -91,11 +91,20 @@ def test_load_backup_returns_empty_when_file_missing(tmp_path):
     assert ks.load_backup(str(tmp_path / "none.json"), only_dict_with_items) == {}
 
 
-def test_load_backup_degrades_broken_syntax_to_empty(tmp_path):
-    """구문이 깨진 파일 하나가 백업 전체를 막지 않는다. 다음 백업이 되돌린다."""
+def test_load_backup_raises_on_broken_syntax(tmp_path):
+    """구문이 깨진 파일을 "항목 0개"로 읽지 않는다(5차 개정).
+
+    초판은 {}로 degrade하고 근거를 "다음 백업이 되돌린다"로 적었다. **base가 있으면
+    거짓이다**(실측) — 레포의 모든 키가 케이스 4로 떨어져 병합 결과가 {}가 되고,
+    레포에만 있던 다른 기기의 항목이 영구 소실된다. 호출부는 이 예외를 문서 단위
+    skip으로 접는다(tests/test_plugin_scripts.py·test_mcp_scripts.py가 그것을 잰다).
+    """
     path = tmp_path / "backup.json"
     path.write_text("{oops", encoding="utf-8")
-    assert ks.load_backup(str(path), only_dict_with_items) == {}
+    with pytest.raises(ks.BrokenBackupSyntax):
+        ks.load_backup(str(path), only_dict_with_items)
+    # 파일 부재와 구별된다 — 그쪽만 "이력이 비어 있었다"라는 읽어 낸 사실이다.
+    assert ks.load_backup(str(tmp_path / "none.json"), only_dict_with_items) == {}
 
 
 @requires_permission_bits
@@ -114,16 +123,17 @@ def test_load_backup_propagates_permission_error(tmp_path):
         path.chmod(0o644)
 
 
-def test_load_backup_reads_file_as_bytes_so_invalid_utf8_degrades_to_empty(tmp_path):
+def test_load_backup_reads_file_as_bytes_so_invalid_utf8_is_broken_syntax(tmp_path):
     """"rb"가 아니면 잘못된 UTF-8이 파일을 여는 시점에 UnicodeDecodeError로
     전파된다. 바이너리로 읽어야 decode()가 그 바이트를 받아 BROKEN으로 판정하고
-    {}로 degrade한다.
+    BrokenBackupSyntax로 접는다 — 호출부가 아는 예외 하나로 모아야 skip이 된다.
     """
     path = tmp_path / "backup.json"
     path.write_bytes(b"\xff")
     # open(path, "rb")를 open(path, "r")로 바꾸면 f.read()에서 UnicodeDecodeError가
-    # 그대로 터져 이 assert에 도달하지 못하고 이 테스트가 FAIL한다.
-    assert ks.load_backup(str(path), only_dict_with_items) == {}
+    # 터진다. 그것은 BrokenBackupSyntax가 아니므로 이 raises가 FAIL한다.
+    with pytest.raises(ks.BrokenBackupSyntax):
+        ks.load_backup(str(path), only_dict_with_items)
 
 
 def test_parse_backup_is_lenient():
