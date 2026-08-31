@@ -10,8 +10,8 @@
 | Task | 상태 | 커밋 | spec | quality |
 |---|---|---|---|---|
 | 1 `lib/compat.py`의 relpath별 형태 판정 | **완료** | `e3f6200`·`af09464`·`e39f88f`·`c82f6e1` | ✅ (r3) | **Yes** (r2) — Critical 0 / Important 0 / Minor 1 |
-| 2 `detect_downgrade.py` relpath 맵 | 미착수 | | | |
-| 3 v1→v2 승격이 사고를 삼키지 않는다 | 미착수 | | | |
+| 2 `detect_downgrade.py` relpath 맵 | **완료** | `d543feb`·`ea4c136`·`e92f721`·`687913b` | ✅ (1라운드) | **With fixes → 해소** |
+| 3 v1→v2 승격이 사고를 삼키지 않는다 | **완료** | `a721e79` | ✅ (1라운드) | 〃 (2·3 합동) |
 | 4 `generate_metadata.py`의 `schema` 맵 | 미착수 | | | |
 | 5 세 `SKILL.md`의 다운그레이드 대화 | 미착수 | | | |
 | 6 2.x 배포 순서 경고 + `.bak` 정리 안내 | 미착수 | | | |
@@ -19,7 +19,7 @@
 | 8 4단계가 로컬 확장 값을 평탄화하지 않는다 | 미착수 | | | |
 | 9 비원자적 로컬 쓰기 + `.tmp` 위생 | 미착수 | | | |
 
-현재 **1047 passed**. 리뷰 보고서는 `~/.claude/suberpowers/reviews/2026-08-31-claude-sync-task-1-*.md` 여섯 벌.
+현재 **1070 passed**. 리뷰 보고서는 `~/.claude/suberpowers/reviews/2026-08-31-claude-sync-task-1-*.md` 여섯 벌.
 
 ## Task 1이 남긴 것 — Task 2가 이어받을 자리
 
