@@ -285,6 +285,7 @@ claude plugin install <id> --config <key>=<value> --scope user
 **계획의 `disable_after_install`을 그대로 실행하지 않는다.** 그 목록은 **계획 시점의** 로컬 값으로 정해졌는데 그 사이에 5-2와 5-3이 같은 키를 썼다. 실행 직전에 로컬을 다시 읽어 명령을 확정한다.
 
 ```bash
+SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 python3 "$SYNC_SCRIPTS/plan_plugins.py" recheck-values "$SYNC_REPO/plugins.json" /tmp/claude-sync-plugins-plan.json > /tmp/claude-sync-plugins-values.json
 cat /tmp/claude-sync-plugins-values.json
 ```
