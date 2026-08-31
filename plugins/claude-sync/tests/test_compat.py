@@ -555,6 +555,40 @@ NEWER_SCHEMA_VERSION = pc.SCHEMA_VERSION + 1
 VERSION_VALUES_STILL_V2 = (pc.SCHEMA_VERSION, NEWER_SCHEMA_VERSION, None, "2", 0)
 
 
+def test_every_selector_has_the_shape_its_assertions_assume():
+    """**선택자가 비면 그 위를 도는 단정이 0회 돌아 초록이 된다**(공허해지는 형태 ②).
+
+    아래 완전성 단정들은 전부 선택자 위를 돈다 — 선택자를 한 줄로 지우면 가드와 바늘이
+    함께 사라지고, 그 뒤에는 표에서 행을 빼도 아무도 잡지 못한다. 그래서 **선택자 자체의
+    모양**을 여기서 건다. 이 파일의 관례이기도 하다(test_shape_table_contains_a_newer_
+    schema_document의 `assert newer`가 같은 형태다).
+
+    키·바늘은 두 모듈에서 뽑는다 — 리터럴을 적으면 상수가 바뀌어도 초록이다(M19).
+    """
+    # SHAPE_TABLE — 비면 test_shape_of가 통째로 사라진다.
+    # (test_shape_table_covers_every_shape_per_relpath가 _SHAPES와 등호로 잠그지만,
+    #  두 relpath가 모두 표에 있다는 것은 여기서 본다.)
+    assert {relpath for relpath, _, _ in SHAPE_TABLE} == {mc.BACKUP_RELPATH,
+                                                          pc.BACKUP_RELPATH}
+
+    # FOREIGN_OLD_FORM_SAMPLES — 비면 test_foreign_old_form_is_not_an_old_form_here와
+    # test_shape_table_contains_every_foreign_old_form이 함께 공허해진다.
+    assert set(FOREIGN_OLD_FORM_SAMPLES) == {mc.BACKUP_RELPATH, pc.BACKUP_RELPATH}
+    assert all(FOREIGN_OLD_FORM_SAMPLES.values()), "표본이 빈 relpath가 있다"
+
+    # VERSION_MARKED_BUT_NOT_V2 — mcp에만 있는 성질이다("v2 표식은 달았지만 그 relpath의
+    # v2 조건인 servers가 없다"). plugins.json은 version 존재가 곧 v2 조건이라 해당 없음.
+    assert set(VERSION_MARKED_BUT_NOT_V2) == {mc.BACKUP_RELPATH}
+
+    # VERSION_VALUES_STILL_V2 — 비면 test_plugins_v2_looks_at_presence_not_value가
+    # 파라미터 없이 조용히 사라진다. 스키마 버전과 그 상위 버전이 반드시 들어 있어야 한다.
+    assert {pc.SCHEMA_VERSION, NEWER_SCHEMA_VERSION} <= set(VERSION_VALUES_STILL_V2)
+
+    # TWO_X_KEY_VALUES — 개수는 lattice 테스트가 잠근다. 여기서는 키가 실재하는
+    # 섹션 이름인지를 본다(오타면 2.x 문서가 아니라 아무 문서나 재게 된다).
+    assert set(TWO_X_KEY_VALUES) < set(pc.SECTIONS)
+
+
 @pytest.mark.parametrize("relpath,data,expected", SHAPE_TABLE)
 def test_shape_of(relpath, data, expected):
     assert compat.shape_of(data, relpath) == expected

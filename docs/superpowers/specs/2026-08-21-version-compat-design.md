@@ -974,7 +974,7 @@ restore에서 `compat.py` 호출 한 줄씩을 지웠을 때 367개가 전부 �
 - `_upgrade_message("some_future_reason", ...)` → `ValueError`
 - `downgrade_suspected("v1array", "v2_object", "mcp-servers.json")` → `ValueError` (오타)
 - `downgrade_suspected(..., "모르는 파일")` / `shape_of(..., "모르는 파일")` → `ValueError`
-  (relpath는 기본값 없는 필수 인자다 — plan ③ 11.6)
+  (relpath는 기본값 없는 필수 인자다 — plan ③이 정했다)
 - `shape_of(이미_파싱된_객체, relpath)` → `TypeError` (호출자 오류)
 
 그리고 **판정 불가 상태가 통과로 접히지 않는지**를 갈래마다 단언한다.
