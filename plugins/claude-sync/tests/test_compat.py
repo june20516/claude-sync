@@ -495,6 +495,7 @@ MCP_SHAPE_ROWS = [
     (b"3", "unknown"),
     # servers가 없는 객체는 여전히 unknown이다 — plugins 규칙(version 존재)이
     # 이 relpath로 새어 들어오면 v2_object가 되어 버린다.
+    # 이 행이 표에서 사라지는 것은 test_shape_table_contains_every_version_marked_non_v2_document가 잡는다.
     (b'{"version":2}', "unknown"),
     # 같은 바이트가 plugins.json에서는 v1_object다. 두 규칙이 합쳐지면 한쪽이 깨진다.
     (b"{}", "unknown"),
@@ -538,6 +539,15 @@ FOREIGN_OLD_FORM_SAMPLES = {
     pc.BACKUP_RELPATH: (b"{}", b'{"enabledPlugins":{"a@m":true}}'),
 }
 
+# 각 relpath에서 "v2 표식(`version` 키)은 달았지만 그 relpath의 v2 조건은 만족하지
+# 않는" 문서. mcp-servers.json의 v2 조건은 `servers`가 객체인 것이므로 그런 문서가
+# 있고, plugins.json은 version 존재 자체가 v2 조건이라 그런 문서가 없다.
+# 바늘(스키마 버전)을 mcp_config에서 뽑는다 — 리터럴을 적으면 SCHEMA_VERSION이
+# 올라가도 "v2 표식"을 재지 않는 값이 되어 조용히 초록이 된다.
+VERSION_MARKED_BUT_NOT_V2 = {
+    mc.BACKUP_RELPATH: json.dumps({"version": mc.SCHEMA_VERSION}).encode("utf-8"),
+}
+
 # plugins.json의 version 값이 무엇이든 v2_object여야 한다 — **존재만 본다.**
 # 바늘(스키마 버전)을 plugin_config에서 뽑는다. 리터럴을 적으면 SCHEMA_VERSION이
 # 올라가도 "상위 버전"을 재지 않는 값이 되어 조용히 초록이 된다.
@@ -574,6 +584,30 @@ def test_shape_table_contains_a_newer_schema_document():
              and isinstance(json.loads(raw).get("version"), int)
              and json.loads(raw)["version"] > pc.SCHEMA_VERSION]
     assert newer, "판정표에 상위 스키마(version > %d) 문서가 없다" % pc.SCHEMA_VERSION
+
+
+@pytest.mark.parametrize("relpath,raw", sorted(VERSION_MARKED_BUT_NOT_V2.items()))
+def test_version_marker_alone_is_not_v2(relpath, raw):
+    """version 표식만으로 v2가 되어서는 안 되는 relpath가 있다(축 분리).
+
+    plugins 규칙(version 존재 = v2)이 mcp-servers.json으로 새어 들어오면 `servers`가
+    없는 문서가 v2_object가 되고, 그 문서가 base였을 때 다운그레이드 판정의 base 쪽이
+    조용히 참이 된다.
+    """
+    assert compat.shape_of(raw, relpath) == compat.SHAPE_UNKNOWN
+
+
+def test_shape_table_contains_every_version_marked_non_v2_document():
+    """입력 축 완전성 — 표에서 `mcp-servers.json + {"version":2}` 행을 빼면 여기서 잡힌다.
+
+    바늘을 mcp_config.SCHEMA_VERSION에서 뽑았으므로 표가 스스로 줄어드는 것을
+    표 자신이 아니라 이 단정이 본다.
+    """
+    for relpath, raw in VERSION_MARKED_BUT_NOT_V2.items():
+        rows = {canonical(r) for rp, r, exp in SHAPE_TABLE
+                if rp == relpath
+                and exp not in (compat.SHAPE_ABSENT, compat.SHAPE_BROKEN)}
+        assert canonical(raw) in rows, "%s 판정표에 %r 행이 없다" % (relpath, raw)
 
 
 def test_foreign_old_form_is_not_an_old_form_here():

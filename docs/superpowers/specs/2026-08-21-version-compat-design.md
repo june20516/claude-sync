@@ -650,7 +650,7 @@ status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 
 - base가 v2였다는 것은 **내가 v2를 본 적이 있다**는 뜻이다. 그 뒤 v1이 되었다면 누군가 되돌린 것이다.
 - base를 못 읽으면(`None`) 판정하지 않는다. **신뢰할 수 없는 이력은 근거가 될 수 없다**(불변식 2).
 
-판정은 `compat.downgrade_suspected(repo_shape, base_shape)` 순수 함수다.
+판정은 `compat.downgrade_suspected(repo_shape, base_shape, relpath)` 순수 함수다.
 
 ### 9.2 복구 후보 탐색
 
@@ -972,8 +972,10 @@ restore에서 `compat.py` 호출 한 줄씩을 지웠을 때 367개가 전부 �
 이 테스트가 없으면 불변식 6은 다시 주석으로만 남고, 다음 함수가 같은 실수를 반복한다.
 
 - `_upgrade_message("some_future_reason", ...)` → `ValueError`
-- `downgrade_suspected("v1array", "v2_object")` → `ValueError` (오타)
-- `shape_of(이미_파싱된_객체)` → `TypeError` (호출자 오류)
+- `downgrade_suspected("v1array", "v2_object", "mcp-servers.json")` → `ValueError` (오타)
+- `downgrade_suspected(..., "모르는 파일")` / `shape_of(..., "모르는 파일")` → `ValueError`
+  (relpath는 기본값 없는 필수 인자다 — plan ③ 11.6)
+- `shape_of(이미_파싱된_객체, relpath)` → `TypeError` (호출자 오류)
 
 그리고 **판정 불가 상태가 통과로 접히지 않는지**를 갈래마다 단언한다.
 
