@@ -228,8 +228,12 @@ spec 8.6이 이제 그 행에 **미측정 표식**을 달고, 정본 목록은 *
 **backup 방향으로만** 쓰여 있었다. restore에서는 `local_stale`이 **`uninstall --scope user`
 제안**으로 이어져, 파일 하나가 깨졌을 뿐인데 계획이 "이 기기의 플러그인을 전부 지웁시다"를
 최상위 `ok`와 함께 낸다(실측 재현됨).
-→ **사용자 결정: restore는 전체 skip(`status: "skipped"`), backup은 지금대로 유지.**
-`plan_plugins.py`와 **`plan_mcp.py` 둘 다** 고친다 — 같은 코어를 쓴다.
+→ 당시 **사용자 결정: restore는 전체 skip, backup은 지금대로 유지.**
+**[2026-08-31 갱신 — 처리 완료, 결정이 뒤집혔다]** ④의 실측을 받아 사용자가
+**backup도 문서 단위 skip**으로 정했다(spec 0.4 · 5차 개정 ⑥). `ks.load_backup`이
+구문 깨짐에 `BrokenBackupSyntax`를 던지고, **여섯 스크립트**(`collect_*`·`compare_*`·
+`plan_*`, MCP·플러그인 양쪽)가 그것을 `{"status": "skipped"}`로 접는다. 세 `SKILL.md`에
+"그 문서만 건너뛰고 나머지는 진행한다"와 구문 깨짐용 안내(레포 파일 수정)가 들어갔다.
 
 **② `defaultEnabled` 걱정은 대부분 사라졌다 — 2차 스모크가 없앴다(7장 귀결 1).**
 `install`이 설치 시 키를 **명시적으로** 쓰므로, **설치된 플러그인**에 대해서는
@@ -246,11 +250,14 @@ spec 8.6이 이제 그 행에 **미측정 표식**을 달고, 정본 목록은 *
 본다. *"4단계를 값 보존형으로"* 는 **CLI에 `configure` 서브커맨드가 없어**(스모크 10장)
 존재하지 않는 선택지였다.
 
-**④ 새로 열린 것 — backup 방향의 `{}` degrade**(spec 15장 오픈이슈 6).
+**④ ~~새로 열린 것~~ — backup 방향의 `{}` degrade**(spec 15장 오픈이슈 6). **닫혔다(2026-08-31).**
 그 degrade의 근거(*"다음 백업이 되돌린다"*)는 **base가 없을 때만 참이다**(실측). base가 있으면
 레포의 모든 키가 **케이스 4**로 떨어져 병합 결과가 `{}`가 되고 그것이 레포에 쓰인다 —
 `status: "ok"`인 채로, 그리고 다음 백업도 같은 판정을 반복하므로 **자기 회복이 아니라 안정된
-소실**이다. 사용자 결정이 "유지"였으므로 이 라운드는 **동작을 바꾸지 않고 근거만 좁혔다.**
+소실**이다. 4차 개정은 사용자 결정("유지")에 따라 **근거만 좁혔고**, 그 실측을 다시 받은
+사용자가 **결정을 뒤집어** 5차 개정이 backup·status도 문서 단위 skip으로 돌렸다(①에 반영).
+**재현이 테스트로 고정됐다** — 정상/깨짐 두 갈래가 같은 픽스처를 공유하고 마지막 단정이
+*"레포에만 있던 항목이 살아남는가"* 로 같다(`test_plugin_scripts.py`·`test_mcp_scripts.py`).
 
 ---
 
@@ -263,11 +270,10 @@ spec 8.6이 이제 그 행에 **미측정 표식**을 달고, 정본 목록은 *
 |---|---|---|
 | `sync-restore/SKILL.md:255-266` | `5-3 값 맞추기` → `5-4 설정 채우기` 순서 | **실행을 `5-4 → 5-3`으로.** 절 번호는 유지 (spec 9.3.1) |
 | `sync-restore/SKILL.md:257` | *"설치 직후 값은 `true`이므로 그 외에는 부를 것이 없다"* | `install`은 매니페스트 `defaultEnabled`를 쓴다. **5-3 직전에 로컬 `settings.json`을 다시 읽어** 그 값으로 판정한다 |
-| `sync-restore/SKILL.md:229` 부근 | 최상위 `status` 분기 | 구문 깨짐이 `"skipped"`로 오는 갈래를 함께 안내 (spec 9.3.6) |
+| ~~`sync-restore/SKILL.md:229` 부근~~ **완료(5차 개정)** | 최상위 `status` 분기 | 구문 깨짐이 `"skipped"`로 오는 갈래를 함께 안내 (spec 9.3.6). `sync-backup`·`sync-status`도 같은 형태로 함께 넣었다 |
 | `sync-restore/SKILL.md:302-315` (5-6) | *"이 기기는 버전 제약을 표현할 수 없어 레포의 값을 보존합니다"* | **"그리고 이 기기에서 그 플러그인은 꺼진 상태입니다"** 를 더한다 (스모크 3장) |
-| `lib/keyed_sync.py:146-168` `load_backup` | 구문 깨짐을 `{}`로 degrade. docstring이 *"다음 백업이 정상 내용으로 되돌린다"* | restore가 구별할 수 있는 갈래를 준다. degrade의 근거를 **base가 없을 때만 참**으로 좁힌다 |
-| `skills/sync-restore/scripts/plan_plugins.py:143·390` | `pc.load_backup`의 `{}`를 그대로 받는다 | 구문 깨짐 → 최상위 `{"status": "skipped"}` |
-| `skills/sync-restore/scripts/plan_mcp.py:34·66` | 같음 | 같음 — **같은 코어를 쓰므로 같은 결함이다** |
+| ~~`lib/keyed_sync.py:146-168` `load_backup`~~ **완료(5차 개정)** | 구문 깨짐을 `{}`로 degrade. docstring이 *"다음 백업이 정상 내용으로 되돌린다"* | **`BrokenBackupSyntax`를 던진다.** degrade 갈래는 남기지 않았다 — backup 방향도 skip이 되어 프로덕션 호출부가 없어졌고, 아무도 부르지 않는 fail-open을 가장 눈에 띄는 이름으로 남기지 않는다 |
+| ~~`plan_plugins.py:143·390`·`plan_mcp.py:34·66`·`collect_*`·`compare_*`~~ **완료(5차 개정)** | `load_backup`의 `{}`를 그대로 받는다 | 여섯 스크립트가 문서 단위 `{"status": "skipped"}`로 접는다 |
 | `plan_plugins.py:129-145` docstring | *"3단계가 되돌려 주지도 않는다 — 그 목록은 **계획 시점의** 로컬 값으로 정해진다"* | 순서가 바뀌면 이 문장이 반대가 된다. 함께 고칠 것 |
 | `lib/plugin_config.py:961` `value_command` | *"9.3.1의 3단계"* | 판정 시점(실행 시점)을 명시 |
 | `lib/plugin_config.py:351` `read_hold_inputs` | *"두 실패는 범위가 다르다(spec 9.1.2·9.3.6)"* | **spec 3.5**를 함께 가리킨다 — 그 절이 이제 *"접는 값 × 그 값을 읽는 자리"* 표의 정본이다(지금은 이 docstring이 유일한 정본이었다) |

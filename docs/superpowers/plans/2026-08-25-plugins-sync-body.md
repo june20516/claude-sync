@@ -136,7 +136,7 @@ plan ①의 실행에서 Task 2~7 **매번** SURVIVE가 나왔고 대부분 plan
 
 **근거:** spec 7.4의 정신 / plan ① 인계 표(Task 1 quality review I1)
 
-`mcp_config.dump_backup`은 `open(path, "w")`로 **먼저 truncate한다.** 쓰기 도중 실패(ENOSPC/EIO)하면 레포 파일이 잘린 채 남고, 다음 백업의 `load_backup`이 그것을 구문 오류로 보아 `{}`로 degrade한다. 그러면 **모든 서버가 케이스 4로 판정**되어 restore가 *"다른 기기가 삭제했습니다"* 를 띄운다. plan ① Task 1이 막은 것과 **같은 거짓 문구로 가는 두 번째 문**이다. `sync_state.write_base`도 같은 형태다.
+`mcp_config.dump_backup`은 `open(path, "w")`로 **먼저 truncate한다.** 쓰기 도중 실패(ENOSPC/EIO)하면 레포 파일이 잘린 채 남고, 다음 백업의 `load_backup`이 그것을 구문 오류로 보아 `{}`로 degrade한다. 그러면 **모든 서버가 케이스 4로 판정**되어 restore가 *"다른 기기가 삭제했습니다"* 를 띄운다. **[2026-08-31 갱신 — spec 5차 개정 ⑥]** 뒷부분이 바뀌었다 — 구문 깨짐은 이제 `BrokenBackupSyntax`이고, 잘린 파일의 귀결은 *"거짓 삭제 문구"* 가 아니라 **그 문서의 backup·status·restore가 사용자가 고칠 때까지 멈추는 것**이다. **결론(원자적 쓰기)은 그대로다.** plan ① Task 1이 막은 것과 **같은 거짓 문구로 가는 두 번째 문**이다. `sync_state.write_base`도 같은 형태다.
 
 `plan_mcp.apply_base`는 `mc.dump_backup`을 부르므로 이 수정으로 함께 고쳐진다.
 
@@ -2080,8 +2080,16 @@ git commit -m "feat(plugins): 복원 가능성 판정과 마켓플레이스 인�
 >   해제)는 **접히지 않는** `enabledPlugins`에 있다. spec 9.1.2 표의 마지막 행이 이제
 >   그것을 적는다.
 >
-> **레포 문서의 「구문」 깨짐은 backup에서 그대로 `{}` degrade다**(사용자 결정). restore만
-> 전체 skip으로 갈렸다(9.3.6) — 그 비대칭이 규정이다.
+> **[2026-08-31 갱신 — spec 5차 개정 ⑥]** 초판은 여기에 *"레포 문서의 「구문」 깨짐은
+> backup에서 그대로 `{}` degrade다(사용자 결정). restore만 전체 skip으로 갈렸다 — 그
+> 비대칭이 규정이다"* 라고 적었다. **그 비대칭이 없어졌다.** degrade의 근거였던 *"다음
+> 백업이 정상 내용으로 되돌린다"* 가 base가 있을 때 거짓임이 실측됐고(spec 0.4), 사용자가
+> 결정을 뒤집었다 — **backup도 문서 단위 skip이다.**
+> `pc.load_backup`이 `BrokenBackupSyntax`를 던지고 `main()`의 except 튜플이 그것을
+> `{"status": "skipped", "reason": ...}`로 접는다. **섹션 단위가 아니다** — 문서 하나가 세
+> 섹션을 담으므로 7.5의 pass-through에 넣을 "레포에서 읽은 원래 값"이 없다. 레포도
+> 스테이징도 만들지 않고 출력에 `sections`를 싣지 않는다(빈 `sections`는 "전부 0개"와
+> 모양이 같아 소비자가 동기화할 것이 없다고 읽는다). **코드에 반영 완료.**
 
 흐름의 **순서가 곧 안전 성질**이다. 4단계(hold 계산)가 2단계(레포 읽기)보다 뒤여야 H3·H4가 계산되고, 7단계(스테이징)가 8단계(레포)보다 먼저여야 하며, **그 둘에는 rename이 함께 필요하다.** 보고를 쓰기보다 **먼저** 만드는 것도 계약이다 — `held_kinds`가 `ValueError`를 던지면 그 섹션이 skipped로 접히는데, 레포를 이미 고친 뒤라면 *"레포 파일은 손대지 않았다"* 가 거짓이 된다.
 
@@ -2656,6 +2664,12 @@ git commit -m "feat(backup): collect_plugins.py — 섹션별 3-way 병합과 �
 
 **근거:** spec 9.2, 6.5, 3.1
 
+> **[2026-08-31 갱신 — spec 5차 개정 ⑥]** `compare_*`도 같은 `load_backup`을 쓰므로
+> **레포 문서의 구문 깨짐이 문서 단위 `skipped`가 됐다**(9.2 말미). 개정 전에는 깨진
+> 문서를 "항목 0개"로 비교해 레포에만 있는 항목이 `only_repo`에서 사라지고 로컬 항목이
+> 전부 `only_local`로 뒤집혔다(실측) — 읽기 전용 스킬이지만 사용자에게 도달하는 것은
+> 거짓이다. **코드에 반영 완료**(`main()`의 except 튜플에 `pc.BrokenBackupSyntax`).
+
 > **[2026-08-31 갱신 — spec 4차 개정 ⑤]** spec 9.2에 행이 하나 늘었다. **복원 가능성을
 > 묻는 대상은 `diff`의 `only_repo`가 아니라 `route_new_keys`가 정한다**(5.2).
 > 이 task의 초판이 `only_repo`를 훑었고, `4b17f68`(A-I1)이 코어의 `_route_new_names`
@@ -2981,8 +2995,12 @@ git commit -m "feat(status): compare_plugins.py — 값 변경과 보류를 보�
 >   지금 `build_plan`은 `pc.load_backup`이 깨진 파일을 `{}`로 degrade한 것을 그대로 받아
 >   **모든 로컬 키를 `local_stale`로 낸다**(실측: `local_stale: ['a@m','b@m']` + 최상위
 >   `status: "ok"`). 그것이 9.3.3의 `uninstall --scope user` 제안으로 이어진다 —
->   **거짓 근거로 만든 파괴적 제안**이다. 다음 라운드가 `{"status": "skipped"}`로 접는다.
->   **`plan_mcp.py`도 같은 코어를 쓰므로 같은 결함이 있다.**
+>   **거짓 근거로 만든 파괴적 제안**이다. **`plan_mcp.py`도 같은 코어를 쓰므로 같은 결함이
+>   있(었)다.**
+>   **[2026-08-31 갱신 — spec 5차 개정 ⑥] 반영 완료.** `ks.load_backup`이 구문 깨짐에
+>   `BrokenBackupSyntax`를 던지고 `plan_plugins`·`plan_mcp`의 except 튜플이 그것을
+>   `{"status": "skipped"}`로 접는다. **같은 개정이 backup·status 방향도 함께 돌렸다** —
+>   4차 개정이 규정한 backup/restore 비대칭은 **없어졌다**(spec 0.4).
 > - **②(9.3.1)** — **실행 순서가 `1 → 2 → 4 → 3`이 됐다. 번호는 그대로다.**
 >   `depends_on`(2단계 ∪ 4단계)·`install`/`config_keys`의 대상 규정·
 >   `skipped_already_installed`는 **한 글자도 바뀌지 않는다.** 이 task의 출력 스키마도 그대로다.
@@ -7615,10 +7633,10 @@ git commit -m "docs: plugins.json이 키 단위로 병합된다는 사실을 여
 | 다운그레이드 3선택지 대화 문단 셋(`sync-backup:262-278`·`sync-restore:142·144·331-338`·`sync-status:96`) | spec 13장 |
 | 2.x 배포 순서 경고 **네 곳** — 전부 `mcp-servers.json` 전용이다 | spec 13장 두 번째 표 |
 | ~~실환경 스모크 — 확장 포맷의 의도된 형태, 객체 평탄화의 성격, `install`의 기본 스코프~~ **측정 완료**(2026-08-29, `docs/superpowers/2026-08-29-plugin-cli-smoke.md`) | spec 14.5 |
-| **spec 4차 개정 ①~⑤를 코드에 반영** — 구문 깨짐의 restore 전체 skip(`plan_plugins.py`·**`plan_mcp.py`**), 복원 실행 순서 `1 → 2 → 4 → 3`과 3단계의 실행 시점 재읽기(`sync-restore/SKILL.md`), 에뮬레이터의 `install`에 `defaultEnabled` 규칙 | spec **12.1** (그 표가 파일별 목록이다) |
+| **spec 4차 개정 ①~⑤를 코드에 반영** — ~~구문 깨짐의 restore 전체 skip(`plan_plugins.py`·**`plan_mcp.py`**)~~ **완료**(5차 개정 ⑥이 backup·status까지 함께 돌렸다), 복원 실행 순서 `1 → 2 → 4 → 3`과 3단계의 실행 시점 재읽기(`sync-restore/SKILL.md`), 에뮬레이터의 `install`에 `defaultEnabled` 규칙 | spec **12.1** (그 표가 파일별 목록이다) |
 | **`url`·`git` 마켓플레이스 출처의 왕복** — github은 닫혔고(스모크 9장) 이 둘은 **여전히 미측정**이다. https github URL이 github으로 정규화되므로 raw `.json` URL이나 비-github 호스트 픽스처가 필요하다. 에뮬레이터의 `marketplace_add`가 **언제나 github 모양**을 쓰는 것도 함께 고쳐야 한다 | spec 8.6 · 14.5 #1·#2 / 감사 ② 권고 1·2 |
 | **`marketplace remove`의 소속 판정 규칙**(`endswith` false-positive)과 **설치된 플러그인의 `defaultEnabled`를 되읽는 파일** | spec 14.5 #3·#4 |
-| **backup 방향의 `{}` degrade를 그대로 둘 것인가** — 유지가 사용자 결정이지만, 그 근거(*"다음 백업이 되돌린다"*)는 **base가 없을 때만 참이다**(실측). base가 있으면 레포의 모든 키가 케이스 4로 떨어져 레포 문서가 `{}`가 되고 `status`는 `"ok"`다 | spec 15장 오픈이슈 6 |
+| ~~**backup 방향의 `{}` degrade를 그대로 둘 것인가**~~ **닫혔다**(2026-08-31, spec 5차 개정 ⑥ / 0.4). 사용자가 결정을 뒤집어 **backup·restore·status 셋 다 문서 단위 skip**이다. `keyed_sync.BrokenBackupSyntax` + 여섯 스크립트의 `except` 튜플로 반영됐고 재현이 테스트로 고정됐다 | spec 15장 오픈이슈 6 |
 | **`reconcile_restore.py:108-111·126-129`의 비원자적 로컬 쓰기** — `open(local,"wb")`가 선-truncate한다. ENOSPC로 중간에 죽으면 `~/.claude/agents/foo.md`가 **잘린 채** 남고, 예외가 traceback으로 서서 `write_base`가 실행되지 않아 base는 옛 값 그대로다. 다음 판정이 `L≠S, R==S` → `local_ahead` → **다음 백업이 잘린 로컬을 레포의 온전한 사본 위에 push한다.** Task 1이 막은 것과 같은 계열이다. `ks.dump_bytes`가 생겼으므로 두 곳 다 한 줄 교체다 | Task 1 quality review I3 |
 | 고정 `.tmp` 이름은 동시 실행에서 원자성이 무력화된다. 코드베이스에 락이 하나도 없어(전수 grep 0건) 동시 실행을 전제하지 않는 설계와는 일관된다. `mkstemp`로 바꾸면 잔존 파일 이름이 무작위가 되어 `.gitignore` 대응이 어려워지는 역효과가 있다 | Task 1 quality review M3 |
 | `sync_state.write_base`의 `data is None` 삭제 분기가 `<path>.tmp`를 지우지 않는다. base 디렉토리를 walk하는 코드가 없어 현재 영향은 없다 | Task 1 quality review M4 |

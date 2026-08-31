@@ -123,7 +123,9 @@ if [ -f "$SYNC_REPO/plugins.json" ]; then
 fi
 ```
 
-출력 JSON의 `status`가 `"skipped"`면 `settings.json`을 읽지 못했거나 레포 파일의 형식을 알아볼 수 없는 것이다. `reason`을 알리고 플러그인 비교만 생략한다 — 읽기 실패를 "0개"로 오인해 레포의 항목을 전부 `only_repo`로 보고하지 않기 위해서다. `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다.
+출력 JSON의 `status`가 `"skipped"`면 `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 플러그인 비교만 생략한다 — 읽기 실패를 "0개"로 오인하지 않기 위해서다. 그렇게 오인하면 레포에만 있는 항목이 `only_repo`에서 통째로 사라지고 이 기기의 항목이 전부 `only_local`로 뒤집힌다(실측). **"동일합니다"로 보고하지 않는다.** `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다.
+
+`reason`이 **"구문이 깨졌다"**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다(레포 git 이력에 정상 판본이 있으면 그것으로 복구한다). **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다. 이 상태에서는 `/sync-backup`도 같은 문서를 건너뛴다.
 
 **최상위 `status`는 섹션 skip을 반영하지 않는다.** 그 값은 "비교를 수행했는가"이므로 섹션 둘이 접힌 실행에서도 `"ok"`다. 섹션 단위 사실은 `sections[<섹션>]["status"]`에만 있으니 **그것을 반드시 따로 읽고**, 최상위만 보고 "동일"이라고 말하지 않는다. 섹션 하나만 `"skipped"`인 경우가 있다(`auto` 판정 불가 → `enabledPlugins`·`pluginConfigs`, 보류 파일 손상 → `pluginConfigs`).
 
@@ -150,7 +152,7 @@ if [ -f "$SYNC_REPO/mcp-servers.json" ]; then
 fi
 ```
 
-출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나 레포 파일의 형식을 알아볼 수 없는 것이다. `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인해 레포의 서버를 전부 `only_repo`로 보고하지 않기 위해서다. `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다. 세 목록이 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
+출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인하지 않기 위해서다. `reason`이 "구문이 깨졌다"이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다(플러그인 업데이트는 소용이 없다). `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다. 세 목록이 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
 
 ### 3. 결과 요약
 
