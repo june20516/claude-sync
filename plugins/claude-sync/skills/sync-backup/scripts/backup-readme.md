@@ -35,6 +35,7 @@ Then in Claude Code:
 - `sync-metadata.json` — Version markers plus a per-file content hash of what this backup contained. Those hashes are a record, not an input: conflict detection compares against each machine's own `.sync-state/` base, not this file. What does get read back is `min_reader_version` — it blocks a machine too old to understand this backup.
 - `mcp-servers.json` — MCP server configs from `~/.claude.json` (user scope), merged per server name
 - `bootstrap.sh` — Restore script for new devices
+- `.gitignore` — One line, `*.tmp`, so a half-written temp file left by a hard kill is never committed. Created by `bootstrap.sh`, so a repository whose machines all upgraded in place will not have it yet.
 
 ### Before backing up: every machine must be on v3.0.0
 

@@ -40,6 +40,45 @@ def test_write_base_none_deletes(tmp_path):
     assert ss.read_base("a.md", base_dir=bd) is None
 
 
+def test_write_base_records_an_empty_blob_instead_of_deleting_it(tmp_path):
+    """`b""`(빈 문서)와 `None`(삭제)은 다른 입력이다 — 접으면 조용한 오탐이 난다.
+
+    변조 `if data is None:` → `if not data:`가 스위트 전체에서 살아남아 이 테스트가
+    생겼다. 동기화 대상 중 **빈 파일**(빈 CLAUDE.md, 빈 agent 파일)이 있으면
+    reconcile_restore가 `write_base(rel, b"")`를 부르는데, 접힌 코드는 그것을 삭제로
+    읽어 base를 지운다. 그러면 `base_hash`가 None이 되고, 그 파일이 다음에 갈릴 때
+    `changed_local`·`changed_remote`가 **둘 다 참**이 되어 fast_forward여야 할 것이
+    conflict로 판정된다 — 그리고 base가 없으니 머지도 못 해 `no_base` 충돌로 남는다.
+    이 저장소가 `parse_base`의 docstring에 적어 둔 그 구별이다.
+    """
+    bd = str(tmp_path / "base")
+    ss.write_base("empty.md", b"", base_dir=bd)
+    assert ss.read_base("empty.md", base_dir=bd) == b""
+    assert ss.base_hash("empty.md", base_dir=bd) == ss.content_hash(b"")
+
+
+def test_write_base_delete_also_removes_a_stray_temp_file(tmp_path):
+    """삭제 분기가 `<path>.tmp`를 남기지 않는다.
+
+    **현재 영향은 없다 — 버그 수정이 아니라 위생이다.** 실측 둘로 그것을 못 박는다:
+    (a) base 디렉토리를 walk하는 코드가 이 저장소에 없다(소비자는 전부 relpath 하나를
+    `read_base`로 읽는다), (b) `write_base(rel, None)`을 부르는 프로덕션 호출자도 없다.
+    그래서 남은 `.tmp`가 지금 무엇을 망가뜨리지는 않는다. 다음 독자가 이 줄을 "무슨
+    사고를 막았나" 하고 되짚지 않도록 적어 둔다.
+
+    `.tmp`는 `dump_bytes`가 `os.replace` 전에 SIGKILL로 죽으면 남는다(정상 실패 경로는
+    스스로 지운다). 그 뒤 같은 relpath를 삭제하면 최종 파일만 사라지고 `.tmp`가 base
+    디렉토리에 영구히 남는다 — 그것을 지운다.
+    """
+    bd = str(tmp_path / "base")
+    ss.write_base("a.md", b"x", base_dir=bd)
+    stray = ss.base_blob_path("a.md", base_dir=bd) + ".tmp"
+    with open(stray, "wb") as f:
+        f.write(b"half-written")
+    ss.write_base("a.md", None, base_dir=bd)
+    assert os.listdir(bd) == []
+
+
 def test_classify_repo_only():
     assert ss.classify(None, "r", None, local_exists=False, repo_exists=True) == "repo_only"
 

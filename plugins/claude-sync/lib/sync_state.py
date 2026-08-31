@@ -51,13 +51,20 @@ def write_base(relpath, data, base_dir=BASE_DIR):
 
     쓰기는 ks.dump_bytes에 위임한다(원자적 교체 + fsync) — 잘린 base 블롭은
     parse_base가 None으로 읽어 합집합 degrade를 부르고, 그러면 삭제 전파가 조용히 죽는다.
+
+    삭제는 dump_bytes가 남겼을 수 있는 <path>.tmp까지 함께 지운다. **현재 영향은
+    없다(위생이다)** — base 디렉토리를 walk하는 코드가 없고(소비자는 전부 relpath 하나를
+    read_base로 읽는다) data=None으로 부르는 프로덕션 호출자도 없다. 그러니 이 줄을
+    "무슨 사고를 막은 수정"으로 읽지 말 것. .tmp는 os.replace 전에 SIGKILL로 죽었을 때만
+    남는다(정상 실패 경로는 dump_bytes가 스스로 지운다).
     """
     path = base_blob_path(relpath, base_dir)
     if data is None:
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
+        for target in (path, path + ".tmp"):
+            try:
+                os.remove(target)
+            except FileNotFoundError:
+                pass
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     ks.dump_bytes(data, path)

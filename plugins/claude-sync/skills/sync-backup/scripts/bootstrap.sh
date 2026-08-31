@@ -40,6 +40,30 @@ EOF
   echo "* sync-config.json created (repo: $REPO_URL)"
 fi
 
+# Backup repo hygiene: ignore stray atomic-write temp files.
+#
+# The sync scripts write <file>.tmp next to their target and os.replace() it into place.
+# The normal failure path removes the .tmp itself, but a hard kill (SIGKILL, power loss)
+# between the two leaves it behind -- and the backup step's `git add -A` would then
+# commit a half-written document to every device. One line of insurance.
+#
+# Limitation: this is NOT retroactive. bootstrap.sh only runs when a device restores
+# from scratch, so a repo whose devices all upgraded in place gets no .gitignore until
+# some device bootstraps and the next backup commits it.
+GITIGNORE="$SCRIPT_DIR/.gitignore"
+if [ ! -f "$GITIGNORE" ]; then
+  echo '*.tmp' > "$GITIGNORE"
+  echo "* .gitignore created (*.tmp)"
+elif ! grep -qxF '*.tmp' "$GITIGNORE"; then
+  # An existing .gitignore is appended to, never overwritten. Add the missing newline
+  # first -- `echo >>` would otherwise glue *.tmp onto the user's last pattern.
+  if [ -n "$(tail -c 1 "$GITIGNORE")" ]; then
+    echo "" >> "$GITIGNORE"
+  fi
+  echo '*.tmp' >> "$GITIGNORE"
+  echo "* .gitignore updated (*.tmp)"
+fi
+
 # Plugin and MCP server restore guide
 if [ -f "$SCRIPT_DIR/plugins.json" ] || [ -f "$SCRIPT_DIR/mcp-servers.json" ]; then
   echo ""

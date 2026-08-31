@@ -102,6 +102,12 @@ def dump_bytes(data, path):
 
     실패하면 임시 파일을 지운다 — 레포 디렉토리에 남으면 `git add -A`가 그것을 커밋한다.
 
+    **소비자는 두 종류다.** 위 문단은 레포·base 쪽 문서(dump_json → 백업 파일,
+    write_base → base 블롭)를 말한다. 다른 하나는 reconcile_restore가 쓰는 `~/.claude`
+    아래의 **로컬 파일**인데, 그쪽은 결과가 다르다 — 잘린 로컬은 구문 오류로 멈추는
+    것이 아니라 다음 판정에서 `local_ahead`가 되어 **다음 백업이 레포의 온전한 사본
+    위로 push한다.** 어느 쪽이든 이 함수가 막는 것은 같다: 잘린 파일을 만들지 않는다.
+
     쓰기 뒤·교체(os.replace) 전에 flush + fsync한다 — os.replace의 rename 자체는
     원자적이지만, tmp의 데이터 블록이 디스크에 내려갔음을 보장하지 않는다. rename과
     writeback 사이에 크래시가 끼면 대상 파일이 0바이트나 쓰레기로 남는데, 그것은 이

@@ -145,6 +145,166 @@ def test_update_base_multiple_files(tmp_path):
     assert written["agents/b.md"] == b"content 1"
 
 
+# ── 4단계 --apply의 로컬 쓰기는 원자적이다 ───────────────────────────────────
+#
+# `open(local, "wb")`는 **선-truncate**한다. 쓰기 도중 ENOSPC로 죽으면
+# `~/.claude/agents/foo.md`가 **잘린 채** 남고, 예외가 traceback으로 서서 `write_base`가
+# 실행되지 않아 base는 옛 값 그대로다. 다음 판정이 `L≠S, R==S` → `local_ahead` →
+# **다음 백업이 잘린 로컬을 레포의 온전한 사본 위에 push한다.** 잘린 파일이 모든 기기로
+# 퍼지고 온전한 원본은 어디에도 남지 않는다.
+#
+# 아래 둘은 `add`/`overwrite` 갈래와 `merge` 갈래를 **각각** 건다. 두 갈래는 서로 다른
+# 쓰기 호출이므로 한 곳만 `ks.dump_bytes`로 고치는 변조는 반대쪽 테스트만 빨개진다 —
+# 둘 다 있어야 그 변조가 잡힌다.
+#
+# 실패 주입은 **디스크를 채우지 않는다.** `builtins.open`을 감싸 HOME 아래 쓰기 모드에서만
+# "절반 쓰고 ENOSPC"를 흉내낸다. 옛 코드(직접 `open`)와 새 코드(`dump_bytes`의 `.tmp`)가
+# **같은 지점**에서 실패하므로 갈리는 것은 실패 여부가 아니라 **로컬 파일이 잘렸는가**
+# 하나다 — `os.replace`만 표적으로 삼으면 옛 코드는 그 줄에 닿지도 않아 "실패가 주입되지
+# 않았다"와 "원자적이다"가 같은 초록이 된다.
+#
+# 하위 프로세스로 도는 이유는 `ss.BASE_DIR`가 **import 시점**의 HOME으로 고정되기
+# 때문이다 — 인프로세스로 돌리면 개발 기기의 실제 base 블롭을 읽는다.
+
+ENOSPC_RUNNER = r"""
+import builtins, sys
+
+lib, scripts, repo, home = sys.argv[1:5]
+sys.path.insert(0, lib)
+sys.path.insert(0, scripts)
+import reconcile_restore as rr
+
+real_open = builtins.open
+
+
+class HalfWrite:
+    def __init__(self, f):
+        self.f = f
+
+    def write(self, data):
+        self.f.write(data[: len(data) // 2])
+        self.f.flush()
+        raise OSError(28, "No space left on device")
+
+    def flush(self):
+        self.f.flush()
+
+    def fileno(self):
+        return self.f.fileno()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.f.close()
+        return False
+
+
+def fake_open(path, mode="r", *a, **kw):
+    f = real_open(path, mode, *a, **kw)
+    if "w" in mode and str(path).startswith(home):
+        return HalfWrite(f)
+    return f
+
+
+builtins.open = fake_open
+sys.argv = ["reconcile_restore.py", repo, "--apply"]
+try:
+    rr.main()
+except OSError:
+    sys.exit(3)
+finally:
+    builtins.open = real_open
+sys.exit(0)
+"""
+
+
+def run_restore_apply_with_enospc(tmp_path, home, repo):
+    """`--apply`를 하위 프로세스에서 돌리되 HOME 아래 쓰기를 ENOSPC로 죽인다.
+
+    반환값이 아니라 **exit code 3**을 단정한다 — 0이면 쓰기가 아예 시도되지 않은 것이고,
+    그러면 아래 내용 단정은 "고쳐서 온전하다"가 아니라 "건드리지도 않았다"로 공허하게
+    초록이 된다(⑵ 깊이 기준: 가드는 자기 입력이 비면 스스로 실패한다).
+    """
+    runner = tmp_path / "enospc_runner.py"
+    runner.write_text(ENOSPC_RUNNER)
+    root = os.path.dirname(__file__)
+    r = subprocess.run(
+        ["python3", str(runner),
+         os.path.abspath(os.path.join(root, "..", "lib")),
+         os.path.abspath(os.path.join(root, "..", "skills", "sync-restore", "scripts")),
+         str(repo), str(home)],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)),
+    )
+    assert r.returncode == 3, (
+        "ENOSPC가 주입되지 않았다 — 이 시나리오가 그 쓰기 갈래를 타지 않은 것이다:\n%s%s"
+        % (r.stdout, r.stderr)
+    )
+
+
+def leftover_temp_files(home):
+    return sorted(
+        os.path.join(r, f)
+        for r, _, files in os.walk(str(home))
+        for f in files
+        if f.endswith(".tmp")
+    )
+
+
+def test_apply_overwrite_leaves_the_local_file_whole_when_the_write_dies(tmp_path):
+    """fast_forward(=overwrite) 갈래. 잘린 로컬이 남으면 다음 백업이 그것을 push한다."""
+    home, repo = tmp_path / "home", tmp_path / "repo"
+    rel = "agents/foo.md"
+    old = b"OLD LOCAL CONTENT THAT MUST SURVIVE\n"
+    new = b"NEW CONTENT FROM THE REPO\n"
+    (home / ".claude" / "agents").mkdir(parents=True)
+    (home / ".claude" / rel).write_bytes(old)
+    base = home / ".claude" / ".sync-state" / "base" / "agents"
+    base.mkdir(parents=True)
+    (base / "foo.md").write_bytes(old)                      # L == S
+    (repo / "agents").mkdir(parents=True)
+    (repo / rel).write_bytes(new)                           # R != S
+    # 픽스처가 의도한 갈래를 실제로 타는지 고정한다 — 드리프트하면 이 테스트는 아래
+    # merge 테스트의 사본이 되고, "한 곳만 고치기" 변조가 새어 나간다.
+    assert rr.restore_action(
+        ss.content_hash(old), ss.content_hash(new), ss.content_hash(old), True, True
+    ) == "overwrite"
+
+    run_restore_apply_with_enospc(tmp_path, home, repo)
+
+    assert (home / ".claude" / rel).read_bytes() == old, "로컬 파일이 잘렸다"
+    assert leftover_temp_files(home) == []
+
+
+def test_apply_auto_merge_leaves_the_local_file_whole_when_the_write_dies(tmp_path):
+    """clean auto_merge 갈래. 위와 **다른 쓰기 호출**이므로 따로 건다."""
+    home, repo = tmp_path / "home", tmp_path / "repo"
+    rel = "agents/bar.md"
+    base_bytes = b"a\nb\nc\nd\ne\nf\ng\n"
+    local_bytes = b"LOCAL\nb\nc\nd\ne\nf\ng\n"
+    repo_bytes = b"a\nb\nc\nd\ne\nf\nREPO\n"
+    (home / ".claude" / "agents").mkdir(parents=True)
+    (home / ".claude" / rel).write_bytes(local_bytes)
+    base = home / ".claude" / ".sync-state" / "base" / "agents"
+    base.mkdir(parents=True)
+    (base / "bar.md").write_bytes(base_bytes)
+    (repo / "agents").mkdir(parents=True)
+    (repo / rel).write_bytes(repo_bytes)
+    assert rr.restore_action(
+        ss.content_hash(local_bytes), ss.content_hash(repo_bytes),
+        ss.content_hash(base_bytes), True, True
+    ) == "merge"
+    # 겹치지 않아야 병합이 깨끗하고, 그래야 쓰기까지 간다. 겹치면 conflicts로 접혀
+    # 쓰기가 없고 위 exit code 단정이 그것을 잡는다.
+    merged, nconf = ss.three_way_merge(local_bytes, base_bytes, repo_bytes)
+    assert nconf == 0 and merged != local_bytes
+
+    run_restore_apply_with_enospc(tmp_path, home, repo)
+
+    assert (home / ".claude" / rel).read_bytes() == local_bytes, "로컬 파일이 잘렸다"
+    assert leftover_temp_files(home) == []
+
+
 # ── /sync-status의 `.syncignore` ─────────────────────────────────────────────
 #
 # check_status.py는 `~/.claude`를 직접 걷는다. 4단계의 `find | rm -rf`는 레포 작업

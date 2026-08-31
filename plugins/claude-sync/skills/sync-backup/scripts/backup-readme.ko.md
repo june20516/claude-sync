@@ -35,6 +35,7 @@ Claude Code에서:
 - `sync-metadata.json` — 버전 표식과, 이 백업에 담긴 파일별 내용 해시. 그 해시는 기록일 뿐 판정 입력이 아닙니다 — 충돌 판정은 이 파일이 아니라 기기마다 자기 `.sync-state/` base와 대조합니다. 되읽히는 것은 `min_reader_version`이며, 이 백업을 이해하지 못하는 낮은 버전 기기를 막습니다.
 - `mcp-servers.json` — `~/.claude.json`(user 스코프)의 MCP 서버 설정, 서버 이름 키 단위 병합
 - `bootstrap.sh` — 새 기기용 복원 스크립트
+- `.gitignore` — `*.tmp` 한 줄. 강제 종료로 절반만 쓰인 임시 파일이 커밋되는 것을 막습니다. `bootstrap.sh`가 만들므로, 기기들이 전부 제자리 업그레이드만 한 레포에는 아직 없습니다.
 
 ### 백업하기 전에: 모든 기기가 v3.0.0이어야 합니다
 
