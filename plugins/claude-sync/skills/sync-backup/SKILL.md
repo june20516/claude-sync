@@ -483,9 +483,9 @@ git -C "$SYNC_REPO" show HEAD~1:sync-metadata.json 2>/dev/null \
   | grep -q min_reader_version || echo "표식을 처음 기록했습니다"
 ```
 
-> "이 백업은 claude-sync 3.0.0 이상을 요구하도록 기록되었습니다. **3.0.0 이상 기기는 이 표식을 읽고 스스로 멈춥니다. 그러나 2.x 기기는 멈추지 않습니다** — 2.x에는 이 가드가 없어 표식 자체를 읽지 못합니다. 2.x에서 `/sync-backup`을 한 번만 실행해도 백업 문서 둘이 모두 그 기기 것만으로 다시 만들어집니다."
+> "이 백업은 claude-sync 3.0.0 이상을 요구하도록 기록되었습니다. **3.0.0 이상 기기는 이 표식을 읽고 스스로 멈춥니다. 그러나 2.x 기기는 멈추지 않습니다** — 2.x에는 이 가드가 없어 표식 자체를 읽지 못합니다. 2.x에서 `/sync-backup`을 한 번만 실행해도 백업 문서 둘이 모두 그 기기 것만으로 다시 만들어집니다:"
 >
 > - "`mcp-servers.json`은 옛 배열 형식으로 되돌아가고, 명령에 공백이 든 서버가 누락됩니다."
-> - "`plugins.json`은 그 기기의 settings.json에서 다시 만들어지는데 2.x가 옮기는 것은 `enabledPlugins`와 `extraKnownMarketplaces` 둘뿐입니다. **다른 기기에만 있는** 플러그인·마켓플레이스가 사라지고, `pluginConfigs`와 `additionalMarketplaces`는 2.x가 그 키를 아예 모르므로 **그 기기 것까지** 사라집니다."
+> - "`plugins.json`은 그 기기의 `settings.json`에서 다시 만들어지는데, 2.x가 옮기는 것은 `enabledPlugins`와 `extraKnownMarketplaces` 둘뿐입니다. **다른 기기에만 있는** 플러그인·마켓플레이스가 사라지고, `pluginConfigs`와 `additionalMarketplaces`는 2.x가 그 키를 아예 모르므로 **그 기기 것까지** 사라집니다."
 >
 > "MCP 서버를 쓰지 않는 기기라도 해당됩니다. 모든 기기를 3.0.0으로 올리고 재시작하기 전에는 다른 기기에서 `/sync-backup`을 실행하지 마세요 — **배포 순서가 유일한 방어입니다.**"

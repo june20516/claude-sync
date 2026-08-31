@@ -71,7 +71,7 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 
 v3.0.0은 `mcp-servers.json`과 `plugins.json`의 스키마를 바꾸며 **역호환되지 않습니다.**
 
-> **아직 v2.x인 기기가 하나라도 남아 있다면, 그 기기에서 `/sync-backup`을 실행하지 마세요 — MCP 서버를 하나도 쓰지 않더라도 마찬가지입니다.** v2의 백업 단계는 레포 파일을 읽지 않고 **백업 문서 둘을 모두** 그 기기 것만으로 다시 만들기 때문에, 한 번만 실행해도 각 문서의 레포 사본이 되돌려집니다.
+> **아직 v2.x인 기기가 하나라도 남아 있다면, 그 기기에서 `/sync-backup`을 실행하지 마세요 — MCP 서버를 하나도 쓰지 않더라도 마찬가지입니다.** v2의 백업 단계는 레포 파일을 읽지 않고 **백업 문서 둘을 모두** 그 기기 것만으로 다시 만들기 때문에, 한 번만 실행해도 각 문서의 레포 사본이 되돌아갑니다.
 >
 > - `mcp-servers.json` — 옛 배열 형식으로 되돌아가고 **명령에 공백이 든 서버는 아예 사라집니다.**
 > - `plugins.json` — 그 기기의 `settings.json`에서 다시 만들어지는데, v2가 옮기는 것은 `enabledPlugins`와 `extraKnownMarketplaces` 둘뿐입니다. **다른 기기에만 있는** 플러그인·마켓플레이스가 레포에서 사라지고, `pluginConfigs`와 `additionalMarketplaces`는 v2가 그 키를 아예 모르므로 **그 기기 것까지** 사라집니다.
