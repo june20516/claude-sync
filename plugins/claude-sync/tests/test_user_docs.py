@@ -636,14 +636,35 @@ def test_backup_readme_points_at_the_sync_state_base(name):
 # 한쪽만 낡는다. 하나의 불변식은 하나의 표로 건다.
 DEPLOY_ORDER_SKILL = "sync-backup/SKILL.md"
 
-# 경고가 사는 절의 머리말. `LIMITS_ANCHOR`와 같은 방식이다 — 머리말은 **재는 대상이
+# 경고가 사는 절의 제목. `LIMITS_ANCHOR`와 같은 방식이다 — 제목은 **재는 대상이
 # 아니라 위치 지목**이고, 사라지면 아래 추출기가 스스로 죽는다.
+#
+# **접두사가 아니라 제목 전체를 적는다.** 접두사만 핀하면 뒷부분을 개명해도 추출이
+# 계속 성공하고, 그 제목을 인용하는 상호참조(아래 backup-readme 둘)가 조용히 낡는다
+# — Task 5의 I6과 같은 형태다(거기서는 절 번호를 제목에서 뽑아 닫았다).
 DEPLOY_ORDER_ANCHOR = {
-    "README.md": "## Upgrading to v3.0.0",
-    "README.ko.md": "## v3.0.0으로 올릴 때",
-    "backup-readme.md": "### Before backing up",
-    "backup-readme.ko.md": "### 백업하기 전에",
+    "README.md": "## Upgrading to v3.0.0 (read this first)",
+    "README.ko.md": "## v3.0.0으로 올릴 때 (먼저 읽으세요)",
+    "backup-readme.md": "### Before backing up: every machine must be on v3.0.0",
+    "backup-readme.ko.md": "### 백업하기 전에: 모든 기기가 v3.0.0이어야 합니다",
     DEPLOY_ORDER_SKILL: "### 12. 결과 보고",
+}
+
+# 「나에겐 해당 없음」 오독을 닫는 문구. **이 task의 존재 이유가 정확히 이것이다** —
+# 문제는 "손실 목록에 `plugins.json`이 없다"가 아니라 "MCP를 쓰지 않는 사용자가 이
+# 경고를 자기 얘기로 읽지 않는다"였다. 손실 목록에 문서를 **더하는** 것만으로는 그
+# 오독이 닫히지 않는다: 훑는 독자는 절 제목과 머리 문장만 보고 지나간다.
+#
+# 다섯 문서가 각각 다른 문장으로 쓴다 — 독자와 맥락이 다르므로 **의도된 것이다.**
+# 그래서 문구는 문서별로 적되 **자리는 기계로 건다**(아래 deploy_order_prose) —
+# 불릿이 아니라 경고의 **산문** 안에 있어야 한다. 한 문서의 불릿 속으로 밀려나면
+# 그 문서를 이미 자기 얘기로 읽은 사람만 만나게 되어 아무것도 예방하지 못한다.
+DEPLOY_ORDER_NO_MCP = {
+    "README.md": "even if you use no MCP servers",
+    "README.ko.md": "MCP 서버를 하나도 쓰지 않더라도",
+    "backup-readme.md": "even if that machine uses no MCP servers",
+    "backup-readme.ko.md": "MCP 서버를 하나도 쓰지 않더라도",
+    DEPLOY_ORDER_SKILL: "MCP 서버를 쓰지 않는 기기라도 해당됩니다",
 }
 
 # 손실 **범위**를 말하는 절반. 「타 기기의 것이 사라진다」로만 읽히면 사용자는 자기
@@ -703,6 +724,31 @@ def deploy_order_warning(name):
     return "\n".join(block)
 
 
+def deploy_order_prose(name):
+    """경고 블록에서 **불릿을 뺀** 산문. 훑는 독자가 실제로 읽는 부분이다.
+
+    문서별 손실 불릿은 "그 문서를 쓰는 사람"에게만 말한다. 「나에겐 해당 없음」
+    오독을 닫는 문장은 그보다 앞, 누구에게나 말하는 자리에 있어야 한다.
+    """
+    lines = [line for line in deploy_order_warning(name).splitlines()
+             if not line.lstrip("> ").startswith("- ")]
+    prose = "\n".join(lines)
+    assert prose.strip("> \n"), "%s: 경고에 산문이 없다 — 불릿만 남았다" % name
+    return prose
+
+
+def mcp_section(name):
+    """제목에 `mcp-servers.json`이 든 절. **언어별 제목을 손으로 적지 않는다.**"""
+    text = read_doc(name)
+    heads = [line for line in text.splitlines()
+             if line.startswith("### ") and mc.BACKUP_RELPATH in line]
+    assert len(heads) == 1, (
+        "%s: %s 절 제목을 하나로 특정하지 못했다: %s" % (name, mc.BACKUP_RELPATH, heads))
+    i = text.index(heads[0])
+    m = _HEADING.search(text, i + len(heads[0]))
+    return text[i:m.start() if m else len(text)]
+
+
 def test_the_deploy_order_table_covers_every_document_that_carries_the_warning():
     """표에서 문서 하나를 빼면 그 파일이 아래 두 가드에서 조용히 사라진다(다섯째 축).
 
@@ -753,3 +799,44 @@ def test_deploy_order_warning_says_what_2x_erases(name):
     assert scope in block, (
         "%s: 경고가 손실 **범위**를 말하지 않는다(%r) — 「타 기기의 것만」으로 읽히면 "
         "사용자는 자기 설정 키가 왜 사라졌는지 못 읽는다" % (name, scope))
+
+
+@pytest.mark.parametrize("name", sorted(DEPLOY_ORDER_ANCHOR))
+def test_deploy_order_warning_closes_the_not_applicable_to_me_misreading(name):
+    """경고가 **MCP 미사용자를 명시적으로 포함**해야 한다.
+
+    이 저장소의 유일한 예방이 이 한 마디에 달려 있다. 정정 전 넷이 전부
+    `mcp-servers.json` 이야기만 했고, 문제는 목록이 짧다는 것이 아니라 **독자가
+    자기 얘기로 읽지 않는다**는 것이었다. 그 문장을 지워도 스위트가 초록이면
+    다음 편집이 그것을 조용히 지운다.
+
+    바늘 표가 비거나 줄면 `.get`이 None을 내고 이 단정이 **자기 몸통에서** 죽는다 —
+    가드를 지키는 별도의 가드를 세우지 않는다(기준 ⑵).
+    """
+    needle = DEPLOY_ORDER_NO_MCP.get(name)
+    assert needle, (
+        "%s: 「해당 없음」 오독을 닫는 문구가 바늘 표에 없다 — 표가 줄었다" % name)
+    prose = deploy_order_prose(name)
+    assert needle in prose, (
+        "%s: 경고의 산문이 MCP 미사용자를 포함시키지 않는다(%r). `plugins.json`을 "
+        "손실 목록에 더하는 것만으로는 「나에겐 해당 없음」 오독이 닫히지 않는다"
+        % (name, needle))
+
+
+@pytest.mark.parametrize(
+    "name", sorted(n for n in USER_DOCS if n.startswith("backup-readme")))
+def test_the_mcp_section_cites_the_deploy_order_section_by_its_full_title(name):
+    """`mcp-servers.json` 절의 상호참조를 **절 제목 상수에서 유도한다.**
+
+    그 절은 배포 순서 경고를 새 절로 넘기고 제목을 인용한다. 인용을 손으로 적으면
+    제목의 **뒷부분**을 개명했을 때 독자가 없는 절을 찾는다 — Task 5의 I6이 절
+    번호에서 만난 것과 같은 형태다.
+
+    파라미터를 디스크에서 뽑은 USER_DOCS에서 유도하므로 목록이 비지 않는다.
+    절도 `mc.BACKUP_RELPATH`로 찾아 언어별 제목을 손으로 적지 않는다.
+    """
+    title = DEPLOY_ORDER_ANCHOR[name].lstrip("# ").strip()
+    assert title, "%s: 절 제목 상수에서 인용할 문자열을 뽑지 못했다" % name
+    assert title in mcp_section(name), (
+        "%s: %s 절이 배포 순서 절을 제목 전체로 가리키지 않는다 — %r"
+        % (name, mc.BACKUP_RELPATH, title))
