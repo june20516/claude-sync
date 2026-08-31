@@ -36,13 +36,22 @@ Then in Claude Code:
 - `mcp-servers.json` — MCP server configs from `~/.claude.json` (user scope), merged per server name
 - `bootstrap.sh` — Restore script for new devices
 
+### Before backing up: every machine must be on v3.0.0
+
+> **Do not run `/sync-backup` on a machine still running claude-sync v2.x** — this holds even if that machine uses no MCP servers at all. v2 rebuilds *both* backed-up documents from that machine alone, without reading what is in this repository, so a single run undoes the repo copy of each:
+>
+> - `mcp-servers.json` — rewritten in the old array format, and servers whose command contains spaces are dropped entirely.
+> - `plugins.json` — rebuilt from that machine's `settings.json`, of which v2 copies only `enabledPlugins` and `extraKnownMarketplaces`. Plugins and marketplaces that exist **only on another machine** are erased, and `pluginConfigs` and `additionalMarketplaces` are erased **including that machine's own**, because v2 does not know those keys at all.
+>
+> A v3 machine reads the `min_reader_version` marker in `sync-metadata.json` and stops itself. **A v2.x machine has no such guard and never reads the marker**, so upgrade order is the only thing that prevents this. Recovering afterwards means restoring the file from this repository's git history.
+
 ### About `mcp-servers.json`
 
 Values under `headers` and `env` are stored as `<REDACTED>`; the key names are kept so a restore knows what to ask for. **Secrets passed through `args` or a URL query string are not masked** — keep this repository private. When you restore, `/sync-restore` prompts for each masked value; skipping a prompt leaves that server unregistered rather than creating one with broken auth.
 
 This file is merged **per server name**, so backing up from one machine will not drop servers that only exist on another.
 
-The file is written in schema v2 (`{"version": 2, "scope": "user", "servers": {...}}`) by claude-sync v3.0.0 and later. **A machine still running claude-sync v2.x will overwrite this file with the old array format and drop servers whose command contains spaces** — upgrade every machine before backing up from any of them.
+The file is written in schema v2 (`{"version": 2, "scope": "user", "servers": {...}}`) by claude-sync v3.0.0 and later. **A machine still running claude-sync v2.x will overwrite this file with the old array format and drop servers whose command contains spaces** — see *Before backing up: every machine must be on v3.0.0* above, which covers `plugins.json` as well.
 
 ### About `plugins.json`
 

@@ -69,9 +69,14 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 
 ## Upgrading to v3.0.0 (read this first)
 
-v3.0.0 changes the `mcp-servers.json` schema and **is not backward compatible**.
+v3.0.0 changes the `mcp-servers.json` and `plugins.json` schemas and **is not backward compatible**.
 
-> **While any machine is still on v2.x, do not run `/sync-backup` on it.** The v2 backup step regenerates `mcp-servers.json` wholesale without reading the repo copy, so a single run rewrites the v3 file back to the old array format — and servers whose command contains spaces are dropped entirely. A v2 `/sync-status` will also abort with a `TypeError`.
+> **While any machine is still on v2.x, do not run `/sync-backup` on it — this holds even if you use no MCP servers at all.** The v2 backup step rebuilds *both* backed-up documents from that machine alone, without reading the repo copy, so a single run undoes the repo copy of each:
+>
+> - `mcp-servers.json` — rewritten back to the old array format, and servers whose command contains spaces are dropped entirely.
+> - `plugins.json` — rebuilt from that machine's `settings.json`, of which v2 copies only `enabledPlugins` and `extraKnownMarketplaces`. Plugins and marketplaces that exist **only on another machine** are erased from the repo, and `pluginConfigs` and `additionalMarketplaces` are erased **including that machine's own**, because v2 does not know those keys at all.
+>
+> A v2 `/sync-status` will also abort with a `TypeError`. And nothing on the v2.x machine stops it: v3.0.0 writes a `min_reader_version` marker that a v3 machine reads and halts on, but **v2.x has no such guard and never reads the marker** — upgrade order is the only thing that prevents this.
 
 Upgrade every machine first, then back up:
 

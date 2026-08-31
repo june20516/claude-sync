@@ -69,9 +69,14 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 
 ## v3.0.0으로 올릴 때 (먼저 읽으세요)
 
-v3.0.0은 `mcp-servers.json`의 스키마를 바꾸며 **역호환되지 않습니다.**
+v3.0.0은 `mcp-servers.json`과 `plugins.json`의 스키마를 바꾸며 **역호환되지 않습니다.**
 
-> **아직 v2.x인 기기가 하나라도 남아 있다면, 그 기기에서 `/sync-backup`을 실행하지 마세요.** v2의 백업 단계는 레포 파일을 읽지 않고 `mcp-servers.json`을 통째로 다시 만들기 때문에, 한 번만 실행해도 v3 파일이 옛 배열 형식으로 되돌아가고 **명령에 공백이 든 서버는 아예 사라집니다.** v2의 `/sync-status`도 `TypeError`로 중단됩니다.
+> **아직 v2.x인 기기가 하나라도 남아 있다면, 그 기기에서 `/sync-backup`을 실행하지 마세요 — MCP 서버를 하나도 쓰지 않더라도 마찬가지입니다.** v2의 백업 단계는 레포 파일을 읽지 않고 **백업 문서 둘을 모두** 그 기기 것만으로 다시 만들기 때문에, 한 번만 실행해도 각 문서의 레포 사본이 되돌려집니다.
+>
+> - `mcp-servers.json` — 옛 배열 형식으로 되돌아가고 **명령에 공백이 든 서버는 아예 사라집니다.**
+> - `plugins.json` — 그 기기의 `settings.json`에서 다시 만들어지는데, v2가 옮기는 것은 `enabledPlugins`와 `extraKnownMarketplaces` 둘뿐입니다. **다른 기기에만 있는** 플러그인·마켓플레이스가 레포에서 사라지고, `pluginConfigs`와 `additionalMarketplaces`는 v2가 그 키를 아예 모르므로 **그 기기 것까지** 사라집니다.
+>
+> v2의 `/sync-status`도 `TypeError`로 중단됩니다. 그리고 v2.x 기기 쪽에서는 아무것도 그것을 막지 못합니다 — v3.0.0은 `min_reader_version` 표식을 기록하고 v3 기기는 그것을 읽고 멈추지만, **v2.x에는 그 가드가 없어 표식 자체를 읽지 못합니다.** 배포 순서가 유일한 방어입니다.
 
 모든 기기를 먼저 올린 뒤에 백업하세요:
 

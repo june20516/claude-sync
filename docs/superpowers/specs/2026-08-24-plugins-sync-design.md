@@ -489,6 +489,21 @@ MCP가 v1 배열 → v2 객체로 형태를 바꾼 것과 다른 선택인 이�
      백업만 반복하면 위 표의 고정점에 머문다.
    - **어느 기기에도 로컬로 없는 항목은 돌아오지 않는다.** 모든 기기에서 uninstall했지만
      레포에는 남겨 둔 항목이 그렇다. 사본(`~/plugins.json.bak`)이 유일한 근거가 된다.
+   - **사본을 언제 지우는가**(사용자 결정 2026-08-31). 그 사본은 **레포 파일의 복사본**이라
+     `pluginConfigs`의 값이 이미 `<REDACTED>`로 마스킹돼 있다 — **평문 비밀이 들어 있지
+     않다.** 급히 지울 이유가 없다는 뜻이고, 그래서 순서를 지킬 수 있다.
+     - **지워도 되는 때.** **모든** 기기에서 `keep_stale` + `/sync-backup` 두 단계를 마쳐
+       레포가 각 기기의 항목을 되받은 것을 **확인한 뒤**다.
+     - **그 전에는 안 되는 이유.** 바로 위 줄이 말한 항목 — 어느 기기에도 로컬로 없는 것 —
+       은 이 사본이 **유일한 근거**다. 먼저 지우면 그 항목은 어디에도 남지 않는다.
+     - **확인하는 방법.** 마지막 기기의 백업이 끝난 뒤 레포를 당겨 사본과 견준다.
+       ```
+       cd <레포> && git pull
+       python3 -c "import json,os;r=json.load(open('plugins.json'));b=json.load(open(os.path.expanduser('~/plugins.json.bak')));[print(s,sorted(set(b.get(s,{}))-set(r.get(s,{}))) or 'ok') for s in ('enabledPlugins','extraKnownMarketplaces','pluginConfigs')]"
+       ```
+       세 섹션이 모두 `ok`면 사본이 레포에 다 담긴 것이므로 `rm ~/plugins.json.bak`이
+       안전하다. 키가 하나라도 찍히면 그 항목은 **아직 어느 기기도 되올리지 않았다** —
+       그 기기에서 두 단계를 마치거나, 되올릴 기기가 없다면 사본을 근거로 직접 되살린다.
 
 세 함수가 이 판정을 공유한다 — `parse_base`(이력), `load_backup`(레포), `parse_backup`(관대한 읽기).
 **세 곳이 갈리면 "이력은 못 믿는데 레포는 믿는" 비대칭이 생기고, 그 비대칭이 상위 버전 백업을 파괴한다.**
@@ -1782,21 +1797,31 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 > 났을 때 멀쩡한 플러그인 안내가 사라지고, 반대 방향에서는 마지막 사본을 제거하라는 거짓
 > 문구가 그대로 나간다. **restore는 막지 않고 경고만 한다**(8.3의 규정 유지).
 
-### 2.x 배포 순서 경고 — 네 곳이 전부 MCP 전용이다
+### 2.x 배포 순서 경고 — 네 곳이 전부 MCP 전용이었다 (닫혔다)
 
 11.2가 *"배포 순서가 유일한 방어"* 라고 선언하는데, **그 순서를 사용자에게 말하는 문구가
-전부 `mcp-servers.json` 이야기만 한다.** MCP를 쓰지 않는 사용자는 "나에겐 해당 없음"으로 읽고
-2.x 기기에서 백업을 돌린다.
+전부 `mcp-servers.json` 이야기만 했다.** MCP를 쓰지 않는 사용자는 "나에겐 해당 없음"으로 읽고
+2.x 기기에서 백업을 돌린다. 네 곳이 모두 닫혔다 — **행 번호는 정정 전의 것이다.**
 
-| 파일:행 | 현재 문구의 대상 | 고칠 내용 |
+손실 범위는 실측이다. 2.x의 `extract_plugins.py`는 로컬 settings에서 `enabledPlugins`와
+`extraKnownMarketplaces` **둘만** 복사해 통째로 쓴다. 그래서 백업 한 번에 **타 기기의**
+플러그인·마켓플레이스가 사라지고, 2.x가 아예 모르는 `pluginConfigs`·`additionalMarketplaces`는
+**그 기기 것까지** 사라진다.
+
+| 파일:행 | 정정 전 문구의 대상 | 지금 |
 |---|---|---|
-| `README.md:74` / `README.ko.md:74` | `mcp-servers.json`·"명령에 공백이 든 서버" | **`plugins.json`도 함께** — 타 기기 플러그인·설정 키 목록이 사라진다 |
-| `backup-readme.md:45` / `.ko.md:45` | 같음 | 같음. **`:43`과 한 문단이므로 함께 고친다** |
-| `sync-backup/SKILL.md:486` (12. 결과 보고의 표식 안내) | 같음 | 같음 |
-| `sync-restore/SKILL.md` 2.5절 | 같음 | **닫혔다** — 다운그레이드 대화를 파일 맵 위에 다시 세우면서 손실 방식이 문서별 표가 됐다(`mcp-servers.json`은 공백이 든 서버, `plugins.json`은 타 기기의 플러그인·마켓플레이스·설정 키). 나머지 세 곳은 그대로 남았다 |
+| `README.md:74` / `README.ko.md:74` | `mcp-servers.json`·"명령에 공백이 든 서버" | **닫혔다** — 경고가 문서별 불릿 둘로 갈렸고, MCP를 쓰지 않아도 해당된다고 먼저 말한다. 표식을 2.x가 읽지 못한다는 사실도 함께 적는다 |
+| `backup-readme.md:45` / `.ko.md:45` | 같음 | **닫혔다** — 경고를 `### Before backing up` / `### 백업하기 전에` **독립 절로 옮겼다.** MCP 절 안에 두면 MCP를 쓰지 않는 독자가 절째로 건너뛴다. 원래 자리에는 스키마 사실만 남기고 그 절을 가리킨다 |
+| `sync-backup/SKILL.md:486` (12. 결과 보고의 표식 안내) | 같음 | **닫혔다** — 같은 문서별 불릿 둘 |
+| `sync-restore/SKILL.md` 2.5절 | 같음 | **닫혔다** — 다운그레이드 대화를 파일 맵 위에 다시 세우면서 손실 방식이 문서별 표가 됐다(`mcp-servers.json`은 공백이 든 서버, `plugins.json`은 타 기기의 플러그인·마켓플레이스·설정 키) |
 
 **영어 README를 빠뜨리지 말 것.** `README.ko.md:98`에 해당하는 문장이 영어판에는 없으므로,
-한국어판 기준으로만 지시하면 **영어 README는 아무것도 고쳐지지 않는다.**
+한국어판 기준으로만 지시하면 **영어 README는 아무것도 고쳐지지 않는다.** 정정은 다섯 파일을
+전부 손봤고(README ×2 · backup-readme ×2 · `sync-backup/SKILL.md`),
+`test_user_docs.py`의 `test_deploy_order_warning_names_both_backed_up_documents`와
+`test_deploy_order_warning_says_what_2x_erases`가 다섯 각각에서 **인용 블록 안**의 두 relpath와
+어댑터가 소유한 키 이름을 건다 — 바늘은 `mc.BACKUP_RELPATH`·`pc.BACKUP_RELPATH`와
+`pc.SECTIONS`·`pc.MARKETPLACE_ALIASES`에서 뽑는다.
 
 ### 새로 적어야 할 한계
 
