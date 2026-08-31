@@ -353,7 +353,14 @@ spec 11.4의 규칙 *"레포에 `version`이 없는데 이 기기의 base에는 
 
 11.2가 *"배포 순서가 유일한 방어"*라고 선언하는데 **그 순서를 말하는 문구 넷이 전부 `mcp-servers.json` 이야기만 한다.** MCP를 쓰지 않는 사용자는 "나에겐 해당 없음"으로 읽는다.
 
-- [ ] **Step 1.** 네 곳을 고친다 — `README.md:74` / `README.ko.md:74`, `backup-readme.md:45` / `.ko.md:45`, `sync-backup/SKILL.md:481`, `sync-restore/SKILL.md:148`. **`plugins.json`도 함께**: 타 기기의 플러그인·마켓플레이스·설정 키 목록이 사라진다.
+- [ ] **Step 1.** **세 곳**을 고친다 (2026-08-31 실측 행 번호):
+  - `README.md:74` / `README.ko.md:74`
+  - `backup-readme.md:45` / `backup-readme.ko.md:45`
+  - `sync-backup/SKILL.md:486` (12. 결과 보고의 표식 안내)
+
+  **`plugins.json`도 함께**: 타 기기의 플러그인·마켓플레이스가 사라지고, **`pluginConfigs`·`additionalMarketplaces`는 이 기기 것까지** 사라진다(2.x는 두 키만 옮긴다 — 실측).
+
+  > **네 번째였던 `sync-restore/SKILL.md:148`은 Task 5가 이미 닫았다**(`2e3f4a5`). 그 자리의 문구가 문서별 손실 표로 다시 쓰이면서 문서 중립이 됐다(현재 `:154`). **다시 고치지 말 것.** spec 13장 표에도 그렇게 표기돼 있다.
 - [ ] **Step 2.** **영어 README를 빠뜨리지 말 것.** spec 13장이 명시적으로 경고한다 — 한국어판 기준으로만 지시하면 영어판은 아무것도 고쳐지지 않는다. `backup-readme.md`도 두 벌이다.
 - [ ] **Step 3.** spec 4.4의 탈출구에 **사본 정리 안내**를 넣는다(사용자 결정). 지금은 `cp plugins.json ~/plugins.json.bak`만 있고 정리를 말하지 않는다. 넣을 것 셋: **언제 지워도 되는가**(모든 기기에서 `keep_stale` + `/sync-backup`을 마쳐 레포가 각 기기 항목을 되받은 것을 확인한 뒤), **왜 그 전에는 안 되는가**(어느 기기에도 로컬로 없는 항목은 이 사본이 유일한 근거다), **어떻게 확인하는가**. 사본에는 마스킹된 값만 들어 있어 **평문 비밀은 없다** — 그 사실도 함께 적어 사용자가 급히 지우지 않게 한다.
 - [ ] **Step 4.** 산문 결속: 배포 순서 경고 넷이 **두 relpath를 모두** 말하는지 거는 테스트. **바늘을 손으로 적지 말고** `mc.BACKUP_RELPATH`·`pc.BACKUP_RELPATH`에서 뽑는다(6.2의 첫 번째 형태 — `not in` 가드는 바늘이 틀려도 초록이다).

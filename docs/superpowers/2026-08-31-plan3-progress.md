@@ -13,13 +13,13 @@
 | 2 `detect_downgrade.py` relpath 맵 | **완료** | `d543feb`·`ea4c136`·`e92f721`·`687913b` | ✅ (1라운드) | **With fixes → 해소** |
 | 3 v1→v2 승격이 사고를 삼키지 않는다 | **완료** | `a721e79` | ✅ (1라운드) | 〃 (2·3 합동) |
 | 4 `generate_metadata.py`의 `schema` 맵 | 미착수 | | | |
-| 5 세 `SKILL.md`의 다운그레이드 대화 | **완료** | `2e3f4a5`·`83d53ed`·`bbc8008` | ✅ (2라운드) | — |
+| 5 세 `SKILL.md`의 다운그레이드 대화 | **완료** | `2e3f4a5`~`8dbf305` | ✅ (2라운드) | **With fixes → 해소** |
 | 6 2.x 배포 순서 경고 + `.bak` 정리 안내 | 미착수 | | | |
 | 7 3차 스모크 반영 | 미착수 | | | |
 | 8 4단계가 로컬 확장 값을 평탄화하지 않는다 | 미착수 | | | |
 | 9 비원자적 로컬 쓰기 + `.tmp` 위생 | 미착수 | | | |
 
-현재 **1107 passed**. 리뷰 보고서는 `~/.claude/suberpowers/reviews/2026-08-31-claude-sync-task-1-*.md` 여섯 벌.
+현재 **1110 passed**. 갈래 ⓐ에서 Task 6만 남았다 — 그리고 **세 곳**이다(Task 5가 restore 자리를 닫았다). 리뷰 보고서는 `~/.claude/suberpowers/reviews/2026-08-31-claude-sync-task-1-*.md` 여섯 벌.
 
 ## Task 1이 남긴 것 — Task 2가 이어받을 자리
 
