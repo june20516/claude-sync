@@ -165,6 +165,18 @@ def test_files_map_has_an_entry_for_every_backup_document(tmp_path):
     assert set(out["files"]) == {mc.BACKUP_RELPATH, pc.BACKUP_RELPATH}
 
 
+def test_two_x_fixture_is_the_shape_2x_actually_writes():
+    """픽스처가 2.x의 출력에서 벗어나면 아래 회귀가 전부 헛돈다.
+
+    - 키는 실재하는 섹션 이름이어야 한다(오타면 아무 문서나 재게 된다)
+    - version 표식이 없어야 한다 — 있으면 v2_object가 되어 사고가 탐지되지 않는다
+    """
+    assert set(TWO_X_SECTIONS) < set(pc.SECTIONS)
+    assert "version" not in TWO_X_SECTIONS
+    assert compat.shape_of(p_v1(), pc.BACKUP_RELPATH) == compat.SHAPE_V1_OBJECT
+    assert compat.shape_of(p_v2(), pc.BACKUP_RELPATH) == compat.SHAPE_V2_OBJECT
+
+
 # --- mcp-servers.json ---
 
 def test_detects_downgrade_and_finds_last_v2(tmp_path):
@@ -405,6 +417,24 @@ def test_plugins_absent_in_repo_is_not_an_accident(tmp_path):
     entry = plugins_of(out)
     assert entry["repo_shape"] == compat.SHAPE_ABSENT
     assert entry["downgrade_suspected"] is False
+
+
+def test_plugins_v1_promotion_without_base_is_not_a_downgrade(tmp_path):
+    """반대 방향 — **정당한 v1 승격**은 사고가 아니고 백업이 정상 진행해야 한다.
+
+    이 행이 없으면 판정이 승격 경로 전체를 막아 세워도(항상 true) 초록이다.
+    base가 없다는 것은 이 기기가 v2를 본 적이 없다는 뜻이고, 그때 v1 레포는
+    그냥 아직 승격되지 않은 레포다(불변식 2).
+    """
+    repo = make_repo(tmp_path)
+    commit_plugins(repo, p_v1(), "backup: 2.x가 쓴 레포")
+    out = dd.detect(str(repo), base_dir=base_dir_with(tmp_path))
+    entry = plugins_of(out)
+    assert entry["repo_shape"] == compat.SHAPE_V1_OBJECT
+    assert entry["base_shape"] == compat.SHAPE_ABSENT
+    assert entry["downgrade_suspected"] is False
+    assert entry["status"] == "ok"
+    assert entry["candidate"] is None
 
 
 def test_plugins_newer_schema_is_not_reported_as_zero_entries(tmp_path):
