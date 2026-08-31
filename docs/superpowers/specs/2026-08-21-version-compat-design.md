@@ -322,6 +322,11 @@ def downgrade_suspected(repo_shape, base_shape):
 **`SHAPE_UNREADABLE`은 `shape_of`가 내지 않는다.** 그 함수는 경로가 아니라 원본 바이트를
 받으므로 읽기 실패를 알 수 없다. 그 상태를 만드는 것은 읽는 쪽(`detect_downgrade.py`)이다.
 
+> **개정 (plan ③ — `2026-08-24-plugins-sync-design.md` 11.6).** 위 두 시그니처와 형태 목록은
+> 3.0.0 시점의 것이다. `shape_of`·`downgrade_suspected`는 이제 `relpath`를 **기본값 없는
+> 필수 인자**로 받고(모르는 relpath는 `ValueError`), `plugins.json`의 옛 형식을 위한
+> `SHAPE_V1_OBJECT`가 더해졌다. 판정표의 정본은 그 문서의 11.6이다.
+
 ### 6.4 판정표
 
 `evaluate(meta, my_version)`의 전수다. 이 표 밖의 경우는 없다.

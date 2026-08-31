@@ -2,6 +2,7 @@
 
 실제 ~/.claude는 건드리지 않는다 — 모든 경로를 tmp_path로 주입한다.
 """
+import itertools
 import json
 import os
 import subprocess
@@ -12,6 +13,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 
 import compat  # noqa: E402
+import mcp_config as mc  # noqa: E402
+import plugin_config as pc  # noqa: E402
 
 from marks import requires_permission_bits  # noqa: E402
 
@@ -445,9 +448,40 @@ def test_check_still_passes_on_real_repo_without_metadata(tmp_path):
     assert v["blocked"] is False
 
 
-# --- 다운그레이드 판정 (spec 9.1) ---
+# --- 다운그레이드 판정 (spec 9.1 · 11.6) ---
+#
+# 형태 판정표(plan ③의 정본)를 두 relpath 각각으로 전수한다.
+# 각 relpath마다 여섯 형태가 있어야 한다 — absent·broken·unreadable·v1·v2·unknown.
+# unreadable만 이 표에 없다: shape_of가 내지 않고 읽는 쪽이 만든다.
+# 그 완전성은 test_shape_table_covers_every_shape_per_relpath가 짝지어 건다.
 
-@pytest.mark.parametrize("data,expected", [
+# 2.x의 extract_plugins.py가 만들 수 있는 문서 전수.
+# 그 스크립트는 로컬 settings.json에서 enabledPlugins·extraKnownMarketplaces 중
+# **있는 키만** 담아 dump한다(`git show main:.../extract_plugins.py`로 실측) —
+# 두 키가 각각 optional이므로 조합은 넷이고, 둘 다 없으면 `{}`다.
+# 이 넷이 전부 plugins.json의 옛 형식으로 판정되어야 다운그레이드가 탐지된다.
+#
+# **부분집합을 손으로 적지 않고 만들어 낸다.** 손으로 적으면 그중 하나(특히 `{}`)가
+# 조용히 빠져도 남은 셋이 초록이라 아무도 못 잡는다.
+TWO_X_KEY_VALUES = {
+    "enabledPlugins": {"a@m": True},
+    "extraKnownMarketplaces": {"m": {"source": {"source": "github", "repo": "o/r"}}},
+}
+TWO_X_PLUGINS_DOCUMENTS = tuple(
+    {k: TWO_X_KEY_VALUES[k] for k in combo}
+    for size in range(len(TWO_X_KEY_VALUES) + 1)
+    for combo in itertools.combinations(sorted(TWO_X_KEY_VALUES), size)
+)
+
+
+def canonical(obj_or_raw):
+    """비교용 정규형. 표의 리터럴 공백·키 순서에 단정이 걸리지 않게 한다."""
+    if isinstance(obj_or_raw, (bytes, bytearray, str)):
+        obj_or_raw = json.loads(obj_or_raw)
+    return json.dumps(obj_or_raw, sort_keys=True)
+
+
+MCP_SHAPE_ROWS = [
     (None, "absent"),
     (b"{ not json", "broken"),
     (b"[]", "v1_array"),
@@ -459,67 +493,286 @@ def test_check_still_passes_on_real_repo_without_metadata(tmp_path):
     (b'"x"', "unknown"),
     (b'{"servers":[]}', "unknown"),
     (b"3", "unknown"),
-])
-def test_shape_of(data, expected):
-    assert compat.shape_of(data) == expected
+    # servers가 없는 객체는 여전히 unknown이다 — plugins 규칙(version 존재)이
+    # 이 relpath로 새어 들어오면 v2_object가 되어 버린다.
+    (b'{"version":2}', "unknown"),
+    # 같은 바이트가 plugins.json에서는 v1_object다. 두 규칙이 합쳐지면 한쪽이 깨진다.
+    (b"{}", "unknown"),
+    (b'{"enabledPlugins":{"a@m":true}}', "unknown"),
+]
+
+PLUGINS_SHAPE_ROWS = [
+    (None, "absent"),
+    (b"{ not json", "broken"),
+    # 2.x가 쓰는 실제 값이다(TWO_X_PLUGINS_DOCUMENTS). unknown으로 접으면 사고를 놓친다.
+    (b"{}", "v1_object"),
+    (b'{"enabledPlugins":{"a@m":true}}', "v1_object"),
+    (b'{"extraKnownMarketplaces":{"m":{"source":{"source":"github","repo":"o/r"}}}}',
+     "v1_object"),
+    (b'{"enabledPlugins":{"a@m":true},'
+     b'"extraKnownMarketplaces":{"m":{"source":{"source":"github","repo":"o/r"}}}}',
+     "v1_object"),
+    (b'{"version":2,"scope":"user","enabledPlugins":{}}', "v2_object"),
+    # **값이 아니라 존재를 본다.** 값을 보면 상위 버전 문서가 unknown으로 떨어져
+    # downgrade_suspected가 조용히 False가 된다.
+    (b'{"version":3,"enabledPlugins":{}}', "v2_object"),
+    (b'{"version":null}', "v2_object"),
+    # 이 relpath에서 배열은 옛 형식이 아니라 알 수 없는 문서다. v1_array가 **아니다**.
+    (b"[]", "unknown"),
+    (b'[{"name":"a","command":"a"}]', "unknown"),
+    (b"null", "unknown"),
+    (b'"x"', "unknown"),
+    (b"3", "unknown"),
+]
+
+SHAPE_TABLE = (
+    [(mc.BACKUP_RELPATH, raw, exp) for raw, exp in MCP_SHAPE_ROWS]
+    + [(pc.BACKUP_RELPATH, raw, exp) for raw, exp in PLUGINS_SHAPE_ROWS]
+)
+
+
+# 각 relpath의 "옛 형식" 문서 표본. 이 문서를 **다른** relpath에서 읽으면 그쪽의
+# 옛 형식이 되어서는 안 된다 — 두 relpath가 상수나 규칙을 공유하면 여기서 깨진다.
+FOREIGN_OLD_FORM_SAMPLES = {
+    mc.BACKUP_RELPATH: (b"[]", b'[{"name":"a","command":"a"}]'),
+    pc.BACKUP_RELPATH: (b"{}", b'{"enabledPlugins":{"a@m":true}}'),
+}
+
+# plugins.json의 version 값이 무엇이든 v2_object여야 한다 — **존재만 본다.**
+# 바늘(스키마 버전)을 plugin_config에서 뽑는다. 리터럴을 적으면 SCHEMA_VERSION이
+# 올라가도 "상위 버전"을 재지 않는 값이 되어 조용히 초록이 된다.
+NEWER_SCHEMA_VERSION = pc.SCHEMA_VERSION + 1
+VERSION_VALUES_STILL_V2 = (pc.SCHEMA_VERSION, NEWER_SCHEMA_VERSION, None, "2", 0)
+
+
+@pytest.mark.parametrize("relpath,data,expected", SHAPE_TABLE)
+def test_shape_of(relpath, data, expected):
+    assert compat.shape_of(data, relpath) == expected
+
+
+@pytest.mark.parametrize("value", VERSION_VALUES_STILL_V2)
+def test_plugins_v2_looks_at_presence_not_value(value):
+    """v2 판정은 version의 *값*이 아니라 *존재*를 본다.
+
+    값을 보면 상위 버전 문서가 unknown으로 떨어져 downgrade_suspected가 조용히
+    False가 된다 — 이 함수가 답할 질문이 아니다(불변식 6).
+    """
+    raw = json.dumps({"version": value, "enabledPlugins": {}}).encode("utf-8")
+    assert compat.shape_of(raw, pc.BACKUP_RELPATH) == compat.SHAPE_V2_OBJECT
+
+
+def test_shape_table_contains_a_newer_schema_document():
+    """입력 축 완전성 — 표에서 `version: 3` 행을 빼면 여기서 잡힌다.
+
+    바늘을 plugin_config.SCHEMA_VERSION에서 뽑았으므로 표가 스스로 줄어드는 것을
+    표 자신이 아니라 이 단정이 본다.
+    """
+    newer = [raw for relpath, raw, exp in SHAPE_TABLE
+             if relpath == pc.BACKUP_RELPATH
+             and exp not in (compat.SHAPE_ABSENT, compat.SHAPE_BROKEN)
+             and isinstance(json.loads(raw), dict)
+             and isinstance(json.loads(raw).get("version"), int)
+             and json.loads(raw)["version"] > pc.SCHEMA_VERSION]
+    assert newer, "판정표에 상위 스키마(version > %d) 문서가 없다" % pc.SCHEMA_VERSION
+
+
+def test_foreign_old_form_is_not_an_old_form_here():
+    """한 문서의 옛 형식이 다른 relpath에서 옛 형식으로 읽히면 안 된다(축 분리)."""
+    for owner, samples in FOREIGN_OLD_FORM_SAMPLES.items():
+        for raw in samples:
+            assert compat.shape_of(raw, owner) == compat._OLD_SHAPE[owner]
+            for other in FOREIGN_OLD_FORM_SAMPLES:
+                if other != owner:
+                    assert compat.shape_of(raw, other) != compat._OLD_SHAPE[other]
+
+
+def test_shape_table_contains_every_foreign_old_form():
+    """입력 축 완전성 — 표에서 `plugins.json + []` 행을 빼면 여기서 잡힌다."""
+    for relpath in FOREIGN_OLD_FORM_SAMPLES:
+        rows = {canonical(raw) for rp, raw, exp in SHAPE_TABLE
+                if rp == relpath
+                and exp not in (compat.SHAPE_ABSENT, compat.SHAPE_BROKEN)}
+        missing = [raw for owner, samples in FOREIGN_OLD_FORM_SAMPLES.items()
+                   if owner != relpath
+                   for raw in samples if canonical(raw) not in rows]
+        assert not missing, "%s 판정표에 타 relpath 옛 형식이 빠졌다: %r" % (
+            relpath, missing)
+
+
+def test_two_x_document_set_is_the_whole_subset_lattice():
+    """두 키가 각각 optional이므로 조합은 2**2 = 4이고 `{}`가 그중 하나다.
+
+    이 단정이 없으면 TWO_X_KEY_VALUES에서 키가 빠져도 아래 단정들이 조용히 줄어든다.
+    """
+    assert len(TWO_X_PLUGINS_DOCUMENTS) == 2 ** len(TWO_X_KEY_VALUES) == 4
+    assert {} in TWO_X_PLUGINS_DOCUMENTS
+
+
+@pytest.mark.parametrize("doc", TWO_X_PLUGINS_DOCUMENTS)
+def test_two_x_plugins_backup_is_old_shape(doc):
+    """2.x 백업이 만드는 문서는 전부 옛 형식이어야 한다 — 아니면 사고가 탐지되지 않는다."""
+    raw = json.dumps(doc).encode("utf-8")
+    assert compat.shape_of(raw, pc.BACKUP_RELPATH) == compat.SHAPE_V1_OBJECT
+
+
+def test_shape_table_contains_every_2x_document():
+    """입력 축 완전성 — 표에서 `{}` 행을 빼면 여기서 잡힌다.
+
+    바늘을 표 밖(2.x 스크립트의 동작)에서 뽑아 왔으므로, 표가 스스로 줄어드는 것을
+    표 자신이 아니라 이 단정이 본다.
+    """
+    rows = {canonical(raw) for relpath, raw, exp in SHAPE_TABLE
+            if relpath == pc.BACKUP_RELPATH
+            and exp not in (compat.SHAPE_ABSENT, compat.SHAPE_BROKEN)}
+    missing = [d for d in TWO_X_PLUGINS_DOCUMENTS if canonical(d) not in rows]
+    assert not missing, "판정표에 2.x 문서가 빠졌다: %r" % (missing,)
+
+
+def test_shape_rules_and_old_shape_cover_exactly_the_two_backup_documents():
+    """relpath 표 둘의 키 집합이 실제 백업 문서 둘과 같아야 한다.
+
+    리터럴을 손으로 적지 않고 두 모듈에서 뽑는다 — 적으면 BACKUP_RELPATH가 바뀌어도
+    이 테스트는 초록이고, 그때 compat은 실제로 쓰이지 않는 relpath만 알게 된다.
+    """
+    expected = {mc.BACKUP_RELPATH, pc.BACKUP_RELPATH}
+    assert set(compat._SHAPE_RULES) == expected
+    assert set(compat._OLD_SHAPE) == expected
+
+
+def test_shape_table_covers_every_shape_per_relpath():
+    """여섯 행이 relpath마다 있어야 한다(absent·broken·unreadable·v1·v2·unknown).
+
+    unreadable은 shape_of가 내지 않으므로(읽는 쪽이 만든다) 여기서 더해 준다.
+    다른 relpath의 옛 형식 상수도 더해 준 뒤 _SHAPES와 같은지 본다 — 표가 줄어들면
+    한쪽이 비고, _SHAPES에 상수를 더하고 표를 안 늘리면 다른 쪽이 빈다.
+    """
+    old_shapes = {compat.SHAPE_V1_ARRAY, compat.SHAPE_V1_OBJECT}
+    for relpath in (mc.BACKUP_RELPATH, pc.BACKUP_RELPATH):
+        produced = {exp for rp, _, exp in SHAPE_TABLE if rp == relpath}
+        foreign = old_shapes - {compat._OLD_SHAPE[relpath]}
+        # 다른 relpath의 옛 형식이 이 relpath에서 나오면 안 된다(축 분리).
+        assert produced.isdisjoint(foreign), relpath
+        assert produced | {compat.SHAPE_UNREADABLE} | foreign == compat._SHAPES, relpath
 
 
 def test_shape_of_accepts_str():
-    assert compat.shape_of('{"version":2,"servers":{}}') == "v2_object"
+    assert compat.shape_of('{"version":2,"servers":{}}', mc.BACKUP_RELPATH) == "v2_object"
+    assert compat.shape_of('{"version":2}', pc.BACKUP_RELPATH) == "v2_object"
 
 
-def test_downgrade_suspected_when_repo_v1_and_base_v2():
-    """레포는 v1인데 내 base는 v2였다 = 옛 기기가 덮어썼다."""
-    assert compat.downgrade_suspected("v1_array", "v2_object") is True
+def test_shape_of_requires_relpath():
+    """기본값을 두면 갱신 안 된 호출자가 조용히 mcp 규칙으로 plugins.json을 판정한다."""
+    with pytest.raises(TypeError):
+        compat.shape_of(b"{}")
 
 
-@pytest.mark.parametrize("repo,base", [
-    ("v1_array", "v1_array"),    # 정말 오래된 레포
-    ("v1_array", "absent"),      # 이력 없음 — 근거가 될 수 없다
-    ("v1_array", "broken"),      # 신뢰할 수 없는 이력 (불변식 2)
-    ("v1_array", "unknown"),
-    ("v2_object", "v2_object"),  # 정상
-    ("v2_object", "v1_array"),   # 오히려 전진
-    ("absent", "v2_object"),     # 파일이 사라진 것은 다른 문제다
-    ("broken", "v2_object"),
-])
-def test_downgrade_not_suspected(repo, base):
-    assert compat.downgrade_suspected(repo, base) is False
+@pytest.mark.parametrize("relpath", ["", None, "plugins", "mcp-servers.json ",
+                                     "sync-metadata.json"])
+# data를 함께 돈다: relpath 검증이 데이터 처리 **뒤로** 밀리면 None은 absent,
+# 깨진 JSON은 broken, 파싱된 객체는 TypeError가 되어 오타가 조용히 값이 된다.
+@pytest.mark.parametrize("data", [None, b"{}", b"[]", b"{ not json", 3])
+def test_shape_of_rejects_unknown_relpath(relpath, data):
+    """모르는 relpath에 mcp 규칙으로 fallback하면 조용한 fail-open이다(불변식 6)."""
+    with pytest.raises(ValueError):
+        compat.shape_of(data, relpath)
 
 
 def test_shape_of_rejects_parsed_object():
     """호출자 오류를 값으로 삼키면 그 실수가 '사고 없음'이라는 결론이 된다(불변식 6)."""
-    with pytest.raises(TypeError):
-        compat.shape_of([{"name": "a", "command": "a"}])
-    with pytest.raises(TypeError):
-        compat.shape_of({"servers": {}})
-    with pytest.raises(TypeError):
-        compat.shape_of(3)
+    for relpath in (mc.BACKUP_RELPATH, pc.BACKUP_RELPATH):
+        with pytest.raises(TypeError):
+            compat.shape_of([{"name": "a", "command": "a"}], relpath)
+        with pytest.raises(TypeError):
+            compat.shape_of({"servers": {}}, relpath)
+        with pytest.raises(TypeError):
+            compat.shape_of(3, relpath)
+
+
+def test_shape_constants_match_returned_values():
+    """상수와 실제 반환값이 갈리면 호출부가 조용히 어긋난다."""
+    assert compat.shape_of(None, mc.BACKUP_RELPATH) == compat.SHAPE_ABSENT
+    assert compat.shape_of(b"{ nope", mc.BACKUP_RELPATH) == compat.SHAPE_BROKEN
+    assert compat.shape_of(b"[]", mc.BACKUP_RELPATH) == compat.SHAPE_V1_ARRAY
+    assert compat.shape_of(b'{"servers":{}}', mc.BACKUP_RELPATH) == compat.SHAPE_V2_OBJECT
+    assert compat.shape_of(b"null", mc.BACKUP_RELPATH) == compat.SHAPE_UNKNOWN
+    assert compat.shape_of(b"{}", pc.BACKUP_RELPATH) == compat.SHAPE_V1_OBJECT
+    assert compat.shape_of(b'{"version":2}', pc.BACKUP_RELPATH) == compat.SHAPE_V2_OBJECT
+
+
+@pytest.mark.parametrize("relpath,old", [
+    (mc.BACKUP_RELPATH, compat.SHAPE_V1_ARRAY),
+    (pc.BACKUP_RELPATH, compat.SHAPE_V1_OBJECT),
+])
+def test_downgrade_suspected_when_repo_is_old_shape_and_base_v2(relpath, old):
+    """레포는 그 문서의 옛 형식인데 내 base는 v2였다 = 옛 기기가 덮어썼다.
+
+    옛 형식을 _OLD_SHAPE에서 뽑지 않고 상수를 직접 적는다 — 뽑아 쓰면 relpath 사이에서
+    맞바꾼 표를 그대로 읽어 초록이 된다(축 분리).
+    """
+    assert compat.downgrade_suspected(old, compat.SHAPE_V2_OBJECT, relpath) is True
+
+
+@pytest.mark.parametrize("relpath,foreign_old", [
+    (mc.BACKUP_RELPATH, compat.SHAPE_V1_OBJECT),
+    (pc.BACKUP_RELPATH, compat.SHAPE_V1_ARRAY),
+])
+def test_foreign_old_shape_is_not_a_downgrade(relpath, foreign_old):
+    """다른 relpath의 옛 형식은 이 relpath의 옛 형식이 아니다."""
+    assert compat.downgrade_suspected(
+        foreign_old, compat.SHAPE_V2_OBJECT, relpath) is False
+
+
+@pytest.mark.parametrize("relpath", [mc.BACKUP_RELPATH, pc.BACKUP_RELPATH])
+@pytest.mark.parametrize("repo,base", [
+    ("OLD", "OLD"),              # 정말 오래된 레포
+    ("OLD", "absent"),           # 이력 없음 — 근거가 될 수 없다
+    ("OLD", "broken"),           # 신뢰할 수 없는 이력 (불변식 2)
+    ("OLD", "unknown"),
+    ("v2_object", "v2_object"),  # 정상
+    ("v2_object", "OLD"),        # 오히려 전진
+    ("absent", "v2_object"),     # 파일이 사라진 것은 다른 문제다
+    ("broken", "v2_object"),
+    ("unknown", "v2_object"),
+])
+def test_downgrade_not_suspected(relpath, repo, base):
+    old = compat._OLD_SHAPE[relpath]
+    repo = old if repo == "OLD" else repo
+    base = old if base == "OLD" else base
+    assert compat.downgrade_suspected(repo, base, relpath) is False
 
 
 @pytest.mark.parametrize("repo,base", [
     ("v1array", "v2_object"),      # 오타
     ("v1_array", "v2object"),      # 오타
     ("V1_ARRAY", "V2_OBJECT"),     # 대소문자
+    ("v1object", "v2_object"),     # 새 상수의 오타
     (None, None),
     ("", ""),
 ])
 def test_downgrade_suspected_rejects_unknown_shape(repo, base):
     """모르는 shape를 조용히 False로 만들면 오타가 '사고 없음'이 된다(불변식 6)."""
     with pytest.raises(ValueError):
-        compat.downgrade_suspected(repo, base)
+        compat.downgrade_suspected(repo, base, mc.BACKUP_RELPATH)
 
 
-def test_downgrade_suspected_accepts_unreadable_shape():
+@pytest.mark.parametrize("relpath", ["", None, "plugins", "sync-metadata.json"])
+def test_downgrade_suspected_rejects_unknown_relpath(relpath):
+    """모르는 relpath를 mcp 규칙으로 접으면 조용한 fail-open이다."""
+    with pytest.raises(ValueError):
+        compat.downgrade_suspected(
+            compat.SHAPE_V1_ARRAY, compat.SHAPE_V2_OBJECT, relpath)
+
+
+def test_downgrade_suspected_requires_relpath():
+    """기본값을 두면 갱신 안 된 호출자가 조용히 mcp 규칙으로 판정한다."""
+    with pytest.raises(TypeError):
+        compat.downgrade_suspected(compat.SHAPE_V1_ARRAY, compat.SHAPE_V2_OBJECT)
+
+
+@pytest.mark.parametrize("relpath", [mc.BACKUP_RELPATH, pc.BACKUP_RELPATH])
+def test_downgrade_suspected_accepts_unreadable_shape(relpath):
     """읽기 실패는 표현 가능한 상태다 — 탐지하지 않되 예외도 아니다."""
-    assert compat.downgrade_suspected(compat.SHAPE_UNREADABLE, compat.SHAPE_V2_OBJECT) is False
-    assert compat.downgrade_suspected(compat.SHAPE_V1_ARRAY, compat.SHAPE_UNREADABLE) is False
-
-
-def test_shape_constants_match_returned_values():
-    """상수와 실제 반환값이 갈리면 호출부가 조용히 어긋난다."""
-    assert compat.shape_of(None) == compat.SHAPE_ABSENT
-    assert compat.shape_of(b"{ nope") == compat.SHAPE_BROKEN
-    assert compat.shape_of(b"[]") == compat.SHAPE_V1_ARRAY
-    assert compat.shape_of(b'{"servers":{}}') == compat.SHAPE_V2_OBJECT
-    assert compat.shape_of(b"null") == compat.SHAPE_UNKNOWN
+    old = compat._OLD_SHAPE[relpath]
+    assert compat.downgrade_suspected(
+        compat.SHAPE_UNREADABLE, compat.SHAPE_V2_OBJECT, relpath) is False
+    assert compat.downgrade_suspected(old, compat.SHAPE_UNREADABLE, relpath) is False

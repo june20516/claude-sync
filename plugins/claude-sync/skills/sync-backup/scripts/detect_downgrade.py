@@ -52,7 +52,7 @@ def find_last_v2_commit(repo_path):
             continue
         sha, date, subject = parts
         blob = _git(repo_path, ["show", "%s:%s" % (sha, mc.BACKUP_RELPATH)])
-        if compat.shape_of(blob) != compat.SHAPE_V2_OBJECT:
+        if compat.shape_of(blob, mc.BACKUP_RELPATH) != compat.SHAPE_V2_OBJECT:
             continue
         # parse_backup이 아니라 parse_base를 쓴다. parse_backup은 알아볼 수 없는 문서를
         # {}로 degrade하므로 상위 버전 백업이 "서버 0개인 정상 백업"으로 제시된다.
@@ -84,7 +84,7 @@ def _shape_of_file(path):
         return compat.SHAPE_ABSENT
     except OSError:
         return compat.SHAPE_UNREADABLE
-    return compat.shape_of(raw)
+    return compat.shape_of(raw, mc.BACKUP_RELPATH)
 
 
 def _base_shape(base_dir):
@@ -93,7 +93,7 @@ def _base_shape(base_dir):
         raw = ss.read_base(mc.BACKUP_RELPATH, base_dir=base_dir)
     except OSError:
         return compat.SHAPE_UNREADABLE
-    return compat.shape_of(raw)
+    return compat.shape_of(raw, mc.BACKUP_RELPATH)
 
 
 def detect(repo_path, base_dir=ss.BASE_DIR):
@@ -105,7 +105,7 @@ def detect(repo_path, base_dir=ss.BASE_DIR):
     """
     repo_shape = _shape_of_file(os.path.join(repo_path, mc.BACKUP_RELPATH))
     base_shape = _base_shape(base_dir)
-    suspected = compat.downgrade_suspected(repo_shape, base_shape)
+    suspected = compat.downgrade_suspected(repo_shape, base_shape, mc.BACKUP_RELPATH)
     out = {
         "status": "ok",
         "downgrade_suspected": suspected,

@@ -468,8 +468,8 @@ MCP가 v1 배열 → v2 객체로 형태를 바꾼 것과 다른 선택인 이�
 1. **조건 2(상위 버전 주장)이면 지우지 않는다.** 레포를 쓴 기기가 이 기기보다 최신이라는
    뜻이므로 필요한 것은 `claude plugin marketplace update claude-sync && claude plugin update
    claude-sync`다. 여기서 지우는 것은 **다운그레이드 사고**이고, **11.6의 탐지는 여기에 닿지
-   않는다** — `downgrade_suspected`는 레포 문서의 *형태*(v1 배열)를 보는데 지워진 파일의
-   형태는 `SHAPE_ABSENT`라 그 조건이 성립하지 않는다.
+   않는다** — `downgrade_suspected`는 레포 문서의 *형태*(`plugins.json`의 옛 형식 = 객체인데
+   `version` 없음)를 보는데 지워진 파일의 형태는 `SHAPE_ABSENT`라 그 조건이 성립하지 않는다.
 2. **git 이력에서 정상 판본을 되돌린다.** 다른 기기의 항목이 그대로 남는 유일한 경로다.
    ```
    cd <레포> && git log --oneline -- plugins.json
@@ -1659,8 +1659,9 @@ v1 문서(`version` 없음, 두 필드만)는 4.4의 인식 규칙을 통과한�
 현행 `detect_downgrade.py`는 **`mcp-servers.json` 전용**이다(*"레포의 mcp-servers.json이 v1 배열인데
 이 기기의 base는 v2 객체였다면"*). `plugins.json`도 같은 사고를 겪으므로 같은 보호가 필요하다.
 
-**형태 판정은 `detect_downgrade.py`가 아니라 `lib/compat.py`에 산다** — `shape_of`(객체는 무조건
-`SHAPE_V2_OBJECT`), `downgrade_suspected`(`repo == V1_ARRAY and base == V2_OBJECT` 하드코딩),
+**형태 판정은 `detect_downgrade.py`가 아니라 `lib/compat.py`에 산다** — `shape_of`(객체는
+`servers`가 dict일 때만 `SHAPE_V2_OBJECT`), `downgrade_suspected`(`repo == V1_ARRAY and
+base == V2_OBJECT` 하드코딩),
 `_SHAPES` frozenset. `plugins.json`의 "옛 형식 = 객체인데 `version` 없음"은 **새 shape 상수**를
 요구하고, `tests/test_compat.py`가 그 표를 잠근다.
 
