@@ -7,6 +7,11 @@ claude plugin 명령은 테스트에서 실행할 수 없으므로 plugin_cli.Pl
 **그 에뮬레이터 자신의 계약은 test_plugin_cli.py가 잰다.** 이 파일은 `Device` 하네스와
 그 시나리오만 담는다 — 두 책임이 한 파일에 있으면 시나리오가 늘어날 때 에뮬레이터
 계약이 그 사이에 묻힌다.
+
+**`Device`는 SKILL.md의 재구현이지 SKILL.md가 아니다.** 여기의 시나리오가 아무리 늘어도
+`sync-restore/SKILL.md` 5-1~5-4의 산문이 다른 말을 하면 이 파일은 초록이다(2026-08-28 층
+일관성 감사 실측 — 그 산문의 버킷 결속을 뒤집는 변조 5종이 SURVIVED했다). **산문 자신을
+거는 것은 test_restore_prose.py다.** 이 파일의 순서·필터를 고쳤다면 그쪽도 함께 볼 것.
 """
 import json
 import os
@@ -102,10 +107,12 @@ class Device:
         # **rmtree를 이 함수에서 빼면 (ii)가 살아난다.**
         #
         # **형제 하네스와 조건이 다르다.** test_mcp_cycle.py:66은 여기에 없는
-        # `report["status"] == "ok"` 축을 하나 더 갖는다. 플러그인 배선은 아직 SKILL.md에
-        # 없지만(Task 14), MCP 배선인 sync-backup/SKILL.md:401은 `REPO_HAS_CONTENT`와
-        # 파일 존재 두 축뿐이고 그 자리 주석이 "status 값을 다시 읽을 필요가 없다"라고
-        # 못 박는다. 둘을 "맞추는" 수정을 한다면 MCP 쪽을 SKILL.md에 맞출 것.
+        # `report["status"] == "ok"` 축을 하나 더 갖는다. 배선은 이제 두 파일 모두
+        # SKILL.md에 있고(sync-backup/SKILL.md 5단계가 collect_plugins.py를 부른다),
+        # 그 base 게이트는 10단계 하나로 **두 relpath를 함께** 훑으며 축이
+        # `REPO_HAS_CONTENT`와 파일 존재 둘뿐이다 — 그 자리 주석이 "status 값을 다시
+        # 읽을 필요가 없다"라고 못 박는다. 즉 SKILL.md와 어긋난 것은 이쪽이 아니라
+        # MCP 하네스다. 둘을 "맞추는" 수정을 한다면 MCP 쪽을 SKILL.md에 맞출 것.
         if push and os.path.exists(staged):
             self._run(UPDATE_BASE, self.staging, pc.BACKUP_RELPATH)
         return report
