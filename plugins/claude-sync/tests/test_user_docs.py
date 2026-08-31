@@ -5,7 +5,9 @@ bash를 **실행해서** 재고, `test_skill_wiring.py`는 세 SKILL.md의 **배
 잰다. `README.md`·`README.ko.md`는 스킬도 스크립트도 아니고 `backup-readme*.md`는 백업
 레포에 그대로 복사되는 자료 파일이라, 그쪽에 얹으면 간판이 내용을 설명하지 못하는 파일이
 하나 더 생긴다. SKILL.md의 서술 정정은 배선 계약 쪽 관심사이므로
-`test_skill_wiring.py`에 남겼다.
+`test_skill_wiring.py`에 남겼다. **예외는 파일 끝의 배포 순서 경고 하나다** —
+그것은 배선이 아니라 같은 한 경고가 사용자 문서 넷과 `sync-backup/SKILL.md`에 흩어진
+것이라, 표를 두 파일로 가르면 한쪽만 낡는다. 그 자리의 주석이 이유를 적었다.
 
 **`not in` 가드는 바늘이 틀려도 초록이다** — 없어야 할 것을 찾는 검사라 부재가 곧 통과다.
 그래서 옛 문구를 혼자 걸지 않고 **정정 문안과 짝지어** 건다(CORRECTIONS). 문서를 옛
@@ -32,6 +34,7 @@ import re
 import pytest
 
 import compat               # conftest.py가 lib를 sys.path에 넣는다
+import mcp_config as mc
 import plugin_config as pc
 
 ROOT = os.path.abspath(os.path.join(
@@ -615,3 +618,138 @@ def test_backup_readme_points_at_the_sync_state_base(name):
     assert len(hits) == 1, (
         "%s: `sync-metadata.json` 줄이 3-way의 기준선을 지목하지 않는다: %s"
         % (name, hits))
+
+
+# --- 2.x 배포 순서 경고 (spec 11.2 · 13장) ------------------------------------
+#
+# 11.2가 *"배포 순서가 **유일한** 방어"*라고 선언한다 — 2.x에는 `min_reader_version`
+# 가드 코드 자체가 없어 표식을 **읽지 못한다.** 나머지 층(형태 판정·다운그레이드 대화)은
+# 전부 사고 **뒤**의 탐지이고, 사고가 일어나지 않게 하는 것은 이 경고 산문 하나다.
+#
+# 그런데 정정 전에는 그 경고가 **전부 `mcp-servers.json` 이야기만** 했다. MCP를 쓰지 않는
+# 사용자는 "나에겐 해당 없음"으로 읽고 2.x 기기에서 백업을 돌린다.
+#
+# **`sync-backup/SKILL.md`가 왜 이 파일에 섞이는가.** 이 파일 머리말이 세운 경계 —
+# SKILL.md의 서술은 `test_skill_wiring.py` — 는 여전히 유효하다. 그쪽이 재는 것은
+# **배선 계약**(무엇을 어떤 순서로 부르는가)이다. 배포 순서 경고는 배선이 아니라
+# **사용자가 읽는 같은 한 경고가 다섯 파일에 흩어진 것**이라, 표를 두 파일로 가르면
+# 한쪽만 낡는다. 하나의 불변식은 하나의 표로 건다.
+DEPLOY_ORDER_SKILL = "sync-backup/SKILL.md"
+
+# 경고가 사는 절의 머리말. `LIMITS_ANCHOR`와 같은 방식이다 — 머리말은 **재는 대상이
+# 아니라 위치 지목**이고, 사라지면 아래 추출기가 스스로 죽는다.
+DEPLOY_ORDER_ANCHOR = {
+    "README.md": "## Upgrading to v3.0.0",
+    "README.ko.md": "## v3.0.0으로 올릴 때",
+    "backup-readme.md": "### Before backing up",
+    "backup-readme.ko.md": "### 백업하기 전에",
+    DEPLOY_ORDER_SKILL: "### 12. 결과 보고",
+}
+
+# 손실 **범위**를 말하는 절반. 「타 기기의 것이 사라진다」로만 읽히면 사용자는 자기
+# `pluginConfigs`가 왜 없어졌는지 이 경고에서 읽지 못한다 — 2.x가 모르는 키는 그 기기
+# 것까지 사라진다(sync-restore 손실 표가 같은 이유로 고쳐졌다). 영어판·한국어판이
+# 다르므로 문서마다 적는다. SKILL.md는 한국어지만 `.ko.md`가 아니라 언어를 파일
+# 이름에서 유도할 수 없다.
+DEPLOY_ORDER_SCOPE = {
+    "README.md": "that machine's own",
+    "README.ko.md": "그 기기 것까지",
+    "backup-readme.md": "that machine's own",
+    "backup-readme.ko.md": "그 기기 것까지",
+    DEPLOY_ORDER_SKILL: "그 기기 것까지",
+}
+
+# **바늘을 손으로 적지 않는다.** `not in`이 아니라 `in` 가드이지만 값이 틀리면 같은
+# 방식으로 공허해진다 — 오타 난 relpath는 어느 문서에도 없으니 항상 빨갛거나, 반대로
+# 실재하지 않는 이름을 재게 된다. 두 어댑터의 상수에서 뽑는다.
+DEPLOY_ORDER_RELPATHS = (mc.BACKUP_RELPATH, pc.BACKUP_RELPATH)
+assert len(set(DEPLOY_ORDER_RELPATHS)) == 2, DEPLOY_ORDER_RELPATHS
+
+_HEADING = re.compile(r"^#{1,6} ", re.M)
+
+
+def deploy_order_path(name):
+    if name == DEPLOY_ORDER_SKILL:
+        return os.path.join(SKILLS_DIR, *DEPLOY_ORDER_SKILL.split("/"))
+    return USER_DOCS[name]
+
+
+def deploy_order_warning(name):
+    """배포 순서 경고 블록 — 지목한 **절 안의 첫 인용 블록**만 자른다.
+
+    파일 전체에서 relpath를 찾으면 안 된다. 다섯 문서 전부가 다른 문단에서 두 이름을
+    이미 말하고 있어서, 경고가 통째로 mcp 전용으로 되돌아가도 파일 단위 검사는
+    통과한다(불변식 7 — 이 저장소에서 두 번 발동한 결함이다).
+
+    절로 자르는 것도 부족하다. 절 안에서 인용 블록만 남기지 않으면 README의 뒤따르는
+    산문과 bash 블록이 같은 절에 있어 다시 가려진다.
+    """
+    anchor = DEPLOY_ORDER_ANCHOR[name]
+    with open(deploy_order_path(name), encoding="utf-8") as f:
+        text = f.read()
+    assert anchor in text, (
+        "%s: 배포 순서 경고의 머리말(%r)이 없다 — 절이 사라졌거나 제목이 바뀌었다"
+        % (name, anchor))
+    i = text.index(anchor)
+    m = _HEADING.search(text, i + len(anchor))
+    section = text[i:m.start() if m else len(text)]
+    block = []
+    for line in section.splitlines():
+        if line.startswith(">"):
+            block.append(line)
+        elif block:
+            break
+    assert block, "%s: %r 절에 인용 블록이 없다 — 경고가 사라졌다" % (name, anchor)
+    return "\n".join(block)
+
+
+def test_the_deploy_order_table_covers_every_document_that_carries_the_warning():
+    """표에서 문서 하나를 빼면 그 파일이 아래 두 가드에서 조용히 사라진다(다섯째 축).
+
+    사용자 문서 넷은 **디스크에서 뽑은** USER_DOCS와 짝짓는다 —
+    `test_user_doc_list_covers_every_doc_on_disk`가 그 목록을 디스크에 묶고 있으므로
+    **영어판만 빼는 변조**가 여기서 죽는다. SKILL.md는 "경고를 지닌 스킬"을 디스크에서
+    유도할 방법이 없어 이름을 핀하고, 그 파일이 실재하는지만 함께 묻는다.
+    """
+    expected = set(USER_DOCS) | {DEPLOY_ORDER_SKILL}
+    assert set(DEPLOY_ORDER_ANCHOR) == expected, sorted(
+        set(DEPLOY_ORDER_ANCHOR).symmetric_difference(expected))
+    assert set(DEPLOY_ORDER_SCOPE) == expected, sorted(
+        set(DEPLOY_ORDER_SCOPE).symmetric_difference(expected))
+    path = deploy_order_path(DEPLOY_ORDER_SKILL)
+    assert os.path.isfile(path), "핀한 SKILL.md가 없다 — 옮겼거나 이름이 바뀌었다: %s" % path
+
+
+@pytest.mark.parametrize("name", sorted(DEPLOY_ORDER_ANCHOR))
+def test_deploy_order_warning_names_both_backed_up_documents(name):
+    """경고 하나가 한 문서 이야기만 하면 나머지 문서를 쓰는 사용자는 그냥 지나친다.
+
+    이것이 이 저장소의 **유일한 예방**이다 — 2.x는 표식을 읽지 못하므로 사고를 막을
+    코드가 어디에도 없다.
+    """
+    block = deploy_order_warning(name)
+    missing = [rel for rel in DEPLOY_ORDER_RELPATHS if rel not in block]
+    assert not missing, (
+        "%s: 배포 순서 경고가 %s를 말하지 않는다 — 그 문서를 쓰는 사용자는 이 경고를 "
+        "자기 얘기로 읽지 않는다" % (name, missing))
+
+
+@pytest.mark.parametrize("name", sorted(DEPLOY_ORDER_ANCHOR))
+def test_deploy_order_warning_says_what_2x_erases(name):
+    """`plugins.json`을 **이름만** 덧붙이면 사용자는 무엇을 잃는지 모른다.
+
+    2.x의 `extract_plugins.py`는 로컬 settings에서 `enabledPlugins`·
+    `extraKnownMarketplaces` 둘만 복사해 통째로 쓴다(실측). 그래서 백업 한 번에
+    **타 기기의** 항목이 사라지고, 2.x가 아예 모르는 나머지 키는 **그 기기 것까지**
+    사라진다. 키 이름은 어댑터에서 **뽑는다** — 손으로 적으면 섹션이 늘어도 경고는
+    낡은 채로 초록이다.
+    """
+    keys = sorted(set(pc.SECTIONS) | set(pc.MARKETPLACE_ALIASES))
+    assert keys, "어댑터의 섹션 목록이 비었다 — 바늘을 만들지 못했다"
+    block = deploy_order_warning(name)
+    missing = [key for key in keys if key not in block]
+    assert not missing, "%s: 배포 순서 경고가 말하지 않는 키: %s" % (name, missing)
+    scope = DEPLOY_ORDER_SCOPE[name]
+    assert scope in block, (
+        "%s: 경고가 손실 **범위**를 말하지 않는다(%r) — 「타 기기의 것만」으로 읽히면 "
+        "사용자는 자기 설정 키가 왜 사라졌는지 못 읽는다" % (name, scope))
