@@ -38,6 +38,7 @@ import pytest
 
 import mcp_config as mc   # conftest.py가 lib를 sys.path에 넣는다
 import plugin_config as pc
+import report   # skipped 갈래의 진실 원천 — 산문이 부르는 이름을 여기서 뽑는다
 import syncignore   # 4단계 bash와 대조할 매칭 규칙 한 벌
 from skill_paths import SKILLS, SKILLS_DIR   # 목록은 한 벌이다 — 그 파일의 docstring 참조
 from two_x_facts import TWO_X_CARRIES        # 측정도 한 벌이다 — 〃
@@ -1852,6 +1853,70 @@ SCRIPT_CONTRACT_PHRASES = [
 @pytest.mark.parametrize("skill,phrase", SCRIPT_CONTRACT_PHRASES)
 def test_plugin_step_names_the_key_it_reads(skill, phrase):
     assert phrase in PLUGIN_STEP[skill](), (skill, phrase)
+
+
+# ── skipped의 분기는 **갈래 값**으로 한다 ────────────────────────────────────
+#
+# 앞 판은 세 SKILL.md가 `reason` **한국어 문장의 부분 문자열**로 분기했다
+# (*"구문이 깨졌다"* · *"형식을 알아볼 수 없다"*). 문구를 다듬는 편집이 스킬의 경로를
+# 조용히 바꾼다 — 예외도 빈 결과도 나지 않고 사용자는 틀린 처방을 받는다(구문 깨짐에
+# "플러그인을 업데이트하세요"는 소용이 없다). 이제 `report.reason_kind`가 판정하고
+# 문장은 표시만 한다.
+# 갈래 **목록**을 싣는 문장(세 SKILL.md가 같은 문장을 둔다)과 실제 **분기** 자리.
+# 목록에서만 뽑는다 — 같은 줄에 있는 다른 백틱 이름(`only_repo` 등)을 삼키지 않기 위해서다.
+REASON_KIND_LIST = re.compile(r"갈래는 ((?:`[a-z_]+`(?: · )?)+)")
+REASON_KIND_BRANCH = re.compile(r"`reason_kind`가 \*{0,2}`([a-z_]+)`")
+BACKTICKED = re.compile(r"`([a-z_]+)`")
+
+
+def listed_reason_kinds(skill):
+    """그 SKILL.md의 **갈래 목록 문장**이 부르는 값."""
+    named = set()
+    for m in REASON_KIND_LIST.finditer(read_skill(skill)):
+        named |= set(BACKTICKED.findall(m.group(1)))
+    return named
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_the_skipped_branches_name_exactly_the_kinds_the_report_layer_emits(skill):
+    """**완전성 단정.** 산문이 나열하는 갈래 == `report`가 낼 수 있는 갈래.
+
+    좁으면 새 갈래가 **처방 없이** 사용자에게 도달한다 — 이 필드를 만든 이유와 같은
+    결함이다. 넓으면 도달하지 않는 문단이 생겨 다음 독자가 없는 갈래를 다룬다.
+    기대 집합을 손으로 적지 않고 `report.REASON_KINDS`에서 뽑는다.
+
+    **문서마다 따로 건다.** 셋을 합집합으로 재면 한 문서에서만 갈래가 빠져도 나머지 둘이
+    그 자리를 대신 채워 통과한다(실측 — 그 변조가 SURVIVED였다). 그 문서를 읽는 스킬만
+    조용히 처방을 잃는다.
+    """
+    named = listed_reason_kinds(skill)
+    # 추출기가 비면 스스로 실패한다 — 정규식이나 문장이 낡으면 여기서 죽는다.
+    assert named, "%s에서 갈래 목록을 뽑지 못했다 — 앵커가 낡았다" % skill
+    assert named == set(report.REASON_KINDS), sorted(
+        named.symmetric_difference(report.REASON_KINDS))
+
+
+def test_every_branch_names_a_kind_that_exists():
+    """분기 자리가 부르는 값도 전부 실재해야 한다. 오타 하나가 도달하지 않는 갈래를 만든다."""
+    used = set()
+    for skill in SKILLS:
+        used |= set(REASON_KIND_BRANCH.findall(read_skill(skill)))
+    assert used, "분기 자리를 하나도 뽑지 못했다 — 앵커가 낡았다"
+    assert used <= set(report.REASON_KINDS), sorted(used - set(report.REASON_KINDS))
+
+
+def test_no_skill_branches_on_the_reason_sentence():
+    """**문장으로 분기하는 자리가 하나도 없다**(task 11의 완료 조건).
+
+    되돌리는 편집은 `reason`을 다시 조건으로 쓰는 형태다 — 그 형태를 이름으로 잡는다.
+    표시(*"`reason`을 알린다"*)는 남아야 하므로 **조건절만** 고른다.
+    """
+    offenders = []
+    for skill in SKILLS:
+        for i, line in enumerate(read_skill(skill).splitlines(), 1):
+            if re.search(r"`reason`이 .{0,40}이면", line):
+                offenders.append("%s:%d" % (skill, i))
+    assert offenders == [], offenders
 
 
 def test_the_script_contract_table_did_not_shrink():

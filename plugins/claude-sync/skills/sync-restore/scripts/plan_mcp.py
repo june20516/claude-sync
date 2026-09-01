@@ -20,6 +20,7 @@ import sys
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
+import report  # noqa: E402
 import mcp_config as mc  # noqa: E402
 import sync_state as ss  # noqa: E402
 
@@ -119,7 +120,7 @@ def main():
     # 깨졌을 뿐인데 "다른 기기가 지웠으니 이 기기에서도 지웁시다"가 status ok로 나간다.
     except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema,
             mc.BrokenBackupSyntax, OSError, ValueError) as e:
-        out = {"status": "skipped", "reason": str(e)}
+        out = report.skipped(e)
         print("MCP 단계 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))
 

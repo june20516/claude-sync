@@ -920,6 +920,13 @@ def unrestorable_reason(section, key, value, repo):
     갈래의 순서와 조건은 _plugin_restorable·marketplace_arg와 **같아야 한다.** 갈리면
     양쪽 다 무증상이다 — 복원 가능한데 사유가 붙거나, 복원 불가인데 사유가 None이 되어
     그 항목이 보고에서 이유 없이 사라진다.
+
+    **소비자가 둘이다**(plan ③ Task 11). restore의 `plan_plugins.unrestorable_reasons`와
+    status의 `compare_plugins.unrestorable_reasons`가 같은 훅에서 이 함수를 부른다 —
+    사용자가 할 일이 갈래마다 다르므로(*"원래 불가능하다"* 는 할 일이 없고 *"레포에 소스가
+    없다"* 는 다른 기기에서 백업을 돌리는 것이다) 두 스킬이 **같은 키에 같은 사유**를
+    말해야 한다. 한쪽만 자유 함수로 부르면 그 스킬만 다른 repo를 보게 되고, 그것이
+    이 저장소가 결함 B라고 부르는 형태다.
     """
     if section == "extraKnownMarketplaces":
         if marketplace_arg(value) is not None:

@@ -25,6 +25,7 @@ import sys
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
+import report  # noqa: E402
 import keyed_sync as ks  # noqa: E402
 import plugin_config as pc  # noqa: E402
 import sync_state as ss  # noqa: E402
@@ -103,19 +104,14 @@ def collect(repo_path, staging_dir, settings_path=None, installed_path=None,
         sections[section] = pc.with_degraded({
             "status": "ok",
             # 케이스 9는 레포 값이 남고 케이스 5는 아예 빠진다 — 처방이 다르므로 가른다.
-            "conflicts": {
-                "repo_kept": [k for k in result["conflicts"] if k in merged],
-                "repo_absent": [k for k in result["conflicts"] if k not in merged],
-            },
+            # 분할은 보고 층 한 벌이다(lib/report.py) — collect_mcp와 같은 모양이다.
+            "conflicts": report.split_conflicts(result["conflicts"], merged),
             "deleted": result["deleted"],
             "local_stale": result["local_stale"],
             # 케이스 2(타 기기 추가)와 케이스 8(타 기기 변경)은 안내 문구가 다르다.
             # 가르는 축은 **로컬에 그 키가 있는가**다 — present는 이 기기에도 있어
             # 사용자가 값을 고르지만, absent는 restore가 그냥 설치한다.
-            "repo_ahead": {
-                "present": [k for k in result["repo_ahead"] if k in local[section]],
-                "absent": [k for k in result["repo_ahead"] if k not in local[section]],
-            },
+            "repo_ahead": report.split_repo_ahead(result["repo_ahead"], local[section]),
             "held": pc.held_kinds(section, result["held"],
                                   repo_norm=normalize(repo[section]), **context),
         }, degraded.get(section))
@@ -162,7 +158,7 @@ def main():
         # 모양이 pc.skipped_section과 같지만 그것을 쓰지 않는다 — 층위가 다르다. 이쪽은
         # sections 자체가 없는 **문서 전체**의 갈래이고, 같은 리터럴이 plugin_config를
         # import하지 않는 mcp 계열 셋에도 있다. 소비자가 읽는 자리도 다르다.
-        out = {"status": "skipped", "reason": str(e)}
+        out = report.skipped(e)
         print("플러그인 단계 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))
 

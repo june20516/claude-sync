@@ -952,6 +952,57 @@ def test_compare_marks_unrestorable_repo_only_entries(tmp_path):
     assert out["sections"]["enabledPlugins"]["unrestorable"] == ["p@nowhere"]
 
 
+def test_compare_carries_a_reason_for_every_unrestorable_entry(tmp_path):
+    """9.2 — 키 목록만으로는 **사용자가 할 일**을 가르지 못한다(plan ③ Task 11).
+
+    두 갈래가 한 픽스처에 있다: `p@nowhere`는 레포에 그 마켓플레이스의 소스가 없어
+    **다른 기기에서 `/sync-backup`을 돌리면 풀리고**, `x@local`은 의사 출처라 **원래
+    불가능하다**(할 일이 없다). 사유가 없으면 둘이 같은 문장으로 보고된다.
+
+    **완전성 단정을 짝짓는다** — 사유 맵의 키 집합이 `unrestorable`과 같다. 없으면
+    사유 없는 항목이 조용히 생기고, 그 항목만 처방 없이 사용자에게 도달한다.
+    """
+    out = compare(tmp_path, local={},
+                  repo={"enabledPlugins": {"p@nowhere": True, "x@local": True}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["unrestorable"] == ["p@nowhere", "x@local"]
+    reasons = section["unrestorable_reasons"]
+    assert set(reasons) == set(section["unrestorable"])
+    # 두 갈래가 **서로 다른** 문장이어야 한다 — 같으면 사유를 실은 의미가 없다.
+    assert len(set(reasons.values())) == 2, reasons
+    assert "소스가 없" in reasons["p@nowhere"], reasons
+
+
+def test_the_status_reason_and_its_verdict_read_the_same_repo(tmp_path):
+    """판정(`restorable`)은 레포를 보는데 사유가 **다른 문서**를 보면 사유가 어긋난다.
+
+    restore 쪽의 같은 이름 테스트와 짝이다(10.2). **로컬에만 있는 마켓플레이스**가 있어야
+    두 입력이 갈린다 — 레포와 같으면 어느 쪽을 넘겨도 같은 문장이 나와 판별력을 잃는다.
+    자유 함수 `unrestorable_reason`에 `local`을 넘기는 변조가 이 픽스처에서만 죽는다.
+    """
+    out = compare(tmp_path, local={"extraKnownMarketplaces": {"m": GH}},
+                  repo={"enabledPlugins": {"p@m": True}})
+    section = out["sections"]["enabledPlugins"]
+    assert section["unrestorable"] == ["p@m"]
+    assert "소스가 없" in section["unrestorable_reasons"]["p@m"]
+
+
+def test_status_and_restore_give_the_same_reason_for_the_same_key(tmp_path):
+    """두 스킬이 같은 키에 **같은 사유**를 말한다 — 갈리면 그 자체가 결함 B의 형태다.
+
+    사유의 정본은 `unrestorable_reason` 하나이고 둘 다 **훅 묶음**에서 뽑는다. 자유
+    함수에 repo를 따로 넘기면 판정과 사유가 다른 문서를 볼 수 있고 **양쪽 다 무증상**이다.
+    """
+    repo = {"enabledPlugins": {"p@nowhere": True}}
+    # 두 스크립트가 각자 settings·레포를 쓰므로 디렉토리를 갈라 준다.
+    (tmp_path / "s").mkdir()
+    (tmp_path / "p").mkdir()
+    status = compare(tmp_path / "s", local={}, repo=repo)
+    plan = build_plan(tmp_path / "p", local={}, repo=repo)
+    assert (status["sections"]["enabledPlugins"]["unrestorable_reasons"]
+            == {"p@nowhere": plan["unrestorable_reasons"]["p@nowhere"]})
+
+
 def test_compare_leaves_restorable_repo_only_entries_out_of_unrestorable(tmp_path):
     """복원 가능한 항목까지 unrestorable로 접으면 사용자에게 되돌릴 수단이 없다 (8.1).
 

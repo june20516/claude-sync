@@ -882,7 +882,9 @@ RECOGNIZE_HOOK_CALL = re.compile(r"\bks\.(?:parse_base|load_backup|parse_backup)
 # 테스트가 AttributeError로 깨진다). 그렇다고 완전성 스캔에서 통째로 빼면 소스 스캔의
 # 의미가 없으므로, 아래 테스트가 "정말 세 함수를 안 부르는지"를 매번 재확인한다 —
 # 나중에 호출이 생기면 이 목록이 거짓이 되어 가드가 잡는다.
-NON_ADAPTER_KEYED_SYNC_IMPORTERS = {"sync_state"}
+# report는 코어의 **예외 클래스만** 쓴다(skipped의 갈래를 예외 종류에서 뽑는다) —
+# recognize 공유와 무관하다. 보고 층이므로 어댑터가 아니다(그 모듈 docstring 참조).
+NON_ADAPTER_KEYED_SYNC_IMPORTERS = {"sync_state", "report"}
 
 
 def test_recognize_adapter_list_covers_every_keyed_sync_importer():

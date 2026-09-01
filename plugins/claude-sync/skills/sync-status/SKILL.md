@@ -134,9 +134,11 @@ if [ -f "$SYNC_REPO/plugins.json" ]; then
 fi
 ```
 
-출력 JSON의 `status`가 `"skipped"`면 `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 플러그인 비교만 생략한다 — 읽기 실패를 "0개"로 오인하지 않기 위해서다. 그렇게 오인하면 레포에만 있는 항목이 `only_repo`에서 통째로 사라지고 이 기기의 항목이 전부 `only_local`로 뒤집힌다(실측). **"동일합니다"로 보고하지 않는다.** `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다.
+출력 JSON의 `status`가 `"skipped"`면 `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 플러그인 비교만 생략한다 — 읽기 실패를 "0개"로 오인하지 않기 위해서다. 그렇게 오인하면 레포에만 있는 항목이 `only_repo`에서 통째로 사라지고 이 기기의 항목이 전부 `only_local`로 뒤집힌다(실측). **"동일합니다"로 보고하지 않는다.** `reason_kind`가 `unknown_schema`이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다.
 
-`reason`이 **"구문이 깨졌다"**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다(레포 git 이력에 정상 판본이 있으면 그것으로 복구한다). **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다. 이 상태에서는 `/sync-backup`도 같은 문서를 건너뛴다.
+`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다(레포 git 이력에 정상 판본이 있으면 그것으로 복구한다). **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다. 이 상태에서는 `/sync-backup`도 같은 문서를 건너뛴다.
+
+**분기는 `reason_kind`로 한다 — `reason` 문장으로 하지 않는다.** 그 문장은 사람이 읽는 표시용이고, 문구를 다듬는 편집이 스킬의 경로를 **조용히** 바꾼다(예외도 빈 결과도 나지 않는다). 갈래는 `broken_syntax` · `unknown_schema` · `local_unreadable` · `io_error` · `contract_violation` 다섯이고, 표에 없는 값이면 처방을 지어내지 말고 `reason`만 보여준다.
 
 **최상위 `status`는 섹션 skip을 반영하지 않는다.** 그 값은 "비교를 수행했는가"이므로 섹션 둘이 접힌 실행에서도 `"ok"`다. 섹션 단위 사실은 `sections[<섹션>]["status"]`에만 있으니 **그것을 반드시 따로 읽고**, 최상위만 보고 "동일"이라고 말하지 않는다. 섹션 하나만 `"skipped"`인 경우가 있다(`auto` 판정 불가 → `enabledPlugins`·`pluginConfigs`, 보류 파일 손상 → `pluginConfigs`).
 
@@ -148,9 +150,10 @@ fi
 - `only_repo` — 레포에만 있음. `/sync-restore`가 이 기기에 설치합니다. **다만 `unrestorable`에 있는 항목은 "이 기기에서는 복원할 수 없습니다"로 말한다**(정의는 아래 `unrestorable` 항목)
 - `changed` — 양쪽에 있으나 값이 다름. **켬/끔 변경이 여기 포함된다.** 값이 확장 포맷이면 "버전 제약"으로 말한다. **방향과 값은 `changed_detail[<키>]["local"]`·`["repo"]`에서 읽는다** — 레포 파일을 다시 파싱하면 status 경로에 파서가 두 벌이 되어 결함 B가 되살아난다. 값은 이미 정규화돼 있어 비밀은 마스킹된 채로 온다
 - `held.auto` / `held.local_marketplace` / `held.extended_value` / `held.declined` — 종류별 문구로 보고하거나 침묵한다. **`only_local`·`changed`로 말하지 않는다** — 백업하지 않는 항목을 "backup 시 추가"라고 하면 거짓이고 사용자가 해소할 수도 없다
-- `absent_locally` — 보류 키 중 **로컬 섹션 문서에 값이 없는** 것. 여기 있는 항목에 "레포 값을 보존합니다"만 말하면 거짓이다(보존할 로컬 값이 없다). **이 목록 자체는 "미설치"가 아니다** — 의존성으로 설치된 플러그인은 설치되어 있으면서 `settings.json`에는 값이 없고, `enabledPlugins`의 키 부재는 매니페스트 기본값 위임이지 미설치가 아니다
+- `absent_locally` — 보류 키 중 **로컬 섹션 문서에 값이 없는** 것. 여기 있는 항목에 "레포 값을 보존합니다"만 말하면 거짓이다(보존할 로컬 값이 없다). **이 목록 자체는 "미설치"가 아니다** — 의존성으로 설치된 플러그인은 설치되어 있으면서 `settings.json`에는 값이 없고, `enabledPlugins`의 키 부재는 **꺼짐**이지 미설치가 아니다(실측 — 2026-09-01 스모크 4차 18장)
 - `not_installed` — `absent_locally` 중 **이 기기에 설치되지 않은** 것. 여기에만 "미설치"라고 말한다. `enabledPlugins`·`pluginConfigs` 두 섹션에만 실린다 — 마켓플레이스 이름은 설치 집합과 이름 공간이 달라 실으면 디렉토리 마켓플레이스가 "미설치 플러그인"으로 보고된다
 - `unrestorable` — 이 기기에서 복원할 수 없는 항목. **`only_repo`의 부분집합이 아니다** — `/sync-restore`가 새 항목으로 훑는 집합에서 뽑으므로 값 보류(확장 값) 중 로컬에 값이 없는 키도 여기 들어온다. 그런 키는 `only_repo`에 없고 `held.extended_value`·`absent_locally`·`not_installed`에만 뜨는데, **어느 목록에 실렸든 이 목록에 있으면 "이 기기에서는 복원할 수 없습니다"가 우선한다.** `only_repo`만 보고 이 문구를 붙이면 그 항목에 "restore가 설치합니다"가 그대로 나간다(spec 9.2가 금지한 문구)
+- `unrestorable_reasons` — **위 항목마다의 사유.** 목록만 보여주지 않는다 — *"의사 출처라 원래 불가능하다"* 와 *"레포에 소스가 없으니 백업한 기기에서 올려라"* 는 **사용자가 할 일이 다르다**(전자는 할 일이 없고, 후자는 그 기기에서 `/sync-backup`을 돌리는 것이다). 사유 문장을 그대로 보여주고 **요약하지 않는다.** 이 맵의 키는 `unrestorable`과 **같은 집합**이다 — 사유 없는 항목이 있으면 그것은 결함이지 침묵할 자리가 아니다
 
 status는 아무것도 바꾸지 않는다. base를 읽지도 갱신하지도 않는다.
 
@@ -163,7 +166,7 @@ if [ -f "$SYNC_REPO/mcp-servers.json" ]; then
 fi
 ```
 
-출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인하지 않기 위해서다. `reason`이 "구문이 깨졌다"이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다(플러그인 업데이트는 소용이 없다). `reason`이 형식 문제이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다. 세 목록이 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
+출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인하지 않기 위해서다. `reason_kind`가 `broken_syntax`이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다(플러그인 업데이트는 소용이 없다). `reason_kind`가 `unknown_schema`이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다. 세 목록이 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
 
 ### 3. 결과 요약
 

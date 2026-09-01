@@ -27,6 +27,7 @@ import sys
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
+import report  # noqa: E402
 import keyed_sync as ks  # noqa: E402
 import plugin_config as pc  # noqa: E402
 import sync_state as ss  # noqa: E402
@@ -609,7 +610,7 @@ def main():
     # 깨졌을 뿐인데 "이 기기의 플러그인을 전부 지웁시다"가 최상위 ok와 함께 나간다.
     except (pc.LocalConfigUnavailable, pc.UnknownBackupSchema,
             pc.BrokenBackupSyntax, OSError, ValueError) as e:
-        out = {"status": "skipped", "reason": str(e)}
+        out = report.skipped(e)
         print("플러그인 복원 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))
 

@@ -19,6 +19,7 @@ import sys
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
+import report  # noqa: E402
 import mcp_config as mc  # noqa: E402
 import sync_state as ss  # noqa: E402
 
@@ -62,16 +63,12 @@ def collect(repo_path, staging_dir, claude_json_path=None, base_dir=ss.BASE_DIR)
     # 던지면 그 예외가 부르는 skipped의 문구("레포 파일은 손대지 않았다")가 거짓이 된다.
     out = {
         "status": "ok",
-        "conflicts": {
-            "repo_kept": [n for n in result["conflicts"] if n in servers],
-            "repo_absent": [n for n in result["conflicts"] if n not in servers],
-        },
+        # 분할은 보고 층 한 벌이다(lib/report.py) — collect_plugins가 같은 모양을
+        # 축자로 복제하고 있었고, 한쪽만 고쳐지는 자리였다.
+        "conflicts": report.split_conflicts(result["conflicts"], servers),
         "deleted": result["deleted"],
         "local_stale": result["local_stale"],
-        "repo_ahead": {
-            "present": [n for n in result["repo_ahead"] if n in local],
-            "absent": [n for n in result["repo_ahead"] if n not in local],
-        },
+        "repo_ahead": report.split_repo_ahead(result["repo_ahead"], local),
     }
     try:
         os.replace(tmp, staged)
@@ -102,7 +99,7 @@ def main():
     # 읽으면 레포에만 있던 다른 기기의 서버가 케이스 4로 지워진다(spec 9.1.2).
     except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema,
             mc.BrokenBackupSyntax, OSError, ValueError) as e:
-        out = {"status": "skipped", "reason": str(e)}
+        out = report.skipped(e)
         print("MCP 단계 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))
 

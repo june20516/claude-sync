@@ -18,6 +18,7 @@ import sys
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
+import report  # noqa: E402
 import keyed_sync as ks  # noqa: E402
 import plugin_config as pc  # noqa: E402
 
@@ -76,6 +77,11 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
         local_norm = normalize(local[section])
         out = ks.diff(local[section], repo[section],
                       normalize=normalize, hold=hooks[section]["hold"])
+        # **한 번만 만든다.** 아래 두 필드가 같은 집합에서 파생되므로 두 곳에서 만들면
+        # 갈리고, 갈려도 증상이 없다 — 사유 없는 항목이 조용히 생긴다.
+        unrestorable = [
+            k for k in pc.route_new_for(section, hooks, local[section], repo[section])
+            if not restorable(k, repo_norm[k])]
         entry = {
             "status": "ok",
             "only_local": out["only_local"],
@@ -97,9 +103,16 @@ def compare(backup_path, settings_path=None, installed_path=None, held_path=None
             # 그래서 restore와 같은 집합을 만드는 어댑터 함수를 부른다(route_new_for).
             # **이 목록은 only_repo의 부분집합이 아니다** — 소비자 문구가 그것을 전제하면
             # 보류 키의 복원 불가가 사용자에게 도달하지 않는다.
-            "unrestorable": [
-                k for k in pc.route_new_for(section, hooks, local[section], repo[section])
-                if not restorable(k, repo_norm[k])],
+            "unrestorable": unrestorable,
+            # **사유를 함께 싣는다**(9.2). 키 목록만으로는 "의사 출처라 원래 불가능하다"와
+            # "레포에 소스가 없으니 백업한 기기에서 올려라"를 가르지 못하는데 **사용자가
+            # 할 일이 서로 다르다** — 전자는 할 일이 없고 후자는 다른 기기에서
+            # `/sync-backup`을 돌리는 것이다.
+            # **훅 묶음의 reason을 쓴다.** 자유 함수 unrestorable_reason에 repo를 따로
+            # 넘기면 판정(restorable)과 사유가 다른 repo를 볼 수 있고 양쪽 다 무증상이다
+            # — plan_plugins의 같은 필드가 같은 이유로 그렇게 한다(Task 6 quality I2).
+            "unrestorable_reasons": {k: hooks[section]["reason"](k, repo_norm.get(k))
+                                     for k in unrestorable},
             "held": pc.held_kinds(section, out["held"], repo_norm=repo_norm, **context),
             # **값 보류 키 중 로컬 섹션 문서에 값이 없는 것.** H3만이 아니라 out["held"]
             # 전부를 훑는다 — "레포 값을 보존합니다"가 거짓이 되는 조건이 종류와
@@ -143,7 +156,7 @@ def main():
         # 모양이 pc.skipped_section과 같지만 그것을 쓰지 않는다 — 층위가 다르다. 이쪽은
         # sections 자체가 없는 **문서 전체**의 갈래이고, 같은 리터럴이 plugin_config를
         # import하지 않는 mcp 계열 셋에도 있다. 소비자가 읽는 자리도 다르다.
-        out = {"status": "skipped", "reason": str(e)}
+        out = report.skipped(e)
         print("플러그인 비교 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))
 

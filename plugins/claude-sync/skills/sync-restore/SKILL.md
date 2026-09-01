@@ -237,9 +237,11 @@ cat /tmp/claude-sync-plugins-plan.json
 
 `BASE_STAGING`은 여기서 딱 한 번 비운다. 6-6의 MCP `apply-base`가 같은 디렉토리를 쓰므로, 각 단계가 제 앞에서 `rm -rf`하면 앞 단계의 산출물이 지워지고 그 파일의 base가 전진하지 않는다.
 
-`status`가 `"skipped"`면 `reason`을 알리고 플러그인 단계 전체를 건너뛴다(파일 복원과 6절의 MCP 단계는 그대로 진행한다). 갈래는 셋이다 — `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨졌다.** 어느 갈래든 **제안을 하나도 내지 않는다**: 못 읽은 문서를 "항목 0개"로 읽으면 이 기기의 플러그인이 전부 `local_stale`로 떨어져 **"전부 지웁시다"가 나가는데**, 그 근거("다른 기기가 지웠다")는 거짓이다(실측). `reason`이 형식 문제이면 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다.
+`status`가 `"skipped"`면 `reason`을 알리고 플러그인 단계 전체를 건너뛴다(파일 복원과 6절의 MCP 단계는 그대로 진행한다). 갈래는 셋이다 — `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨졌다.** 어느 갈래든 **제안을 하나도 내지 않는다**: 못 읽은 문서를 "항목 0개"로 읽으면 이 기기의 플러그인이 전부 `local_stale`로 떨어져 **"전부 지웁시다"가 나가는데**, 그 근거("다른 기기가 지웠다")는 거짓이다(실측). `reason_kind`가 `unknown_schema`이면 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다.
 
-`reason`이 **"구문이 깨졌다"**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다(레포 git 이력에 정상 판본이 있으면 그것으로 복구한다). **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다.
+`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다(레포 git 이력에 정상 판본이 있으면 그것으로 복구한다). **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다.
+
+**분기는 `reason_kind`로 한다 — `reason` 문장으로 하지 않는다.** 그 문장은 사람이 읽는 표시용이고, 문구를 다듬는 편집이 스킬의 경로를 **조용히** 바꾼다(예외도 빈 결과도 나지 않는다). 갈래는 `broken_syntax` · `unknown_schema` · `local_unreadable` · `io_error` · `contract_violation` 다섯이고, 표에 없는 값이면 처방을 지어내지 말고 `reason`만 보여준다.
 
 **최상위 `status`는 섹션 skip을 반영하지 않는다.** 그 값은 "계획 수립을 수행했는가"이므로, 섹션 둘이 접힌 실행에서도 `"ok"`이고 `install`·`config_keys`는 비어 있다. 최상위만 읽으면 "복원할 것이 없습니다"로 보고하고 **조용히 아무것도 복원하지 않는다.** 섹션 단위 사실은 `sections[<섹션>]["status"]`에만 있으니 **그것을 반드시 따로 읽고**, `"skipped"`인 섹션의 복원만 건너뛴다.
 
@@ -430,7 +432,7 @@ python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json" > /tmp/cl
 cat /tmp/claude-sync-mcp-plan.json
 ```
 
-`status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원과 5절의 플러그인 단계는 그대로 진행한다). `reason`이 "형식을 알아볼 수 없다"이면 레포가 **이 기기보다 상위 버전으로 백업된 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다. `reason`이 **"구문이 깨졌다"**이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다 — 이 갈래도 **제안을 하나도 내지 않는다.** 못 읽은 문서를 "서버 0개"로 읽으면 이 기기의 서버가 전부 `local_stale`로 떨어져 거짓 근거의 제거 제안이 나가기 때문이다(실측). `"ok"`면 버킷별로 처리한다.
+`status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원과 5절의 플러그인 단계는 그대로 진행한다). `reason_kind`가 `unknown_schema`이면 레포가 **이 기기보다 상위 버전으로 백업된 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다. `reason_kind`가 **`broken_syntax`**이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다 — 이 갈래도 **제안을 하나도 내지 않는다.** 못 읽은 문서를 "서버 0개"로 읽으면 이 기기의 서버가 전부 `local_stale`로 떨어져 거짓 근거의 제거 제안이 나가기 때문이다(실측). `"ok"`면 버킷별로 처리한다.
 
 | 버킷 | 처방 |
 |---|---|

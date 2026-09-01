@@ -14,6 +14,7 @@ import sys
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
+import report  # noqa: E402
 import mcp_config as mc  # noqa: E402
 
 
@@ -46,7 +47,7 @@ def main():
     # 0개"로 읽혀 레포에만 있는 서버가 전부 only_local로 뒤집혀 보고된다(spec 9.3.6).
     except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema,
             mc.BrokenBackupSyntax, OSError, ValueError) as e:
-        out = {"status": "skipped", "reason": str(e)}
+        out = report.skipped(e)
         print("MCP 비교 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))
 
