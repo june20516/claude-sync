@@ -1,0 +1,58 @@
+[
+ {
+  "id": "N1",
+  "desc": "축: 값 종류 — 판정을 isinstance(v, dict)로 좁힌다 (배열이 새는가)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local_masked[k], bool)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}",
+  "new": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and isinstance(local_masked[k], dict)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}"
+ },
+ {
+  "id": "N2",
+  "desc": "축1 훅 호출 계약 — 정규화되지 않은 local을 본다",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local_masked[k], bool)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}",
+  "new": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local[\"enabledPlugins\"].get(k), bool)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}"
+ },
+ {
+  "id": "N3",
+  "desc": "축3 {} vs None — 로컬 키 부재를 확장 값으로 읽는다",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local_masked[k], bool)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}",
+  "new": "    config_skipped_local_extended = {\n        k: local_masked.get(k) for k in configs.get(\"needs_secret\", [])\n        if not isinstance(local_masked.get(k), bool)\n        and pc.value_command(local_masked.get(k),\n                             masked[\"enabledPlugins\"].get(k)) is None}"
+ },
+ {
+  "id": "N5",
+  "desc": "축2 축분리 — 판정을 레포 값으로 한다 (좌우 비대칭)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local_masked[k], bool)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}",
+  "new": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(masked[\"enabledPlugins\"].get(k), bool)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}"
+ },
+ {
+  "id": "N6",
+  "desc": "새 조건 제거 — 5-4가 어차피 지우는 갈래까지 건너뛴다 (과하게 넓다)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local_masked[k], bool)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}",
+  "new": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local_masked[k], bool)}"
+ },
+ {
+  "id": "N7",
+  "desc": "축1 훅 호출 계약 — value_command의 인자 순서를 뒤집는다",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local_masked[k], bool)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}",
+  "new": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local_masked[k], bool)\n        and pc.value_command(masked[\"enabledPlugins\"].get(k),\n                             local_masked[k]) is None}"
+ },
+ {
+  "id": "N8",
+  "desc": "가드를 통째로 넓힌다 — 로컬 키만 있으면 건너뛴다 (불리언 행이 하중을 받는가)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked and not isinstance(local_masked[k], bool)\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}",
+  "new": "    config_skipped_local_extended = {\n        k: local_masked[k] for k in configs.get(\"needs_secret\", [])\n        if k in local_masked\n        and pc.value_command(local_masked[k],\n                             masked[\"enabledPlugins\"].get(k)) is None}"
+ },
+ {
+  "id": "N4",
+  "desc": "축: 보고 층 — 건너뛰되 보고하지 않는다 (조용한 누락)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "\"config_skipped_local_extended\": config_skipped_local_extended,",
+  "new": "\"config_skipped_local_extended\": {},"
+ }
+]

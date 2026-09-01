@@ -9,6 +9,8 @@ import os
 import subprocess
 import tempfile
 
+import keyed_sync as ks
+
 SYNC_STATE_DIR = os.path.expanduser("~/.claude/.sync-state")
 BASE_DIR = os.path.join(SYNC_STATE_DIR, "base")
 
@@ -45,17 +47,27 @@ def base_hash(relpath, base_dir=BASE_DIR):
 
 
 def write_base(relpath, data, base_dir=BASE_DIR):
-    """base 블롭 기록(불변식 갱신). data가 None이면 삭제."""
+    """base 블롭 기록(불변식 갱신). data가 None이면 삭제.
+
+    쓰기는 ks.dump_bytes에 위임한다(원자적 교체 + fsync) — 잘린 base 블롭은
+    parse_base가 None으로 읽어 합집합 degrade를 부르고, 그러면 삭제 전파가 조용히 죽는다.
+
+    삭제는 dump_bytes가 남겼을 수 있는 <path>.tmp까지 함께 지운다. **현재 영향은
+    없다(위생이다)** — base 디렉토리를 walk하는 코드가 없고(소비자는 전부 relpath 하나를
+    read_base로 읽는다) data=None으로 부르는 프로덕션 호출자도 없다. 그러니 이 줄을
+    "무슨 사고를 막은 수정"으로 읽지 말 것. .tmp는 os.replace 전에 SIGKILL로 죽었을 때만
+    남는다(정상 실패 경로는 dump_bytes가 스스로 지운다).
+    """
     path = base_blob_path(relpath, base_dir)
     if data is None:
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
+        for target in (path, path + ".tmp"):
+            try:
+                os.remove(target)
+            except FileNotFoundError:
+                pass
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "wb") as f:
-        f.write(data)
+    ks.dump_bytes(data, path)
 
 
 def classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
@@ -79,6 +91,29 @@ def classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
     if changed_local and changed_remote:
         return "conflict"
     return "in_sync"  # L==S and R==S면 L==R이라 도달 불가 — 방어
+
+
+def restore_action(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
+    """복원이 이 파일에 무엇을 하는가. 반환: skip | add | overwrite | keep | merge.
+
+    **소비자가 둘이다.** `reconcile_restore.py`가 이 값으로 **실행**하고,
+    `check_status.py`가 같은 값으로 `excluded_in_repo` 항목의 **처방을 설명한다**
+    (`.syncignore`는 복원 방향에 적용되지 않으므로 제외 파일도 이 판정을 그대로 받는다).
+    그래서 이 파일이 `lib/`에 있다 — 한쪽에만 있으면 설명과 실행이 갈리고, 갈려도
+    증상이 없다(사용자는 틀린 문구를 볼 뿐이다).
+
+    `check_status`의 처방표가 여기서 나올 수 있는 값 **전부**를 덮는지는
+    `test_reconcile.py`의 완전성 단정이 건다.
+    """
+    cls = classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists)
+    return {
+        "in_sync": "skip",
+        "repo_only": "add",
+        "fast_forward": "overwrite",
+        "local_ahead": "keep",
+        "local_only": "keep",
+        "conflict": "merge",
+    }[cls]
 
 
 def three_way_merge(local_bytes, base_bytes, repo_bytes):
@@ -113,7 +148,22 @@ SYNCED_FILES = ("CLAUDE.md",)
 
 
 def iter_synced_relpaths(root):
-    """root(=~/.claude 또는 레포) 아래 동기화 대상 상대경로를 yield."""
+    """root(=~/.claude 또는 레포) 아래 동기화 대상 상대경로를 yield.
+
+    **`.syncignore`를 적용하지 않는다(의도).** 이 함수는 레포 쪽 트리에도 쓰이는데
+    제외 목록은 `~/.claude` 안에 있어 root 하나로는 어느 쪽 규칙인지 정할 수 없다.
+    그래서 필터는 **소비자가 건다** — 규정의 정본과 세 소비자의 유도는
+    lib/syncignore.py 모듈 docstring에 있다. 요약하면 `.syncignore`는 "올리지 않는다"
+    하나이고 backup 방향 전용이라:
+    - check_status.py(sync-status)는 **로컬 열거에만** 건다. 레포에도 있는 제외 파일은
+      `excluded_in_repo`로 따로 보고한다.
+    - reconcile_backup.py도 **로컬 열거에 건다.** 파일 결과는 걸든 안 걸든 같지만
+      (4단계 bash가 레포에서 지운다) 보고가 갈린다 — 걸지 않으면 제외 파일이
+      `/sync-backup`의 `push`에 "곧 업로드될 파일"로 나오고 `/sync-status`는 같은
+      파일에 침묵해, 사용자가 한 세션에서 모순된 말을 듣는다.
+    - reconcile_restore.py는 **걸지 않는다(결정).** 복원 방향에서 존중하면 다른 기기가
+      올린 같은 경로 파일을 영영 받지 못한다.
+    """
     for name in SYNCED_DIRS:
         d = os.path.join(root, name)
         if os.path.isdir(d):

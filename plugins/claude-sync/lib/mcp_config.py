@@ -1,39 +1,42 @@
 #!/usr/bin/env python3
-"""claude-sync의 MCP 서버 동기화 코어.
+"""claude-sync의 MCP 서버 동기화 어댑터.
 
 데이터 소스는 ~/.claude.json의 top-level mcpServers(user 스코프)다.
 `claude mcp list`의 텍스트 출력은 쓰지 않는다 — 손실 압축이고 cwd에 의존한다.
 backup/status/restore는 이 모듈만 통해 MCP를 다룬다(파서 드리프트 차단).
+
+키 단위 3-way 판정·인식은 값 무관 코어(keyed_sync)에 있다. 이 모듈은 MCP의 도메인
+지식만 얹는다 — 인식(_recognized_servers)·마스킹(redact)·보류 없음(no_hold)·
+복원 가능성(restorable)·비밀 키 목록(secret_keys).
 """
 import copy
-import json
+import json          # read_local_servers가 여전히 쓴다. 지우지 말 것
 import os
 import re
+
+import keyed_sync as ks
 
 SENTINEL = "<REDACTED>"
 SECRET_FIELDS = ("headers", "env")
 SCHEMA_VERSION = 2
 BACKUP_RELPATH = "mcp-servers.json"
+
+# 백업 문서에서 항목이 담기는 섹션. plugin_config.SECTIONS와 같은 뜻이고, 이 문서는
+# 섹션이 하나뿐이라 1-튜플이다. **하나뿐이어도 상수로 둔다** — 이 이름을 읽는 쪽
+# (detect_downgrade의 후보 요약)이 리터럴을 적으면 문서 키가 바뀌어도 조용히 어긋난
+# 이름이 사용자에게 나가고, tests/test_compat.py의 "servers가 객체여야 v2다" 바늘도
+# 뽑아낼 원천이 없어진다.
+# 이 상수가 문서의 실제 키와 갈리는 것은 test_mcp_config가 dump_backup의 출력으로 문다.
+SECTIONS = ("servers",)
 DEFAULT_CLAUDE_JSON = os.path.expanduser("~/.claude.json")
 VALID_NAME = re.compile(r"^[A-Za-z0-9_-]+$")   # claude mcp add-json의 실측 제약
-_BROKEN = object()                             # JSON 구문 오류 센티널
 
-
-class LocalConfigUnavailable(Exception):
-    """~/.claude.json을 읽지 못했다.
-
-    "서버 0개"와 반드시 구별해야 한다. 이 예외가 발생하면 삭제 판정을 해서는 안 된다.
-    """
-
-
-class UnknownBackupSchema(Exception):
-    """레포의 백업 파일이 이 버전이 아는 형식이 아니다.
-
-    상위 버전이 쓴 문서일 수 있으므로 "서버 0개"로 읽어서는 안 된다. 그렇게 읽으면
-    merge가 레포를 빈 것으로 보고 이 기기의 로컬만 남긴 결과를 덮어써, 상위 버전의
-    백업을 파괴한다. 옛 버전이 v2 문서에 저지른 사고와 같은 형태다.
-    LocalConfigUnavailable이 로컬 쪽에서 하는 역할을 레포 쪽에서 한다(불변식 2).
-    """
+# 코어의 예외를 그대로 re-export한다. 클래스가 두 벌이 되면 스크립트의
+# `except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema, OSError)`가 갈라지고,
+# 갱신을 잊으면 traceback으로 죽어 "읽기 실패로 백업 중단" 결함이 되살아난다.
+LocalConfigUnavailable = ks.LocalConfigUnavailable
+UnknownBackupSchema = ks.UnknownBackupSchema
+BrokenBackupSyntax = ks.BrokenBackupSyntax
 
 
 def read_local_servers(claude_json_path=None):
@@ -78,10 +81,13 @@ def _redact_field(value):
 def redact(servers):
     """headers/env의 값만 SENTINEL로 치환한다. 키 이름과 나머지 필드는 보존한다.
 
+    코어에 normalize 훅으로 주입된다 — 키 집합을 보존하므로 코어의 _normalized 가드를
+    통과한다(키 층위 제외는 hold의 몫이고, MCP에는 보류가 없다).
     입력은 변경하지 않으며, 반환값은 입력과 어떤 중첩 객체도 공유하지 않는다
     (deepcopy) — 후속 가공이 반환값을 다듬어도 원본 로컬 설정이 오염되지 않는다.
     이미 마스킹된 입력에 다시 적용해도 결과가 같다(멱등) — diff/merge가 로컬(평문)과
-    레포(마스킹됨) 양쪽에 이 함수를 적용해 수렴시키는 전제다.
+    레포(마스킹됨) 양쪽에 이 함수를 적용해 수렴시키는 전제이고, 코어가 멱등성을
+    집행하지 않으므로(spec 5.2) 이 성질은 어댑터 테스트가 책임진다.
     """
     out = {}
     for name, cfg in servers.items():
@@ -122,17 +128,6 @@ def _servers_from_obj(obj):
     return {}
 
 
-def _decode(data):
-    """JSON 디코드. 구문이 깨졌으면 _BROKEN.
-
-    None·false·0처럼 falsy한 유효 값과 "디코드 실패"를 구별해야 하므로 센티널을 쓴다.
-    """
-    try:
-        return json.loads(data)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return _BROKEN
-
-
 def _recognized_servers(obj):
     """알아볼 수 있는 백업 문서면 servers 매핑, 아니면 None.
 
@@ -147,24 +142,10 @@ def _recognized_servers(obj):
     if isinstance(obj, list):
         return _servers_from_obj(obj)          # v1 배열에는 version 개념이 없다
     if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
-        if _claims_newer_schema(obj.get("version")):
+        if ks.claims_newer_schema(obj.get("version"), SCHEMA_VERSION):
             return None
         return _servers_from_obj(obj)
     return None
-
-
-def _claims_newer_schema(version):
-    """version이 SCHEMA_VERSION보다 높다고 주장하는가.
-
-    float까지 본다. {"version": 3.0}은 파이썬이 아닌 도구(jq, YAML 변환기, 다른 언어의
-    v3 writer)가 실제로 만드는 형태다. int만 막고 float를 통과시키면 게이트의 존재
-    이유 자체가 무력화된다.
-    bool은 제외한다 — True는 int의 인스턴스지만 버전 주장이 아니다.
-    문자열("3")은 통과시킨다. 손으로 고친 문서를 막지 않기 위해서다.
-    """
-    if isinstance(version, bool):
-        return False
-    return isinstance(version, (int, float)) and version > SCHEMA_VERSION
 
 
 def parse_backup(data):
@@ -175,76 +156,44 @@ def parse_backup(data):
     **레포 파일을 읽을 때는 이 함수가 아니라 load_backup을 쓴다** — 알아볼 수 없는 문서를
     "서버 0개"로 읽으면 그 파일을 덮어써 파괴하기 때문이다.
     """
-    obj = _decode(data)
-    if obj is _BROKEN:
-        return {}
-    servers = _recognized_servers(obj)
-    return {} if servers is None else servers
+    return ks.parse_backup(data, _recognized_servers)
 
 
 def parse_base(data):
-    """base 블롭 전용 파싱. 이력을 신뢰할 수 없으면 None을 반환한다.
+    """base 블롭 전용 파싱. 이력을 신뢰할 수 없으면 None.
 
     "이력이 비어 있었다"({})와 "이력을 읽을 수 없다"(None)를 반드시 구별해야 한다.
     전자는 삭제·충돌 판정의 근거가 되지만, 후자는 근거가 될 수 없다.
-
-    백업 문서로 알아볼 수 있는 형태 — v1 배열, 또는 servers가 dict인 v2 객체 — 일 때만
-    매핑을 돌려준다. 구문은 유효하지만 스키마가 아닌 JSON(null, 문자열, 숫자,
-    servers가 없거나 dict가 아닌 객체)은 신뢰할 수 없는 이력이므로 None이다.
     """
-    if data is None:
-        return None
-    obj = _decode(data)
-    if obj is _BROKEN:
-        return None
-    return _recognized_servers(obj)
+    return ks.parse_base(data, _recognized_servers)
 
 
 def load_backup(path):
     """레포의 mcp-servers.json을 안전하게 읽는다. 파일이 없으면 {}.
 
-    구문이 깨진 파일은 {}로 degrade한다 — 레포 파일 하나가 깨졌다고 백업 전체를 막지
-    않으며, 다음 백업이 그 파일을 정상 내용으로 되돌린다.
+    구문이 깨진 파일은 BrokenBackupSyntax를 던진다 — 호출부가 이 문서를 건너뛰고 레포
+    파일을 손대지 않는다(5차 개정). "서버 0개"로 읽으면 레포에만 있던 다른 기기의 서버가
+    영구 소실된다.
     구문은 유효한데 형식을 알아볼 수 없으면 UnknownBackupSchema를 던진다. 상위 버전이
     쓴 문서일 수 있고, 그것을 "서버 0개"로 읽으면 이 버전이 그 백업을 덮어써 파괴한다.
     (PermissionError 등 그 외 OSError는 전파한다.)
     """
-    try:
-        with open(path, "rb") as f:
-            raw = f.read()
-    except FileNotFoundError:
-        return {}
-    obj = _decode(raw)
-    if obj is _BROKEN:
-        return {}
-    servers = _recognized_servers(obj)
-    if servers is None:
-        raise UnknownBackupSchema(
-            "%s의 형식을 알아볼 수 없다 — 상위 버전이 쓴 백업일 수 있다" % path
-        )
-    return servers
+    return ks.load_backup(path, _recognized_servers)
 
 
 def dump_backup(servers, path):
-    """v2 형식으로 저장한다. sort_keys로 git diff를 안정화한다."""
-    payload = {"version": SCHEMA_VERSION, "scope": "user", "servers": servers}
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, sort_keys=True, ensure_ascii=False)
-        f.write("\n")
+    """v2 형식으로 저장한다. sort_keys로 git diff를 안정화한다.
 
-
-def _fingerprint(cfg):
-    """cfg를 키 정렬된 JSON 문자열로 만들어 비교 가능한 형태로 바꾼다.
-
-    dump_backup과 같은 직렬화 옵션(sort_keys, ensure_ascii=False)을 쓴다 —
-    디스크 표현이 같으면 same()도 같다고 판정하도록 맞춘 것이다.
+    코어의 원자적 writer를 쓴다 — 쓰기 도중 실패가 레포 파일을 잘린 채로 남기면
+    다음 백업이 그것을 "서버 0개"로 읽어 전부 케이스 4로 판정한다.
     """
-    return json.dumps(cfg, sort_keys=True, ensure_ascii=False)
+    payload = {"version": SCHEMA_VERSION, "scope": "user", "servers": servers}
+    ks.dump_json(payload, path)
 
 
 def same(a, b):
     """설정 동등 비교. 키 순서에 무관하다."""
-    return _fingerprint(a) == _fingerprint(b)
+    return ks.same(a, b)
 
 
 def diff(local, backed):
@@ -252,16 +201,15 @@ def diff(local, backed):
 
     비밀 값은 로컬에 평문, 레포에 SENTINEL로 저장되므로 원본끼리 비교하면
     비밀을 가진 서버가 영구히 "변경됨"으로 보고된다(Bug #2와 같은 미수렴).
+
+    코어의 held 키는 걸러낸다 — compare_mcp.py가 이 dict를 사용자 JSON에 통째로
+    펼치므로, 걸러내지 않으면 없던 필드가 출력에 나타난다. MCP에는 보류가 없어
+    항상 비어 있으니 정보도 없다.
     """
-    local_masked, repo_masked = redact(local), redact(backed)
-    return {
-        "only_local": sorted(set(local_masked) - set(repo_masked)),
-        "only_repo": sorted(set(repo_masked) - set(local_masked)),
-        "changed": sorted(
-            name for name in set(local_masked) & set(repo_masked)
-            if not same(local_masked[name], repo_masked[name])
-        ),
-    }
+    out = ks.diff(local, backed, normalize=redact, hold=ks.no_hold)
+    return {"only_local": out["only_local"],
+            "only_repo": out["only_repo"],
+            "changed": out["changed"]}
 
 
 def next_base(local, base, servers):
@@ -270,89 +218,43 @@ def next_base(local, base, servers):
     로컬이 동의하지 않은 값(타 기기가 추가·변경한 서버, 충돌 중인 서버)을 base에 기록하면
     다음 백업이 그 차이를 "로컬이 바뀌었다"로 오독해, 타 기기의 서버를 삭제하거나
     타 기기의 변경을 되돌린다. update_base.py가 파일 단위로 지키는 불변식과 같다.
-    merge가 내부에서 쓰고 결과에 담아 반환하지만, restore도 같은 규칙으로 base를 갱신해야
-    하므로 공개 함수다.
-    반환값은 local·base·servers의 어떤 nested 객체도 공유하지 않는다(deepcopy) — 호출부가
-    반환된 servers를 가공한 뒤 base에 써도 next_base가 조용히 오염되지 않는다.
+    merge가 결과에 담아 반환하지만, restore도 같은 규칙으로 base를 갱신해야 하므로
+    공개 함수다.
 
-    입력에 redact를 내부 적용한다 — merge·diff와 같은 계약이다. restore는
-    read_local_servers()의 원본(비밀 평문)을 넘기게 되는데, 내부 적용이 없으면
-    same(레포의 <REDACTED>, 로컬 평문)이 거짓이 되어 비밀을 가진 서버의 base가
-    전진하지 않고, 평문 키가 base 블롭에 새 사본으로 기록된다.
-    redact는 멱등이므로 이미 마스킹된 merge 경로에는 영향이 없다.
+    코어가 입력에 redact를 적용한다 — restore는 read_local_servers()의 원본(비밀 평문)을
+    넘기게 되는데, 그 적용이 없으면 same(레포의 <REDACTED>, 로컬 평문)이 거짓이 되어
+    비밀을 가진 서버의 base가 전진하지 않고, 평문 키가 base 블롭에 새 사본으로 기록된다.
+
+    MCP에는 보류가 없으므로 value_held를 넘기지 않는다(코어 기본값 frozenset()).
+    **보류가 있는 어댑터는 restore 경로에서 반드시 스스로 계산해 넘겨야 한다** —
+    안 넘기면 보류 키가 base에 얼어붙어, 보류가 풀리는 순간 케이스 3(삭제)이 난다.
     """
-    local, servers = redact(local), redact(servers)
-    old = redact(base) if base else {}
-    out = {}
-    for name in sorted(set(old) | set(servers)):
-        if name in servers and name in local and same(servers[name], local[name]):
-            out[name] = copy.deepcopy(servers[name])  # 로컬이 동의 → 전진 (케이스 1·6·7)
-        elif name not in servers and name not in local:
-            continue                    # 양쪽에서 사라짐 → base에서 제거 (케이스 3·10)
-        elif name in old:
-            out[name] = copy.deepcopy(old[name])       # 로컬이 동의 안 함 → 이전 base 유지 (케이스 2·4·5·8·9)
-    return out
+    return ks.next_base(local, base, servers, normalize=redact)
 
 
 def merge(local, repo, base):
     """서버 이름 키 단위 3-way 병합 (spec 7.2 판정표).
 
-    입력에 redact를 내부에서 적용한다 — diff와 같은 계약이다. 호출부가 원본(비밀 평문)을
-    그대로 넘겨도 결과에는 비밀이 실리지 않는다.
-    base가 None이면 삭제 없이 합집합으로 degrade한다 — "타 기기 추가"와
-    "내 삭제"를 구별할 수 없기 때문이다.
-    반환하는 next_base는 이름 단위로 전진한다: 로컬이 동의한 이름만 base에 기록하고,
-    동의하지 않은 이름(타 기기가 추가·변경했거나 충돌·잔존 중인 이름)은 이전 base를 유지한다
-    (next_base 함수 참고). 그래서 호출부가 conflicts/local_stale 유무로 base 갱신을 전역으로
-    게이트할 필요가 없다 — 서버 하나가 충돌 중이어도 나머지 서버의 base는 계속 전진한다.
+    코어가 입력에 redact를 적용하므로 호출부가 원본(비밀 평문)을 그대로 넘겨도 결과에
+    비밀이 실리지 않는다.
+    base가 None이면 삭제 없이 합집합으로 degrade한다 — "타 기기 추가"와 "내 삭제"를
+    구별할 수 없기 때문이다.
+    반환하는 next_base는 이름 단위로 전진하므로 호출부가 conflicts/local_stale 유무로
+    base 갱신을 전역으로 게이트할 필요가 없다 — 서버 하나가 충돌 중이어도 나머지 서버의
+    base는 계속 전진한다.
     conflicts에는 케이스 5(로컬 수정 vs 리모트 삭제)와 케이스 9(양쪽 변경)가 함께 들어가는데
     결과가 다르다 — 9는 servers에 레포 값이 남고 5는 servers에서 아예 빠진다.
     "name in result['servers']"로 둘을 구분할 수 있다.
+
+    코어의 merged를 servers로 되돌리고 held는 걸러낸다 — MCP의 공개 계약이 그렇다.
     """
-    local, repo = redact(local), redact(repo)
-    base = None if base is None else redact(base)
-    servers, conflicts, deleted, local_stale, repo_ahead = {}, [], [], [], []
-    for name in sorted(set(local) | set(repo) | set(base or {})):
-        in_l, in_r = name in local, name in repo
-        if base is None:
-            if in_l:
-                servers[name] = local[name]
-            elif in_r:
-                servers[name] = repo[name]
-            continue
-        in_s = name in base
-        if in_l and not in_r and not in_s:                  # 1 로컬 신규
-            servers[name] = local[name]
-        elif not in_l and in_r and not in_s:                # 2 타 기기 추가
-            servers[name] = repo[name]
-            repo_ahead.append(name)
-        elif not in_l and in_r and in_s:                    # 3 로컬에서 삭제
-            deleted.append(name)
-        elif in_l and not in_r and in_s:                    # 4·5 로컬만 있고 base에도 있음
-            if same(local[name], base[name]):               # 4 타 기기 삭제, 로컬 잔존
-                local_stale.append(name)
-            else:                                           # 5 로컬 수정 vs 리모트 삭제
-                conflicts.append(name)
-        elif in_l and in_r:
-            if same(local[name], repo[name]):               # 6 in_sync
-                servers[name] = local[name]
-            elif in_s and same(repo[name], base[name]):     # 7 로컬만 변경
-                servers[name] = local[name]
-            elif in_s and same(local[name], base[name]):    # 8 타 기기 변경
-                servers[name] = repo[name]
-                repo_ahead.append(name)
-            else:                                           # 9 충돌
-                conflicts.append(name)
-                servers[name] = repo[name]
-        # (암묵) L·R 모두 없음(base에만 존재, 케이스 10) → 아무 리스트에도 넣지 않는다
-    return {
-        "servers": servers,
-        "conflicts": conflicts,
-        "deleted": deleted,
-        "local_stale": local_stale,
-        "repo_ahead": repo_ahead,
-        "next_base": next_base(local, base, servers),
-    }
+    r = ks.merge(local, repo, base, normalize=redact, hold=ks.no_hold)
+    return {"servers": r["merged"],
+            "conflicts": r["conflicts"],
+            "deleted": r["deleted"],
+            "local_stale": r["local_stale"],
+            "repo_ahead": r["repo_ahead"],
+            "next_base": r["next_base"]}
 
 
 def restorable(name, cfg):
@@ -374,43 +276,21 @@ def restorable(name, cfg):
 
 
 def restore_plan(local, backed, base):
-    """복원 계획. diff·merge와 마찬가지로 비교 직전 양쪽에 redact를 적용한다.
+    """복원 계획. 버킷 9개 — MCP에는 보류가 없으므로 held·value_held는 노출하지 않는다.
 
-    버킷 9개: add / needs_secret / unrestorable / in_sync / local_ahead /
-    repo_ahead / both_changed / local_stale / local_only.
+    add / needs_secret / unrestorable / in_sync / local_ahead / repo_ahead /
+    both_changed / local_stale / local_only.
     케이스 7·8·9를 한 버킷으로 뭉치지 않는 이유는 7.7에 있다 — 처방이 서로 다르고,
     특히 케이스 7에 "레포 값 채택"을 제시하면 아직 백업되지 않은 로컬 변경이 파괴된다.
-    조건식은 merge가 7.2 판정표의 7·8·9행에서 쓰는 것과 같다.
     local_stale은 케이스 4와 5를 모두 담는다(merge.local_stale ⊆ restore_plan.local_stale) —
     담지 않으면 케이스 5가 탈출구 없는 상태가 된다.
+
+    화이트리스트로 좁히는 것이 계약이다 — plan_mcp.py가 이 dict를 사용자 JSON에 통째로
+    펼치므로, 코어의 value_held·action_held를 그대로 흘리면 출력에 없던 축이 나타나고
+    SKILL.md가 그것을 사용자에게 보고한다.
     """
-    local, backed = redact(local), redact(backed)
-    known = redact(base) if base else {}
-    plan = {key: [] for key in (
+    plan = ks.restore_plan(local, backed, base, normalize=redact, hold=ks.no_hold,
+                           restorable=restorable, secret_keys=secret_keys)
+    return {key: plan[key] for key in (
         "add", "needs_secret", "unrestorable", "in_sync", "local_ahead",
-        "repo_ahead", "both_changed", "local_stale", "local_only",
-    )}
-    for name in sorted(set(local) | set(backed)):
-        in_local, in_repo = name in local, name in backed
-        if in_repo and not in_local:
-            cfg = backed[name]
-            if not restorable(name, cfg):
-                plan["unrestorable"].append(name)
-            elif secret_keys(cfg):
-                plan["needs_secret"].append(name)
-            else:
-                plan["add"].append(name)
-        elif in_local and in_repo:
-            if same(local[name], backed[name]):                          # 6
-                plan["in_sync"].append(name)
-            elif name in known and same(backed[name], known[name]):      # 7
-                plan["local_ahead"].append(name)
-            elif name in known and same(local[name], known[name]):       # 8
-                plan["repo_ahead"].append(name)
-            else:                                                        # 9
-                plan["both_changed"].append(name)
-        elif name in known:                                              # 4·5
-            plan["local_stale"].append(name)
-        else:                                                            # 1
-            plan["local_only"].append(name)
-    return plan
+        "repo_ahead", "both_changed", "local_stale", "local_only")}

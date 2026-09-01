@@ -63,7 +63,7 @@ def _load_json(path):
     박아두면 호출부가 되돌릴 수 없고, load_metadata 쪽에서 fail-open이 된다.
     셋을 그대로 돌려주고 해석은 각 함수가 한다.
     깨진 JSON만 None으로 degrade한다 — 내용의 문제이고 다음 백업이 되돌린다.
-    (mcp_config._BROKEN이 쓰는 out-of-band 센티널과 같은 이유다.)
+    (keyed_sync.BROKEN이 쓰는 out-of-band 센티널과 같은 이유다.)
     """
     try:
         with open(path, "rb") as f:
@@ -102,8 +102,11 @@ def load_metadata(path):
     열지 못했으면 UNREADABLE.
 
     깨진 metadata를 차단 근거로 삼으면 데드락이 된다 — 그 파일을 정상으로 되돌리는 것이
-    다음 백업인데 그 백업이 막힌다. load_backup이 깨진 파일을 {}로 degrade하는 것과 같은
-    이유다("레포 파일 하나가 깨졌다고 전체를 막지 않는다").
+    다음 백업인데 그 백업이 막힌다. **여기서는 "다음 백업이 되돌린다"가 참이다**:
+    generate_metadata가 이 파일을 매 백업 통째로 다시 쓰고, 그 내용은 이 기기만으로
+    결정되기 때문이다. 백업 문서(plugins.json·mcp-servers.json)는 그렇지 않아 5차
+    개정이 그쪽 degrade를 BrokenBackupSyntax로 바꿨다 — 다른 기기의 항목이 그 문서에만
+    있어서, 못 읽은 채 병합하면 영구 소실된다(keyed_sync.BrokenBackupSyntax).
 
     **못 읽음은 다르다.** 표식 없음은 "2.x가 썼다"는 의미 있는 결론이라 통과로 이어지는데,
     못 읽은 파일이 그 결론을 참칭하면 상위 버전이 쓴 레포를 통과시킨다. 환경의 문제라
@@ -242,21 +245,99 @@ def _block_reason(meta, raw_min, my_version):
 SHAPE_ABSENT = "absent"
 SHAPE_BROKEN = "broken"
 SHAPE_UNREADABLE = "unreadable"   # 파일/blob을 읽지 못했다 — absent가 아니다
-SHAPE_V1_ARRAY = "v1_array"
+SHAPE_V1_ARRAY = "v1_array"       # mcp-servers.json의 옛 형식
+SHAPE_V1_OBJECT = "v1_object"     # plugins.json의 옛 형식 — v1_array와 **다른 상수다**
 SHAPE_V2_OBJECT = "v2_object"
 SHAPE_UNKNOWN = "unknown"
 _SHAPES = frozenset({
     SHAPE_ABSENT, SHAPE_BROKEN, SHAPE_UNREADABLE,
-    SHAPE_V1_ARRAY, SHAPE_V2_OBJECT, SHAPE_UNKNOWN,
+    SHAPE_V1_ARRAY, SHAPE_V1_OBJECT, SHAPE_V2_OBJECT, SHAPE_UNKNOWN,
 })
 
+# 백업 문서의 relpath. **mcp_config·plugin_config에서 import하지 않는다** — compat은
+# 형태·버전 판정만 하는 저수준 모듈이라 도메인 어댑터 쪽을 향하는 간선을 만들지 않는다.
+# (지금 그 간선을 만들어도 **순환은 아니다** — lib/의 import 그래프는 순환 없는 DAG다.
+#  다만 반대 방향이 생기는 날 순환이 된다. 계층을 지키는 것이 그 값이다.)
+# 그 대가로 relpath 원천이 두 벌이 되므로, tests/test_compat.py가 두 모듈의
+# BACKUP_RELPATH를 import해 아래 두 표의 키 집합과 대조한다(완전성 단정).
+# **비공개다.** 공개하면 호출부가 mc.BACKUP_RELPATH 대신 이쪽을 쓰기 시작해 relpath의
+# 원천이 둘이 된다 — 그때 대조 테스트는 초록인 채로 두 벌이 갈린다.
+_MCP_RELPATH = "mcp-servers.json"
+_PLUGINS_RELPATH = "plugins.json"
 
-def shape_of(data):
-    """백업 문서의 형태. absent | broken | v1_array | v2_object | unknown
 
-    다운그레이드 판정에 필요하다. mcp_config는 파싱해서 매핑만 주므로 원본 형태가 사라진다.
+def _mcp_shape(obj):
+    """mcp-servers.json: 최상위 배열이 옛 형식, servers가 객체면 v2."""
+    if isinstance(obj, list):
+        return SHAPE_V1_ARRAY
+    if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
+        return SHAPE_V2_OBJECT
+    return SHAPE_UNKNOWN
+
+
+def _plugins_shape(obj):
+    """plugins.json: 객체인데 version 키가 없으면 옛 형식, 있으면 v2.
+
+    **`{}`는 v1_object다.** 2.x의 extract_plugins.py는 로컬 settings에 enabledPlugins도
+    extraKnownMarketplaces도 없으면 `{}`를 쓴다(main 브랜치의 그 스크립트에서 실측).
+    base가 v2였다면 그것은 정확히 다운그레이드 사고이므로 unknown으로 접으면 안 된다.
+
+    **배열은 unknown이다.** 이 relpath에서 배열은 옛 형식이 아니라 알 수 없는 문서다.
+    v1_array를 돌려주면 mcp의 옛 형식이 plugins의 옛 형식으로 읽힌다.
+    """
+    if not isinstance(obj, dict):
+        return SHAPE_UNKNOWN
+    return SHAPE_V2_OBJECT if "version" in obj else SHAPE_V1_OBJECT
+
+
+# relpath -> 형태 판정 함수. 두 relpath의 규칙을 하나로 합치지 않는다 — 합치면
+# 한쪽의 옛 형식이 다른 쪽의 옛 형식으로 읽힌다.
+_SHAPE_RULES = {
+    _MCP_RELPATH: _mcp_shape,
+    _PLUGINS_RELPATH: _plugins_shape,
+}
+
+# relpath -> 그 문서의 "옛 형식". downgrade_suspected의 규칙 자체는 하나이고
+# 이 상수만 갈린다.
+_OLD_SHAPE = {
+    _MCP_RELPATH: SHAPE_V1_ARRAY,
+    _PLUGINS_RELPATH: SHAPE_V1_OBJECT,
+}
+
+
+def _for_relpath(table, relpath, what):
+    """relpath로 표를 찾는다(표의 값은 판정 함수일 수도 shape 상수일 수도 있다).
+
+    모르는 relpath는 조용한 fail-open 대신 ValueError다.
+
+    같은 파일의 _upgrade_message가 모르는 reason에 예외를 던지는 것과 같은 관례다.
+    """
+    if relpath not in table:
+        raise ValueError("%s를 모르는 relpath: %r" % (what, relpath))
+    return table[relpath]
+
+
+def shape_of(data, relpath):
+    """백업 문서의 형태. absent | broken | v1_array | v1_object | v2_object | unknown
+
+    **relpath마다 규칙이 다르므로 relpath는 기본값 없는 필수 인자다** (spec 11.6).
+
+    | relpath | 옛 형식 | v2 | 그 외 |
+    |---|---|---|---|
+    | mcp-servers.json | 최상위가 배열 -> v1_array | 객체이고 servers가 객체 -> v2_object | unknown |
+    | plugins.json | 객체인데 version 키가 없다 -> v1_object | 객체이고 version 키가 있다 -> v2_object | unknown |
+
+    기본값을 두면 갱신되지 않은 호출자가 **조용히** mcp 규칙으로 plugins.json을 판정한다 —
+    v2 문서에 servers가 없으니 unknown이 되고, 다운그레이드가 영영 탐지되지 않는데
+    아무 증상이 없다. 필수 인자면 그 호출자가 TypeError로 즉시 죽는다.
+
+    다운그레이드 판정에 필요하다. mcp_config·plugin_config는 파싱해서 매핑만 주므로
+    원본 형태가 사라진다.
     version 값은 보지 않는다 — 여기서 답하는 질문은 "v1이냐 v2냐"이지
-    "읽어도 되느냐"가 아니다. 후자는 mcp_config의 게이트가 답한다.
+    "읽어도 되느냐"가 아니다. 후자는 mcp_config._recognized_servers와
+    plugin_config._recognized_sections의 게이트가 답한다. 그래서 plugins.json의
+    version: 3도 v2_object다 — 값을 보면 상위 버전 문서가 unknown으로 떨어져
+    downgrade_suspected가 조용히 False가 된다(불변식 6).
 
     **SHAPE_UNREADABLE은 여기서 나오지 않는다.** 이 함수는 경로가 아니라 원본 바이트를
     받으므로 읽기 실패를 알 수 없다. 읽는 쪽(detect_downgrade.py)이 그 상태를 만든다.
@@ -264,6 +345,7 @@ def shape_of(data):
     파싱된 객체를 넘기는 것은 "깨진 문서"가 아니라 호출자 오류이므로 TypeError로 드러낸다.
     fail-open 방향의 반환값으로 삼키면 그 실수가 "사고 없음"이라는 결론이 된다(불변식 6).
     """
+    rule = _for_relpath(_SHAPE_RULES, relpath, "형태 규칙")
     if data is None:
         return SHAPE_ABSENT
     if not isinstance(data, (str, bytes, bytearray)):
@@ -274,27 +356,28 @@ def shape_of(data):
         obj = json.loads(data)
     except ValueError:
         return SHAPE_BROKEN
-    if isinstance(obj, list):
-        return SHAPE_V1_ARRAY
-    if isinstance(obj, dict) and isinstance(obj.get("servers"), dict):
-        return SHAPE_V2_OBJECT
-    return SHAPE_UNKNOWN
+    return rule(obj)
 
 
-def downgrade_suspected(repo_shape, base_shape):
-    """레포는 v1 배열인데 내 base는 v2 객체였다 -> 옛 버전 기기가 덮어썼다.
+def downgrade_suspected(repo_shape, base_shape, relpath):
+    """레포는 그 문서의 옛 형식인데 내 base는 v2 객체였다 -> 옛 버전 기기가 덮어썼다.
 
-    레포가 v1인 것만으로는 부족하다 — 정말 오래된 레포일 수 있다. base가 v2였다는 것은
-    이 기기가 v2를 본 적이 있다는 뜻이고, 그 뒤 v1이 되었다면 누군가 되돌린 것이다.
+    규칙은 하나이고 relpath마다 "옛 형식" 상수만 갈린다(_OLD_SHAPE) —
+    mcp-servers.json은 v1_array, plugins.json은 v1_object.
+
+    레포가 옛 형식인 것만으로는 부족하다 — 정말 오래된 레포일 수 있다. base가 v2였다는 것은
+    이 기기가 v2를 본 적이 있다는 뜻이고, 그 뒤 옛 형식이 되었다면 누군가 되돌린 것이다.
     base를 못 읽으면 판정하지 않는다 — 신뢰할 수 없는 이력은 근거가 될 수 없다(불변식 2).
 
-    모르는 shape는 조용히 False로 만들지 않는다. 같은 파일의 _upgrade_message가 모르는
-    reason에 예외를 던지는데 여기만 조용하면 관례가 갈리고, 조용한 쪽이 fail-open이다(불변식 6).
+    모르는 shape·relpath는 조용히 False로 만들지 않는다. 같은 파일의 _upgrade_message가
+    모르는 reason에 예외를 던지는데 여기만 조용하면 관례가 갈리고,
+    조용한 쪽이 fail-open이다(불변식 6).
     """
+    old_shape = _for_relpath(_OLD_SHAPE, relpath, "옛 형식")
     for name, value in (("repo_shape", repo_shape), ("base_shape", base_shape)):
         if value not in _SHAPES:
             raise ValueError("알 수 없는 %s: %r" % (name, value))
-    return repo_shape == SHAPE_V1_ARRAY and base_shape == SHAPE_V2_OBJECT
+    return repo_shape == old_shape and base_shape == SHAPE_V2_OBJECT
 
 
 def check(repo_dir, plugin_json_path=None):

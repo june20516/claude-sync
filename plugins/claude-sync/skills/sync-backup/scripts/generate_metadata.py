@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 """백업 시점의 파일별 내용 해시(sha256)와 버전 표식을 기록한다. mtime 미사용.
 
+**`.syncignore`를 존중한다.** 이 스크립트는 레포가 아니라 `~/.claude`를 직접 걷기
+때문에, 4단계가 레포 작업 트리에서 지운 파일도 여기서는 그대로 보인다. 필터가 없으면
+사용자가 제외한 파일의 **이름과 sha256이 푸시되는 표식 파일에 남는다.** 매칭 규칙은
+lib/syncignore.py 한 곳에 있다 — 4단계의 `find -path`와 같은 규칙이다.
+
+표식은 **푸시되는 산출물**이므로 여기서 거르는 것이 곧 규정 그대로다 —
+`.syncignore`의 뜻은 "올리지 않는다"이고 backup 방향 전용이다(정본: lib/syncignore.py
+모듈 docstring). 복원 쪽은 이 필터와 무관하다 — reconcile_restore.py는 제외 목록을
+보지 않는다.
+
 표식 세 필드의 성격이 다르다:
 - written_by_version: 정보. 판정에 쓰지 않는다.
 - min_reader_version: **판정 근거.** 이것 하나가 backup 게이트다.
 - schema: 사람이 읽는 요약. 판정 근거가 아니다 — 항목별 보류는 각 파일 자체의
-  version 필드로 한다(spec 결정 2).
+  version 필드로 한다(spec 결정 2). **여전히 참이다**(plan ③ Task 4에서 전수 grep:
+  이 맵을 읽는 코드도 산문도 없다. 세 SKILL.md는 `newer_schema_seen`만 읽는데 그것은
+  detect_downgrade의 출력이지 이 맵이 아니다). 백업 문서 **둘 다** 싣는다.
 """
 import hashlib
-import json
 import os
 import sys
 
@@ -16,7 +27,10 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
 import compat  # noqa: E402
+import keyed_sync as ks  # noqa: E402
 import mcp_config as mc  # noqa: E402
+import plugin_config as pc  # noqa: E402
+import syncignore  # noqa: E402
 
 
 def file_sha256(path):
@@ -61,25 +75,45 @@ def build_metadata(claude_dir, plugin_json_path):
     plugin.json을 못 읽으면 written_by_version을 생략한다 — 자기 버전을 모르는 것이
     파일 해시를 못 쓸 이유는 아니다. min_reader_version은 상수이므로 이 경우에도
     정상 기록된다.
+
+    `.syncignore`는 `claude_dir` 안에서 찾는다 — 이 함수가 걷는 트리와 제외 목록이
+    같은 곳에서 와야 테스트가 실제 `~/.claude` 없이 이 경로를 잴 수 있다.
     """
-    metadata = {"files": {}}
-    metadata["files"].update(collect(os.path.join(claude_dir, "agents"), "agents"))
-    metadata["files"].update(collect(os.path.join(claude_dir, "skills"), "skills"))
-    metadata["files"].update(collect(os.path.join(claude_dir, "CLAUDE.md"), "CLAUDE.md"))
+    files = {}
+    files.update(collect(os.path.join(claude_dir, "agents"), "agents"))
+    files.update(collect(os.path.join(claude_dir, "skills"), "skills"))
+    files.update(collect(os.path.join(claude_dir, "CLAUDE.md"), "CLAUDE.md"))
+    patterns = syncignore.load_patterns(syncignore.default_path(claude_dir))
+    kept = syncignore.filter_relpaths(sorted(files), patterns)
+    excluded = len(files) - len(kept)
+    if excluded:
+        print(".syncignore로 표식에서 제외: %d개" % excluded, file=sys.stderr)
+    metadata = {"files": {rel: files[rel] for rel in kept}}
     written_by = compat.read_plugin_version(plugin_json_path)
     if written_by is not None:
         metadata["written_by_version"] = written_by
     metadata["min_reader_version"] = compat.MIN_READER_VERSION
-    metadata["schema"] = {mc.BACKUP_RELPATH: mc.SCHEMA_VERSION}
+    # **백업 문서 둘 다 싣는다**(version-compat spec 5.3의 약속. plan ③ Task 4).
+    # 상수를 각 모듈에서 뽑는다 — 리터럴 `"plugins.json": 2`를 적으면 SCHEMA_VERSION이
+    # 올라가도 표식만 조용히 옛 값을 말한다. 문서가 셋이 되면 여기와
+    # test_metadata의 완전성 단정을 함께 고쳐야 한다.
+    metadata["schema"] = {mc.BACKUP_RELPATH: mc.SCHEMA_VERSION,
+                          pc.BACKUP_RELPATH: pc.SCHEMA_VERSION}
     return metadata
 
 
 def write_metadata(output_path, metadata):
     """sort_keys로 바이트를 안정화한다 — os.walk 순서 때문에 매 백업마다 diff가 생기면
-    표식 파일 자체가 소음이 된다."""
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, sort_keys=True, ensure_ascii=False)
-        f.write("\n")
+    표식 파일 자체가 소음이 된다.
+
+    **`ks.dump_json`으로 원자적으로 쓴다.** 7단계는 이 파일을 레포 작업 트리에 직접
+    쓰고 10단계의 `git add -A`가 그것을 커밋·푸시한다. 평범한 `open(path, "w")`는
+    선-truncate라 쓰기 도중 실패(ENOSPC/EIO/SIGKILL)가 **잘린 JSON을 남기고 그대로
+    푸시된다.** 그러면 모든 기기에서 `compat.load_metadata`가 None이 되고
+    `_block_reason`이 `raw_min is None`을 보고 차단하지 않는다 — 이 파일 하나가
+    `min_reader_version` 게이트의 유일한 입력이라, 어느 기기든 정상 백업으로 덮을
+    때까지 **전 기기에서 게이트가 조용히 꺼진다.**"""
+    ks.dump_json(metadata, output_path)
 
 
 def main():

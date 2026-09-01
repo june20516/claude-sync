@@ -1,0 +1,44 @@
+[
+ {
+  "id": "U1",
+  "desc": "축1 훅 호출 계약 — restore_action의 로컬/레포 인자를 뒤바꾼다",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/check_status.py",
+  "old": "            ss.restore_action(L, R, S, L is not None, R is not None)]",
+  "new": "            ss.restore_action(R, L, S, R is not None, L is not None)]"
+ },
+ {
+  "id": "U2",
+  "desc": "축2 축분리 — 옮긴 매핑의 규칙 하나를 바꾼다(순수 이동이 정말 순수했는가)",
+  "file": "plugins/claude-sync/lib/sync_state.py",
+  "old": "        \"local_ahead\": \"keep\",",
+  "new": "        \"local_ahead\": \"overwrite\","
+ },
+ {
+  "id": "U3",
+  "desc": "축3 완전성 — 처방표에서 add 행을 뺀다",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/check_status.py",
+  "old": "    \"add\": \"복원: 로컬에 추가됨\",\n",
+  "new": ""
+ },
+ {
+  "id": "U4",
+  "desc": "축2 축분리 — 항목마다 다른 처방을 하나로 접는다",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/check_status.py",
+  "old": "        excluded_prescription[rel] = RESTORE_PRESCRIPTION[\n            ss.restore_action(L, R, S, L is not None, R is not None)]",
+  "new": "        excluded_prescription[rel] = RESTORE_PRESCRIPTION[\"skip\"]"
+ },
+ {
+  "id": "U5",
+  "desc": "축4 보고 층 — 처방 줄을 일반 파일에도 붙인다(머리말과 두 번 말한다)",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/check_status.py",
+  "old": "    cls = ss.classify(L, R, S, local_exists=L is not None, repo_exists=R is not None)\n    buckets[cls].append(rel)",
+  "new": "    cls = ss.classify(L, R, S, local_exists=L is not None, repo_exists=R is not None)\n    excluded_prescription.setdefault(rel, RESTORE_PRESCRIPTION[\n        ss.restore_action(L, R, S, L is not None, R is not None)])\n    buckets[cls].append(rel)"
+ },
+ {
+  "id": "U6",
+  "desc": "축5 입력 축 — 완전성 단정의 입력에서 repo_only 행을 뺀다",
+  "file": "plugins/claude-sync/tests/test_reconcile.py",
+  "old": "        \"repo_only\":    (None, \"r\", None, False, True),\n",
+  "new": ""
+ }
+]

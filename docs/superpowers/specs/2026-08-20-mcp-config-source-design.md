@@ -538,6 +538,10 @@ base 갱신에 별도 게이트는 없다 — 7.3의 이름 단위 전진 규칙
 `conflicts`/`local_stale`이 비었는지로 전역 게이트를 걸지 않는다(7.3의 부수 효과).
 기록을 건너뛰는 경우는 **푸시 실패와 MCP 단계 skip 둘뿐이다.**
 
+> **[2026-08-25 supersede]** 이 문장은 낡았다. `2026-08-24-plugins-sync-design.md` 7.4가
+> `.tmp`+rename 계약을 도입해 **`base_staging` 실패**라는 세 번째 경우가 생겼다. 게이트는
+> 두 축이다 — 뒤의 둘은 스테이징 최종 파일 부재가, 푸시 실패는 `REPO_HAS_CONTENT=0`이 막는다.
+
 결과 보고에 포함하고 각각 다음 행동을 안내한다:
 - `conflicts.repo_kept`(케이스 9) → "양쪽이 바뀌었습니다. 레포 값을 그대로 두었습니다. `/sync-restore`에서 해소하세요"
 - `conflicts.repo_absent`(케이스 5) → "다른 기기가 삭제했는데 이 기기에서 수정했습니다. `/sync-restore` 먼저 실행하세요"

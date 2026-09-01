@@ -1,0 +1,58 @@
+[
+ {
+  "id": "M1a",
+  "desc": "축4 I/O + 축1 호출계약: add/overwrite 갈래만 다시 open(...,\"wb\")로 (한 곳만 고치기)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/reconcile_restore.py",
+  "old": "                ks.dump_bytes(repo_bytes, local)",
+  "new": "                with open(local, \"wb\") as f:\n                    f.write(repo_bytes)"
+ },
+ {
+  "id": "M1b",
+  "desc": "축4 I/O + 축1 호출계약: merge 갈래만 다시 open(...,\"wb\")로 (한 곳만 고치기)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/reconcile_restore.py",
+  "old": "                    ks.dump_bytes(merged, local)",
+  "new": "                    with open(local, \"wb\") as f:\n                        f.write(merged)"
+ },
+ {
+  "id": "M6",
+  "desc": "축1 호출계약: dump_bytes 인자 순서를 뒤집는다",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/reconcile_restore.py",
+  "old": "ks.dump_bytes(repo_bytes, local)",
+  "new": "ks.dump_bytes(local, repo_bytes)"
+ },
+ {
+  "id": "M2",
+  "desc": "축4 I/O: os.replace를 shutil.move로 (같은 파일시스템 밖에서 원자성이 깨진다)",
+  "file": "plugins/claude-sync/lib/keyed_sync.py",
+  "old": "        os.replace(tmp, path)",
+  "new": "        __import__(\"shutil\").move(tmp, path)"
+ },
+ {
+  "id": "M3",
+  "desc": "축2 축분리: write_base 삭제가 .tmp를 남긴다 (최종 파일만 지운다)",
+  "file": "plugins/claude-sync/lib/sync_state.py",
+  "old": "        for target in (path, path + \".tmp\"):",
+  "new": "        for target in (path,):"
+ },
+ {
+  "id": "M4",
+  "desc": "축3 {} vs None: 빈 base 블롭(b\"\")을 '삭제'로 접는다",
+  "file": "plugins/claude-sync/lib/sync_state.py",
+  "old": "    if data is None:",
+  "new": "    if not data:"
+ },
+ {
+  "id": "M7",
+  "desc": "축4 I/O: 개행 보정을 없앤다 (마지막 줄에 *.tmp가 이어 붙는다)",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/bootstrap.sh",
+  "old": "  if [ -n \"$(tail -c 1 \"$GITIGNORE\")\" ]; then",
+  "new": "  if false; then"
+ },
+ {
+  "id": "M8",
+  "desc": "축2 축분리: 이어붙이기를 덮어쓰기로 (사용자의 .gitignore를 파괴한다)",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/bootstrap.sh",
+  "old": "  echo '*.tmp' >> \"$GITIGNORE\"",
+  "new": "  echo '*.tmp' > \"$GITIGNORE\""
+ }
+]

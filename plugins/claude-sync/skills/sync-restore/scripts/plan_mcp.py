@@ -20,6 +20,7 @@ import sys
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
+import report  # noqa: E402
 import mcp_config as mc  # noqa: E402
 import sync_state as ss  # noqa: E402
 
@@ -55,6 +56,12 @@ def apply_base(backup_path, staging_dir, choices, claude_json_path=None, base_di
     override가 없으면 두 종류의 "유지"가 "나중에"와 구별되지 않아 고정점에 도달하지
     못한다(7.4·7.7). 반대로 "레포 값 채택"과 "제거"에는 override가 없다 —
     next_base가 이미 하는 일을 중복하지 않는 것이 규칙이다.
+
+    **이 함수는 .tmp+rename 규칙에서 제외된다.** 그 규칙은 "레포 쓰기가 성공한 뒤에
+    rename"인데 apply-base에는 **레포 쓰기가 없다.** 그대로 적용하면 rename 트리거가
+    영영 오지 않아 SKILL.md의 게이트가 언제나 거짓이 되고, restore 경로의 base가
+    전혀 전진하지 않는다 — keep_stale/keep_local 선택이 전부 무효가 된다.
+    여기서는 **파일 존재가 곧 "계산 성공"**이다(spec 9.3.7).
     """
     local = mc.read_local_servers(claude_json_path)
     repo = mc.load_backup(backup_path)
@@ -102,8 +109,18 @@ def main():
         sys.exit(1)
     try:
         out = runner()
-    except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema, OSError, ValueError) as e:
-        out = {"status": "skipped", "reason": str(e)}
+    # 세 스크립트(collect_mcp·compare_mcp·plan_mcp)가 같은 튜플을 쓴다. 갈리면
+    # 한쪽만 traceback으로 죽는다.
+    # ValueError를 잡는 이유 둘: 선택 결과 JSON이 깨졌을 때(read_choices,
+    # json.JSONDecodeError도 ValueError의 하위다)와, 코어(keyed_sync)가 normalize 계약
+    # 위반 — 훅이 키 집합을 바꾼 경우 — 을 ValueError로 던질 때다. 어느 쪽도 restore
+    # 흐름 전체를 traceback으로 세우지 않는다.
+    # BrokenBackupSyntax = 레포 문서의 구문 깨짐 → **MCP 단계 전체 skip**(spec 9.3.6).
+    # 접지 않고 "서버 0개"로 읽으면 레포의 모든 서버가 케이스 4로 떨어져, 파일 하나가
+    # 깨졌을 뿐인데 "다른 기기가 지웠으니 이 기기에서도 지웁시다"가 status ok로 나간다.
+    except (mc.LocalConfigUnavailable, mc.UnknownBackupSchema,
+            mc.BrokenBackupSyntax, OSError, ValueError) as e:
+        out = report.skipped(e)
         print("MCP 단계 건너뜀: %s" % e, file=sys.stderr)
     print(json.dumps(out, indent=2, ensure_ascii=False))
 

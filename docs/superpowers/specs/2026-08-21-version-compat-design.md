@@ -322,6 +322,11 @@ def downgrade_suspected(repo_shape, base_shape):
 **`SHAPE_UNREADABLE`은 `shape_of`가 내지 않는다.** 그 함수는 경로가 아니라 원본 바이트를
 받으므로 읽기 실패를 알 수 없다. 그 상태를 만드는 것은 읽는 쪽(`detect_downgrade.py`)이다.
 
+> **개정 (plan ③ — `2026-08-24-plugins-sync-design.md` 11.6).** 위 두 시그니처와 형태 목록은
+> 3.0.0 시점의 것이다. `shape_of`·`downgrade_suspected`는 이제 `relpath`를 **기본값 없는
+> 필수 인자**로 받고(모르는 relpath는 `ValueError`), `plugins.json`의 옛 형식을 위한
+> `SHAPE_V1_OBJECT`가 더해졌다. 판정표의 정본은 그 문서의 11.6이다.
+
 ### 6.4 판정표
 
 `evaluate(meta, my_version)`의 전수다. 이 표 밖의 경우는 없다.
@@ -552,16 +557,20 @@ python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 | 0. 스크립트 경로 | **`SYNC_ROOT` 기준으로 교체** (4장) |
 | 2. 레포 준비 (clone/pull) | — |
 | **2.5 호환성 검사 (신설)** | `compat.py` 호출. `blocked`면 **파일 복사·plugins·MCP 수집 전에 중단**하고 6.6 문구를 보여준다. `pull_only` 가드가 1단계에서 하는 것과 같은 형태다 |
-| **5.5 다운그레이드 탐지 (신설)** | `downgrade_suspected`면 경고 + 복구 후보 제시 + 계속할지 질문 |
+| **4.5 다운그레이드 탐지 (신설)** | `detect_downgrade.py` 호출. 파일별로 `downgrade_suspected`면 경고 + 복구 후보 제시 + 계속할지 질문 |
 | 6. MCP 수집 | 변경 없음 (`skipped` + 사유 안내는 이미 반영됨) |
 | 7. `sync-metadata.json` 생성 | `written_by_version`·`min_reader_version`·`schema` 기록 (5장) |
-| 10. 커밋 & 푸시 | 변경 없음. 5.5에서 복구를 택했다면 그 결과가 커밋에 포함된다 |
+| 10. 커밋 & 푸시 | 변경 없음. 4.5에서 복구를 택했다면 그 결과가 커밋에 포함된다 |
 | 12. 결과 보고 | 표식을 처음 기록했을 때 한 번 알린다. **"낮은 버전 기기가 차단된다"고 쓰지 않는다 — 오늘 존재하는 모든 낮은 버전에 대해 거짓이다**(8.4) |
 
-> **브리프 정정 — 다운그레이드 탐지는 6.5단계가 아니라 5.5단계다.**
+> **브리프 정정 — 다운그레이드 탐지는 6.5단계가 아니라 4.5단계다.**
 > 브리프 5장은 MCP 수집(6단계) *다음*에 두라고 하지만, 그 시점에는 `collect_mcp.py`가 이미
-> `mcp-servers.json`을 v2로 덮어쓴 뒤다. **"레포가 v1 배열"이라는 증거가 사라져 탐지 자체가
-> 불가능하다.** 반드시 수집 앞에 와야 한다.
+> `mcp-servers.json`을 v2로 덮어쓴 뒤다. **"레포가 그 문서의 옛 형식"이라는 증거가 사라져
+> 탐지 자체가 불가능하다.** 반드시 수집 앞에 와야 한다.
+>
+> **5.5가 아니라 4.5인 이유**(plugins-sync 11.6으로 넓힌 뒤): 탐지 대상이 `plugins.json`까지
+> 늘었고 그것을 덮어쓰는 것은 **5단계**다. 5.5에 두면 그 문서의 증거가 이미 사라진 뒤다 —
+> **가장 앞선 수집 단계보다도 앞**이어야 한다.
 
 **차단은 backup에만 건다.**
 
@@ -583,7 +592,7 @@ status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 
 |---|---|
 | 0. 스크립트 경로 | `SYNC_ROOT` 기준으로 교체. `SYNC_BACKUP_SCRIPTS`도 같은 루트에서 유도 |
 | 2. 레포에서 가져오기 직후 | `compat.py` 호출. `blocked`면 경고하고 **계속할지 묻는다.** pull-only라 레포는 훼손되지 않지만 **모르는 스키마의 항목을 건너뛴 부분 복원**이 된다는 점을 명시한다 |
-| **2.5 다운그레이드 탐지 (신설)** | `detect_downgrade.py` 호출. **경고만 한다** — restore는 레포를 훼손하지 않고, 여기서 막으면 복구 안내 경로가 사라진다. 복구는 push할 수 있는 경로(backup 5.5)로 안내한다 |
+| **2.5 다운그레이드 탐지 (신설)** | `detect_downgrade.py` 호출. **경고만 한다** — restore는 레포를 훼손하지 않고, 여기서 막으면 복구 안내 경로가 사라진다. 복구는 push할 수 있는 경로(backup 4.5)로 안내한다 |
 | 3. 파일 reconcile | 변경 없음. 파일 동기화는 스키마와 무관하다 |
 | 5. 플러그인 복원 | **여기가 탈출구다.** 버전이 낮아 막혔다면 필요한 것은 `plugin update`다. 복원 절차 안에서 6.6의 안내를 우선 노출한다 |
 | 6. MCP 복원 | **6-5 `local_stale`의 문구가 2.5의 `downgrade_suspected`로 갈린다**(아래) |
@@ -609,7 +618,7 @@ status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 
 그래서 둘을 함께 한다. **탐지만으로는 부족하다** — 경고를 띄워 놓고 그 아래에서 여전히 삭제를
 권하면 아무것도 막지 못한다.
 
-- 2.5에서 탐지하고 **경고만** 한다. 복구는 push할 수 있는 경로(backup 5.5)로 보낸다
+- 2.5에서 탐지하고 **경고만** 한다. 복구는 push할 수 있는 경로(backup 4.5)로 보낸다
 - 6-5의 기본 문구를 `downgrade_suspected`로 가른다. 참이면 "삭제"가 아니라 **"유실"**이라 쓰고,
   **로컬이 마지막 사본일 수 있음**을 알리고, **제거를 권하지 않는다**(기본 선택은 "유지")
 - "유지"는 복구 경로이기도 하다. 이 기기를 올린 뒤 `/sync-backup`을 실행하면 그 서버가 레포로 돌아간다
@@ -638,14 +647,19 @@ status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 
 옛 버전 기기가 레포를 덮어썼다는 **확정적 신호**다.
 
 ```
-레포의 mcp-servers.json이 v1 배열   AND   내 base는 v2 객체였다
+레포가 그 문서의 옛 형식   AND   내 base는 v2 객체였다
 ```
 
-- 레포가 v1인 것만으로는 부족하다 — 정말 오래된 레포일 수 있다.
+**"옛 형식"은 relpath마다 다르다** — `mcp-servers.json`은 최상위 배열(`v1_array`),
+`plugins.json`은 `version` 키가 없는 객체(`v1_object`)다. 규칙은 하나이고 이 상수만
+갈린다(`compat._OLD_SHAPE`). 두 relpath가 상수를 공유하면 한쪽의 옛 형식이 다른 쪽의
+옛 형식으로 읽힌다.
+
+- 레포가 옛 형식인 것만으로는 부족하다 — 정말 오래된 레포일 수 있다.
 - base가 v2였다는 것은 **내가 v2를 본 적이 있다**는 뜻이다. 그 뒤 v1이 되었다면 누군가 되돌린 것이다.
 - base를 못 읽으면(`None`) 판정하지 않는다. **신뢰할 수 없는 이력은 근거가 될 수 없다**(불변식 2).
 
-판정은 `compat.downgrade_suspected(repo_shape, base_shape)` 순수 함수다.
+판정은 `compat.downgrade_suspected(repo_shape, base_shape, relpath)` 순수 함수다.
 
 ### 9.2 복구 후보 탐색
 
@@ -656,40 +670,70 @@ status가 차단하면 안 되는 이유: 버전이 안 맞을 때 사용자가 
 잡으므로 status에서도 `$SYNC_ROOT/skills/sync-backup/scripts/detect_downgrade.py`로 명시적으로
 부른다 — 복사본을 만들지 않는다. 읽기 전용이므로 status가 불러도 안전하다.
 
-`mcp-servers.json`을 건드린 커밋을 최신순으로 훑어 **`version`이 2인 마지막 커밋**을 찾는다.
+**백업 문서 둘 각각**(`mcp-servers.json`·`plugins.json`)에 대해, 그 문서를 건드린 커밋을
+최신순으로 훑어 **그 문서가 마지막으로 v2였던 커밋**을 찾는다.
 
 ```bash
-git log --format=%H -- mcp-servers.json
-git show "<sha>:mcp-servers.json"
+git log --format=%H -- <relpath>
+git show "<sha>:<relpath>"
 ```
 
-출력(JSON):
+**v2인가는 `compat.shape_of(blob, relpath)`가 판정한다 — `parse_base`가 아니다.**
+어댑터의 인식 조건이 답하는 질문은 *"이 문서를 읽을 수 있는가"* 이지 *"v2인가"* 가 아니고,
+**두 어댑터 모두 v1 문서를 그대로 인식한다**(실측 — `mcp_config`는 v1 배열을 인식 함수가
+명시적으로 받고, `plugin_config`는 인식 조건 2가 *"`version`이 없거나 `SCHEMA_VERSION` 이하"*
+이다). 그래서 `parse_base`로 v2를 판정하면 2.x가 쓴 v1 커밋이 "마지막 정상 판본"으로
+제시된다 — 탐지가 사고를 복구하는 대신 고착시킨다(plugins-sync spec 11.6).
+`parse_base`는 **항목을 셀 수 있는가**만 답한다(`None`이면 `newer_schema_seen`).
+
+출력(JSON) — 최상위는 relpath 맵이다:
 
 ```json
 {
   "status": "ok",
-  "downgrade_suspected": true,
-  "repo_shape": "v1_array",
-  "base_shape": "v2_object",
-  "newer_schema_seen": false,
-  "candidate": {
-    "sha": "a1b2c3d",
-    "date": "2026-08-20",
-    "subject": "backup: 2026-08-20",
-    "server_count": 11,
-    "server_names": ["context7", "playwright", "..."]
+  "reason": null,
+  "files": {
+    "mcp-servers.json": {
+      "status": "ok",
+      "reason": null,
+      "downgrade_suspected": true,
+      "repo_shape": "v1_array",
+      "base_shape": "v2_object",
+      "newer_schema_seen": false,
+      "candidate": {
+        "sha": "a1b2c3d",
+        "date": "2026-08-20",
+        "subject": "backup: 2026-08-20",
+        "entries": {"servers": ["context7", "playwright", "..."]}
+      }
+    },
+    "plugins.json": { "...": "같은 모양" }
   }
 }
 ```
 
+- **최상위 `status`와 파일별 `status`는 다른 것을 말한다.** 최상위는 git 자체가 없거나 레포가
+  git이 아니어서 **어느 문서의 히스토리도** 훑을 수 없는 경우, 파일별은 **그 문서의** 히스토리
+  훑기가 실패한 경우다. 한쪽으로 합치면 "탐지할 수 없었다"와 "사고가 없다"의 구별(불변식 6)이
+  파일 단위에서 무너진다.
+- **최상위가 `skipped`여도 `files` 맵은 채워서 낸다.** 비우면 그 맵을 도는 SKILL.md의 루프가
+  0회 돌아 아무것도 보고되지 않고, 그것이 다시 "사고 없음"으로 읽힌다. 형태 판정은 git 없이도
+  되므로 그 결과는 여전히 실린다.
+- **base는 문서마다 따로 읽는다.** 한 번 읽어 두 판정에 돌려 쓰면 `plugins.json`의 base 부재가
+  `mcp-servers.json`의 base로 가려져, 근거 없는 판정이 근거 있는 것처럼 나간다.
+- `candidate.entries`는 **relpath 중립**인 `{섹션: [이름…]}`이다. `mcp-servers.json`은 섹션이
+  하나(`servers`), `plugins.json`은 셋(`enabledPlugins`·`extraKnownMarketplaces`·
+  `pluginConfigs`)이다. 버킷 이름은 어댑터 모듈의 `SECTIONS`/`parse_base` 출력에서 뽑는다 —
+  스크립트에 리터럴로 적으면 문서 키가 바뀌어도 어긋난 이름이 조용히 사용자에게 나간다.
 - 후보를 못 찾으면 `"candidate": null`. 그때는 사고를 알리되 복구는 제안하지 않는다.
-- git 명령이 실패하면 `{"status": "skipped", "reason": ...}`. **탐지 실패가 백업을 막지 않는다.**
-  `skipped`도 **정상 경로와 같은 키 모양을 유지한다** — 소비하는 쪽이 `downgrade_suspected`를
-  볼 때 키가 없으면 `None`(falsy)이 되어 또 한 번 "사고 없음"처럼 읽힌다(불변식 6).
+- git 명령이 실패하면 그 자리의 `status`가 `"skipped"`가 되고 `reason`이 실린다.
+  **탐지 실패가 백업을 막지 않는다.** `skipped`도 **정상 경로와 같은 키 모양을 유지한다** —
+  소비하는 쪽이 `downgrade_suspected`를 볼 때 키가 없으면 `None`(falsy)이 되어 또 한 번
+  "사고 없음"처럼 읽힌다(불변식 6).
 - **`repo_shape`·`base_shape`를 항상 싣는다.** 탐지하지 못한 경우에도 왜 못 했는지가 드러나야
   SKILL.md가 "확인하지 못했다"와 "사고가 없다"를 구별해 보고할 수 있다.
 - **`newer_schema_seen`**: 히스토리를 훑다가 이 버전이 알아보지 못하는 문서(상위 스키마)를
-  건너뛰었는가. "후보 없음"과 "상위 버전 문서라 건너뜀"은 다른 말이다. 후보를 제시할 때는
+  건너뛰었는가. "후보 없음"과 "알아보지 못해 건너뜀"은 다른 말이다. 후보를 제시할 때는
   그것이 건너뛴 문서보다 오래된 것임을 함께 알린다.
 - 후보 탐색은 `git log --diff-filter=d`로 **삭제 커밋을 목록에서 애초에 뺀다.** 그러면 남은
   커밋에는 파일이 반드시 있으므로 `git show` 실패는 곧 레포 손상이며, 그대로 전파해
@@ -700,15 +744,24 @@ git show "<sha>:mcp-servers.json"
 
 **자동으로 복구하지 않는다.** 옛 기기가 *의도적으로* 지운 서버까지 되살리기 때문이다.
 
-SKILL.md는 다음을 보여주고 사용자에게 고르게 한다.
+SKILL.md는 **`files` 맵의 항목마다** 다음을 보여주고 사용자에게 고르게 한다. 문서마다 따로
+묻는다 — 한 문서의 선택을 다른 문서에 적용하면 사고가 없는 쪽이 함께 처리된다.
 
-1. 사고 사실과 근거 (레포는 v1, 내 base는 v2였다)
-2. 후보 커밋의 날짜·서버 수·서버 이름
+1. 사고 사실과 근거 (레포는 그 문서의 옛 형식, 내 base는 v2였다)
+2. 후보 커밋의 `sha`·`date`·`subject`와 `entries`의 **버킷별 항목 수**.
+   **`entries`는 relpath 중립이다** — 버킷 이름은 어댑터가 정하므로(`mcp-servers.json`은
+   `servers` 하나, `plugins.json`은 세 섹션) 산문이 손으로 적지 않고 나온 키를 그대로 쓴다.
 3. 선택지
-   - **복구한다** — 후보 커밋의 `mcp-servers.json`을 레포 작업본에 되돌려 놓고 백업을 계속한다.
-     이후 6단계의 3-way 병합이 로컬과 정상적으로 합친다.
+   - **복구한다** — 후보 커밋의 **그 문서**를 레포 작업본에 되돌려 놓고 백업을 계속한다.
+     이후 5·6단계의 3-way 병합이 로컬과 정상적으로 합친다. 복구 명령의 relpath도 그 항목의
+     키다 — 한 문서 이름을 리터럴로 박으면 다른 문서의 복구가 엉뚱한 파일을 덮어쓴다.
    - **복구하지 않고 계속한다** — 현재 레포 상태를 그대로 두고 백업한다.
    - **중단한다** — 다른 기기의 상태를 확인한 뒤 다시 온다.
+
+**전역 `status`가 `skipped`인 것은 "확인하지 못했다"가 아니다.** 그것은 git 히스토리를 훑지
+못했다는 뜻이고, 형태 비교는 git 없이 완결되므로 파일별 판정은 여전히 사실이다(9.2의 전역·
+파일별 분리). 산문은 전역 `reason`을 알리되, "확인하지 못했다"는 **파일별 `status`가
+`skipped`일 때만** 쓴다. 두 층을 뭉개면 사고가 없는 문서까지 판정 불가로 보고된다.
 
 ## 10. 에러 처리 & 불변식
 
@@ -817,7 +870,7 @@ SKILL.md는 다음을 보여주고 사용자에게 고르게 한다.
 | `lib/mcp_config.py` | `_recognized_servers`에 `version` 게이트 (7장) |
 | `skills/sync-backup/scripts/generate_metadata.py` | 세 필드 추가 (5장) |
 | `skills/sync-backup/scripts/detect_downgrade.py` | **신설** (9장) |
-| `skills/sync-backup/SKILL.md` | 0단계 교체, 2.5·5.5단계 신설, 7·12단계 보강 |
+| `skills/sync-backup/SKILL.md` | 0단계 교체, 2.5·4.5단계 신설, 7·12단계 보강 |
 | `skills/sync-status/SKILL.md` | 0단계 교체, 1단계 검사, 3단계 요약 |
 | `skills/sync-restore/SKILL.md` | 0단계 교체, 2단계 검사·질문, 5·7단계 보강 |
 | `tests/test_compat.py` | **신설** — 판정표·문구·CLI |
@@ -944,7 +997,7 @@ restore에서 `compat.py` 호출 한 줄씩을 지웠을 때 367개가 전부 �
 | 스킬 | 검사 절 | 절의 앞 경계 | 절의 뒤 경계 | 호출이 앞서야 하는 실행줄 |
 |---|---|---|---|---|
 | backup | 2.5 | 2. 레포 준비 | 3. Git User 설정 | `reconcile_backup` · `extract_plugins` · `detect_downgrade` · `collect_mcp` · `generate_metadata` |
-| status | 1.5 | 1. 설정 확인 및 레포 준비 | 2. 메타데이터 기반 상태 분석 | `check_status` · `compare_mcp` |
+| status | 1.5 | 1. 설정 확인 및 레포 준비 | 2. 로컬과 레포의 차이 분석 | `check_status` · `compare_mcp` |
 | restore | 2.5 | 2. 레포에서 최신 상태 가져오기 | 3. 파일별 reconcile | `reconcile_restore` · `plan_mcp` · `update_base` |
 
 - 호출이 **정확히 한 번**, **지정된 절 안에** 있어야 한다. 파일 어딘가에 있기만 하면 되는
@@ -967,8 +1020,10 @@ restore에서 `compat.py` 호출 한 줄씩을 지웠을 때 367개가 전부 �
 이 테스트가 없으면 불변식 6은 다시 주석으로만 남고, 다음 함수가 같은 실수를 반복한다.
 
 - `_upgrade_message("some_future_reason", ...)` → `ValueError`
-- `downgrade_suspected("v1array", "v2_object")` → `ValueError` (오타)
-- `shape_of(이미_파싱된_객체)` → `TypeError` (호출자 오류)
+- `downgrade_suspected("v1array", "v2_object", "mcp-servers.json")` → `ValueError` (오타)
+- `downgrade_suspected(..., "모르는 파일")` / `shape_of(..., "모르는 파일")` → `ValueError`
+  (relpath는 기본값 없는 필수 인자다 — plan ③이 정했다)
+- `shape_of(이미_파싱된_객체, relpath)` → `TypeError` (호출자 오류)
 
 그리고 **판정 불가 상태가 통과로 접히지 않는지**를 갈래마다 단언한다.
 

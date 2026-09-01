@@ -1,0 +1,44 @@
+[
+ {
+  "id": "T1",
+  "desc": "축2 축분리 — 계획 층만 부재를 True로 되돌린다 (한 곳만 되돌리기)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "        and pc.value_command(local_masked.get(k, False),",
+  "new": "        and pc.value_command(local_masked.get(k, True),"
+ },
+ {
+  "id": "T2",
+  "desc": "축2 축분리 — 재읽기 층만 부재를 True로 되돌린다 (한 곳만 되돌리기)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "        command = pc.value_command(local_now.get(key, False), masked[key])",
+  "new": "        command = pc.value_command(local_now.get(key, True), masked[key])"
+ },
+ {
+  "id": "T3",
+  "desc": "축1 훅 호출 계약 — 재읽기의 value_command 인자 순서를 뒤집는다",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "        command = pc.value_command(local_now.get(key, False), masked[key])",
+  "new": "        command = pc.value_command(masked[key], local_now.get(key, False))"
+ },
+ {
+  "id": "T4",
+  "desc": "축3 {} vs None — 재읽기의 부재 기본값을 None으로 (비불리언이라 언제나 명령이 나간다)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "        command = pc.value_command(local_now.get(key, False), masked[key])",
+  "new": "        command = pc.value_command(local_now.get(key), masked[key])"
+ },
+ {
+  "id": "T5",
+  "desc": "축3 {} vs None — 계획 층의 부재 기본값을 None으로",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_plugins.py",
+  "old": "        and pc.value_command(local_masked.get(k, False),",
+  "new": "        and pc.value_command(local_masked.get(k),"
+ },
+ {
+  "id": "T6",
+  "desc": "축4 I/O·규약 — 에뮬레이터가 부재를 꺼짐으로 접는다(유령 키 갈래의 재현이 사라진다)",
+  "file": "plugins/claude-sync/tests/plugin_cli.py",
+  "old": "        current = data[\"enabledPlugins\"].get(plugin_id, _ABSENT)\n        if current is not _ABSENT and (current is True) == value:\n            return 1",
+  "new": "        current = data[\"enabledPlugins\"].get(plugin_id, False)\n        if (current is True) == value:\n            return 1"
+ }
+]
