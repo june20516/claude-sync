@@ -69,10 +69,17 @@ def default_path(claude_dir):
 def load_patterns(path):
     """`.syncignore`의 패턴 목록. 파일이 없으면 빈 목록.
 
-    4단계 bash와 같은 규칙이다 — **줄을 다듬지 않는다.** bash 쪽은
-    `[[ -z "$pattern" || "$pattern" == \\#* ]]`로 **빈 줄과 `#`으로 시작하는 줄만**
-    거르고 나머지는 원문 그대로 `find`에 넘긴다. 여기서 strip()을 하면 앞뒤 공백이
-    붙은 줄에서 두 구현의 판정이 갈린다.
+    4단계 bash와 같은 규칙이다 — **앞뒤의 공백·탭·CR을 다듬는다.** bash 쪽은
+    `IFS=$' \\t\\r' read -r`이 같은 세 글자를 앞뒤에서만 떼고(안쪽 공백은 남는다),
+    그 뒤 `[[ -z "$pattern" || "$pattern" == \\#* ]]`로 빈 줄과 `#`으로 시작하는 줄을
+    거른다. 여기서 `strip(" \\t\\r")`을 쓰는 것이 그 한 벌이다 — **파이썬의 맨
+    `strip()`을 쓰면 안 된다.** 그쪽은 유니코드 공백까지 떼어 bash보다 많이 다듬고,
+    그러면 파이썬만 제외한 파일이 레포에는 남아 표식 없이 push된다.
+
+    다듬지 않던 초판은 CRLF 편집기가 쓴 `.syncignore` 한 줄에서 **양쪽이 함께**
+    빗나갔다(패턴이 `skills/secret-tool\\r`이 되어 매치 0건). 두 구현은 일치했지만
+    사용자는 제외했다고 믿은 파일이 그대로 push되는 것을 신호 하나 없이 겪는다 —
+    일치는 목적이 아니라 수단이라, 함께 틀리는 자리를 남기지 않는다.
 
     파일을 못 읽는 그 밖의 OSError와 UnicodeDecodeError는 **전파한다.** 여기서 삼키면
     제외 목록이 통째로 빈 것으로 읽혀, 사용자가 걸렀다고 믿은 파일의 해시가 그대로
@@ -89,7 +96,8 @@ def load_patterns(path):
     except FileNotFoundError:
         return []
     text = raw.decode("utf-8-sig")
-    return [line for line in text.split("\n") if line and not line.startswith("#")]
+    patterns = (line.strip(" \t\r") for line in text.split("\n"))
+    return [p for p in patterns if p and not p.startswith("#")]
 
 
 def is_excluded(rel, patterns):

@@ -200,6 +200,41 @@ def test_skills_mention_only_one_metadata_filename():
     assert names == {compat.METADATA_RELPATH}, names
 
 
+def test_write_metadata_leaves_the_old_marker_intact_when_the_write_fails(tmp_path):
+    """버전 게이트의 **유일한 입력**을 잘린 채로 남기지 않는다.
+
+    7단계는 이 파일을 레포 작업 트리에 직접 쓰고 10단계의 `git add -A`가 그것을
+    커밋·푸시한다. 선-truncate 쓰기가 남긴 잘린 JSON이 푸시되면 모든 기기에서
+    `load_metadata`가 None이 되고 `_block_reason`이 `raw_min is None`으로 차단을
+    포기한다 — 정상 백업이 덮을 때까지 **전 기기에서** `min_reader_version` 게이트가
+    조용히 꺼진다. 이 PR의 다른 writer 셋과 같은 원자적 쓰기를 여기에도 건다.
+    """
+    out = str(tmp_path / compat.METADATA_RELPATH)
+    gm.write_metadata(out, {"files": {}})
+    with open(out, "rb") as f:
+        good = f.read()
+
+    with pytest.raises(TypeError):
+        gm.write_metadata(out, {"files": object()})
+
+    with open(out, "rb") as f:
+        assert f.read() == good
+    assert json.loads(good)  # 잘리지 않은 문서로 남았다
+    assert [n for n in os.listdir(tmp_path) if n.endswith(".tmp")] == []
+
+
+def test_write_metadata_routes_through_the_atomic_writer(tmp_path, monkeypatch):
+    """위 테스트는 직렬화가 메모리에서 끝난다는 것까지만 잰다 — ENOSPC/SIGKILL 갈래는
+    tmp + `os.replace`가 막는다. 그 경로를 여기서 직접 고정한다(형제 writer 셋과 같은
+    규율). 원자적 블록을 이 파일에 복사해 오는 편집도 여기서 걸린다.
+    """
+    calls = []
+    monkeypatch.setattr(gm.ks, "dump_json", lambda payload, path: calls.append((payload, path)))
+    out = str(tmp_path / compat.METADATA_RELPATH)
+    gm.write_metadata(out, {"files": {}})
+    assert calls == [({"files": {}}, out)]
+
+
 def test_metadata_is_byte_stable_across_runs(tmp_path):
     """표식 파일이 소음이 되면 안 된다 — 같은 입력이면 같은 바이트여야 한다."""
     claude_dir = fake_claude_dir(tmp_path)

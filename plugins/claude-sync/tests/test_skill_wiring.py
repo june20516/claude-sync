@@ -1477,7 +1477,7 @@ SYNCIGNORE_RULES = (
     "skills/secret-tool",      # 디렉토리 — find가 매치하고 rm -rf가 그 아래를 다 지운다
     "skills/*/internal-*.md",  # `*`가 `/`를 넘는가 (find -path에는 FNM_PATHNAME이 없다)
     "skills/keep/",            # 후행 슬래시 — find는 디렉토리를 슬래시 없이 출력한다
-    " agents/public.md",       # 선행 공백 — bash는 줄을 다듬지 않는다(strip하면 갈린다)
+    " agents/public.md \r",    # 앞뒤 공백 + CRLF의 CR — 양쪽이 같은 세 글자를 뗀다
     "",                        # 빈 줄
     "# 주석",
 )
@@ -1486,7 +1486,6 @@ SYNCIGNORE_RULES = (
 # 없다. 이 저장소가 사용자 문서에서 이미 만난 형태다.
 SYNCIGNORE_SURVIVORS = {
     "CLAUDE.md",
-    "agents/public.md",
     "agents/internal-b.txt",
     "skills/keep/SKILL.md",
 }
@@ -1549,13 +1548,14 @@ def test_the_syncignore_fixture_still_exercises_every_matching_property(tmp_path
     for pattern, (rel, expected) in checks.items():
         assert rel in SYNCIGNORE_TREE, rel
         assert syncignore.is_excluded(rel, [pattern]) is expected, (pattern, rel)
-    # 다섯째 성질은 `is_excluded`가 아니라 `load_patterns`의 것이다 — 선행 공백이 붙은
-    # 줄을 **원문 그대로** 남겨야 bash와 갈리지 않는다(bash의 read -r은 줄을 다듬지
-    # 않는다). 픽스처에서 이 줄이 빠지면 위 대조가 그 성질을 재지 못한다.
-    assert " agents/public.md" in SYNCIGNORE_RULES
+    # 다섯째 성질은 `is_excluded`가 아니라 `load_patterns`의 것이다 — 줄 앞뒤의
+    # 공백·탭·CR을 떼야 bash(`IFS=$' \t\r' read -r`)와 갈리지 않는다. CRLF 편집기가
+    # 쓴 `.syncignore`에서 **양쪽이 함께** 빗나가던 자리라, 위 대조만으로는 잡히지
+    # 않는다 — 다듬은 결과를 여기서 직접 잰다.
+    assert " agents/public.md \r" in SYNCIGNORE_RULES
     path = tmp_path / ".syncignore"
     path.write_text("\n".join(SYNCIGNORE_RULES) + "\n", encoding="utf-8")
-    assert " agents/public.md" in syncignore.load_patterns(str(path))
+    assert "agents/public.md" in syncignore.load_patterns(str(path))
 
 
 def test_status_reports_plugin_sections_through_the_new_script():

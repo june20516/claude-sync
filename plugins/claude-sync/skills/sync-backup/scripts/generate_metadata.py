@@ -20,7 +20,6 @@ lib/syncignore.py 한 곳에 있다 — 4단계의 `find -path`와 같은 규칙
   detect_downgrade의 출력이지 이 맵이 아니다). 백업 문서 **둘 다** 싣는다.
 """
 import hashlib
-import json
 import os
 import sys
 
@@ -28,6 +27,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib")
 )
 import compat  # noqa: E402
+import keyed_sync as ks  # noqa: E402
 import mcp_config as mc  # noqa: E402
 import plugin_config as pc  # noqa: E402
 import syncignore  # noqa: E402
@@ -104,10 +104,16 @@ def build_metadata(claude_dir, plugin_json_path):
 
 def write_metadata(output_path, metadata):
     """sort_keys로 바이트를 안정화한다 — os.walk 순서 때문에 매 백업마다 diff가 생기면
-    표식 파일 자체가 소음이 된다."""
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, sort_keys=True, ensure_ascii=False)
-        f.write("\n")
+    표식 파일 자체가 소음이 된다.
+
+    **`ks.dump_json`으로 원자적으로 쓴다.** 7단계는 이 파일을 레포 작업 트리에 직접
+    쓰고 10단계의 `git add -A`가 그것을 커밋·푸시한다. 평범한 `open(path, "w")`는
+    선-truncate라 쓰기 도중 실패(ENOSPC/EIO/SIGKILL)가 **잘린 JSON을 남기고 그대로
+    푸시된다.** 그러면 모든 기기에서 `compat.load_metadata`가 None이 되고
+    `_block_reason`이 `raw_min is None`을 보고 차단하지 않는다 — 이 파일 하나가
+    `min_reader_version` 게이트의 유일한 입력이라, 어느 기기든 정상 백업으로 덮을
+    때까지 **전 기기에서 게이트가 조용히 꺼진다.**"""
+    ks.dump_json(metadata, output_path)
 
 
 def main():

@@ -3,6 +3,7 @@ import ast
 import json
 import os
 import re
+import stat
 
 import pytest
 
@@ -1018,6 +1019,44 @@ def test_dump_bytes_fsyncs_before_replace(tmp_path, monkeypatch):
     monkeypatch.setattr(ks.os, "replace", lambda a, b: order.append("replace") or real_replace(a, b))
     ks.dump_bytes(b"x", str(tmp_path / "f"))
     assert order == ["fsync", "replace"]
+
+
+def test_dump_bytes_keeps_the_execute_bit_of_an_existing_target(tmp_path):
+    """복원이 실행 권한을 벗기면 skill 스크립트가 조용히 동작을 멈춘다.
+
+    `os.replace`는 대상의 mode를 새 tmp의 것(0666 & ~umask)으로 갈아치운다. 이 함수의
+    소비자에 `~/.claude` 아래 로컬 파일이 들어온 뒤로 그 부작용이 실해가 됐다 —
+    `skills/foo/scripts/run.sh`를 overwrite/auto_merge로 복원하면 0755가 0644가 된다.
+    """
+    path = str(tmp_path / "run.sh")
+    with open(path, "wb") as f:
+        f.write(b"#!/bin/sh\n")
+    os.chmod(path, 0o755)
+    ks.dump_bytes(b"#!/bin/sh\necho new\n", path)
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o755
+    with open(path, "rb") as f:
+        assert f.read() == b"#!/bin/sh\necho new\n"
+
+
+def test_dump_bytes_writes_through_a_symlink_instead_of_replacing_it(tmp_path):
+    """`~/.claude/CLAUDE.md`를 dotfiles 저장소로 링크해 둔 사용자를 지킨다.
+
+    맨 `os.replace`는 링크 자체를 정규 파일로 갈아치우고 옛 타깃을 옛 내용 그대로
+    남긴다 — 사용자는 복원 한 번에 dotfile 관리에서 조용히 분리된다. 실패 경로의
+    tmp 정리도 함께 건다: 타깃 옆에 만든 tmp가 남으면 그 디렉토리의 `git add -A`가
+    그것을 커밋한다.
+    """
+    target = tmp_path / "dotfiles" / "CLAUDE.md"
+    target.parent.mkdir()
+    target.write_bytes(b"orig")
+    link = str(tmp_path / "CLAUDE.md")
+    os.symlink(str(target), link)
+
+    ks.dump_bytes(b"pulled", link)
+
+    assert os.path.islink(link)
+    assert target.read_bytes() == b"pulled"
+    assert sorted(p.name for p in target.parent.iterdir()) == ["CLAUDE.md"]
 
 
 def test_dump_json_routes_through_dump_bytes(tmp_path, monkeypatch):

@@ -10,6 +10,7 @@ MCP 서버와 플러그인이 같은 판정표·인식 계층·예외 클래스�
 import copy
 import json
 import os
+import stat
 
 BROKEN = object()   # JSON 구문 오류 센티널. None·0·false와 구별해야 한다
 
@@ -119,21 +120,32 @@ def dump_bytes(data, path):
     캐시에 남는다). fsync의 실제 증분 이득은 커널 패닉·드라이버 수준 장애이고, 급작스런
     전원 차단은 여전히 덮지 못한다.
 
-    os.replace는 몇 가지 의미 변화를 동반한다: 기존 파일의 mode/owner가 보존되지
-    않고(새 tmp의 것, 0666 & ~umask로 교체된다) 대상이 심볼릭 링크면 이전에는 링크를
-    따라가 타깃에 썼지만 이제는 링크 자체가 정규 파일로 갈아치워진다. 이 저장소에는
-    대상 파일에 chmod하는 코드가 없고 레포 백업은 redact를 거쳐 실제 비밀을 담지
-    않으므로 실해는 없다 — 다음 사람을 위한 기록이다.
+    **os.replace의 두 부작용을 명시적으로 되돌린다.** 맨 `os.replace`는 기존 파일의
+    mode를 새 tmp의 것(0666 & ~umask)으로 갈아치우고, 대상이 심볼릭 링크면 링크
+    자체를 정규 파일로 대체한다(옛 타깃은 옛 내용 그대로 남는다). 레포·base 쪽
+    문서에는 실해가 없지만 **로컬 소비자에는 있다** — `~/.claude/skills/*/scripts/*.sh`
+    는 실행 비트를 잃으면 동작을 멈추고, `~/.claude/CLAUDE.md`를 dotfiles 저장소로
+    심볼릭 링크해 둔 사용자는 복원 한 번에 링크가 끊겨 dotfile 관리에서 분리된다.
+    그래서 `os.path.realpath`로 링크를 따라가 **타깃 옆에** tmp를 만들고(같은
+    파일시스템이라야 교체가 원자적이다), 대상이 이미 있으면 그 mode를 tmp에 옮긴 뒤
+    교체한다. 새로 만드는 파일은 보존할 mode가 없으므로 umask 기본값 그대로다.
+    owner는 여전히 보존하지 않는다 — 되돌리려면 권한이 필요하고, 이 저장소의 쓰기는
+    전부 사용자 소유 경로 안이라 바뀌지 않는다.
 
     두 어댑터가 각자 이 함수를 복사하면 다음 수정이 한쪽에만 반영된다.
     """
-    tmp = path + ".tmp"
+    target = os.path.realpath(path)
+    tmp = target + ".tmp"
     try:
         with open(tmp, "wb") as f:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        try:
+            os.chmod(tmp, stat.S_IMODE(os.stat(target).st_mode))
+        except FileNotFoundError:
+            pass  # 새로 만드는 파일 — 보존할 mode가 없다(umask 기본값을 쓴다)
+        os.replace(tmp, target)
     except Exception:
         try:
             os.remove(tmp)

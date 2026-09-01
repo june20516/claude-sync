@@ -48,7 +48,7 @@ MCP 서버는 `~/.claude.json`의 top-level `mcpServers`(user 스코프)만 대�
 백업 레포에는 CLAUDE.md나 에이전트 파일에 사내 URL, 내부 규칙 등 민감 정보가 포함될 수 있다. 따라서:
 
 - **백업 레포는 private 권장**. 최초 실행 시 사용자에게 이 점을 안내한다.
-- **`.syncignore`** 파일로 특정 파일을 백업에서 제외할 수 있다. `~/.claude/.syncignore`에 **한 줄에 하나씩 glob 패턴**을 적는다 — 아래 4단계의 `find -path`가 레포 루트 기준 상대 경로와 대조한다. **gitignore 형식이 아니다**: 부정(`!`)이 없고, `find -path`가 디렉토리를 후행 슬래시 없이 출력하므로 **슬래시로 끝나는 패턴은 아무것도 걸리지 않는다**(실측). 디렉토리는 슬래시 없이 적는다.
+- **`.syncignore`** 파일로 특정 파일을 백업에서 제외할 수 있다. `~/.claude/.syncignore`에 **한 줄에 하나씩 glob 패턴**을 적는다 — 아래 4단계의 `find -path`가 레포 루트 기준 상대 경로와 대조한다. **gitignore 형식이 아니다**: 부정(`!`)이 없고, `find -path`가 디렉토리를 후행 슬래시 없이 출력하므로 **슬래시로 끝나는 패턴은 아무것도 걸리지 않는다**(실측). 디렉토리는 슬래시 없이 적는다. **줄 앞뒤의 공백·탭·CR은 다듬는다** — CRLF 편집기가 쓴 파일에서 패턴 끝에 붙은 `\r` 한 글자가 그 줄의 제외를 통째로 무효화하던 자리다(4단계 bash와 `lib/syncignore.py`가 같은 세 글자를 뗀다).
 - **뜻은 "올리지 않는다" 하나이고 backup 방향 전용이다.** 한 줄 요약은 **"내 것을 남에게 주지 않는다"**. 규정의 정본은 `lib/syncignore.py` 모듈 docstring이고 세 스킬의 행동은 전부 거기서 유도된다 — 이 절은 그 요약이다.
   - **backup — 제외한다.** 4단계가 레포 작업 트리에서 매치를 `rm -rf`하고 10단계의 `git add -A`가 그 삭제를 커밋·푸시한다. **이 기기가 이번에 복사한 것만 지우는 것이 아니다** — 다른 기기가 올려 두어 이미 레포에 있던 같은 경로도 함께 지워져 푸시된다(실측).
   - **restore — 무시한다(결정).** `/sync-restore`는 `.syncignore`를 보지 않으므로, 제외한 경로에 레포 파일이 있으면 **다른 파일과 똑같이 3-way 복원 판정을 받는다**(추가·덮어쓰기·머지·보존). 존중하게 만들면 다른 기기가 올린 같은 경로 파일을 영영 받지 못한다 — 그것을 피하는 선택이다. 제외는 내보내는 방향의 규정이라 **로컬 파일이 덮어쓰이지 않게 보호하지 않는다.**
@@ -236,7 +236,7 @@ PY
 
 ```bash
 if [ -f ~/.claude/.syncignore ]; then
-  while IFS= read -r pattern || [ -n "$pattern" ]; do
+  while IFS=$' \t\r' read -r pattern || [ -n "$pattern" ]; do
     [[ -z "$pattern" || "$pattern" == \#* ]] && continue
     find "$SYNC_REPO" -path "$SYNC_REPO/.git" -prune -o -path "$SYNC_REPO/$pattern" -print | while IFS= read -r f; do rm -rf "$f"; done
   done < ~/.claude/.syncignore
