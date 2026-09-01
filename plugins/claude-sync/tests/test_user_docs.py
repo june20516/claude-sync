@@ -23,6 +23,8 @@ bash를 **실행해서** 재고, `test_skill_wiring.py`는 세 SKILL.md의 **배
 
 목록이 스스로 줄어드는 것은 넷으로 막는다.
 - USER_DOCS는 디스크의 README 계열 파일 목록과 대조한다(손으로 고른 목록이 아니다)
+- CORRECTIONS의 **개수**는 spec 13장 첫 표에서, SYNCIGNORE_MEANING의 **개수**는
+  `lib/syncignore.py`의 정본 번호 목록에서 뽑는다 — 둘 다 손으로 적지 않는다(plan ③ Task 10)
 - CORRECTIONS는 개수를 함께 걸고, 바늘의 값은 원천 문서에 묶는다
 - 새 한계의 **항목 수**는 spec 13장의 불릿 수에서 뽑는다
 - 새 한계의 **내용**은 같은 언어의 두 문서끼리, 백틱 토큰은 한↔영끼리 대조한다
@@ -149,7 +151,8 @@ def test_user_doc_list_covers_every_doc_on_disk():
         "사용자 문서 목록이 디스크와 어긋난다: %s\n"
         "문서를 더했다면 USER_DOCS·LIMITS_ANCHOR·CORRECTIONS 셋과 파일 끝의 배포 순서 표 "
         "여섯(DEPLOY_ORDER_ANCHOR·_NO_MCP·_OTHERS·_SCOPE·_MARKER·MERGE_PROMISE)에 모두 "
-        "더하고, test_the_corrections_table_did_not_shrink의 개수도 함께 고친다."
+        "더한다. CORRECTIONS의 개수는 손으로 적지 않는다 — spec 13장 첫 표에서 뽑으므로 "
+        "그 표에도 행을 더해야 한다."
         % sorted(found.symmetric_difference(USER_DOCS)))
     assert set(CORRECTIONS) == set(USER_DOCS), sorted(
         set(CORRECTIONS).symmetric_difference(USER_DOCS))
@@ -157,19 +160,56 @@ def test_user_doc_list_covers_every_doc_on_disk():
         set(LIMITS_ANCHOR).symmetric_difference(USER_DOCS))
 
 
-def test_the_corrections_table_did_not_shrink():
-    """CORRECTIONS는 **손으로 고른 목록**이라 대조할 외부 진실 원천이 없다.
+SPEC_PATH = os.path.join(ROOT, "docs", "superpowers", "specs",
+                         "2026-08-24-plugins-sync-design.md")
+DOC_ANCHOR = re.compile(r"`([A-Za-z0-9._-]+\.md):\d+`")
 
-    그래서 개수만 함께 건다 — 한 쌍을 지우면 그 자리가 아무 소리 없이 검사에서 빠진다.
-    영어 3 + 한국어 4(영어판에 없는 예외 문구 삭제가 하나 더 있다) + 백업 README 2 + 2.
-    이 단정이 말하는 것은 그것뿐이다 — 표의 **내용**이 옳은지는 재지 않는다.
+
+def spec_correction_counts():
+    """spec 13장 **첫 표**가 사용자 문서를 지목하는 횟수 {문서: 개수}.
+
+    **원천을 여기로 정했다**(plan ③ Task 10). 앞 판은 개수를 손으로 적어 두고 주석에
+    *"대조할 외부 진실 원천이 없다"* 고 적었는데, 그러면 한 쌍을 지우면서 그 숫자도 함께
+    줄이는 편집이 조용히 통과한다 — 이 저장소가 반복해 만난 다섯째 축이다.
+
+    **첫 표만 본다.** 같은 장의 두 번째 표(2.x 배포 순서 경고)는 CORRECTIONS가 아니라
+    별도 가드들이 담당하므로, `### `로 잘라 범위를 못박는다. 넓히면 그쪽 행이 개수를
+    부풀려 이 단정이 영영 빨간 채로 남는다.
     """
-    assert {name: len(pairs) for name, pairs in CORRECTIONS.items()} == {
-        "README.md": 3,
-        "README.ko.md": 4,
-        "backup-readme.md": 3,
-        "backup-readme.ko.md": 3,
-    }
+    with open(SPEC_PATH, encoding="utf-8") as f:
+        text = f.read()
+    start = text.index("## 13. 문서 정정")
+    end = text.index("### ", start)
+    counts = {}
+    for line in text[start:end].splitlines():
+        if not line.startswith("| `"):
+            continue
+        cell = line.split("|")[1]
+        for name in DOC_ANCHOR.findall(cell):
+            if name in USER_DOCS:
+                counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def test_the_corrections_table_matches_the_spec_chapter_that_owns_it():
+    """CORRECTIONS의 **개수를 spec 13장에서 뽑는다.** 한 쌍이 조용히 빠지지 않는다.
+
+    양쪽을 함께 지워야 통과하는데, 그러면 그것은 **의도된 결정**이고 spec이 그 결정의
+    자리다. 이 단정이 말하는 것은 개수뿐이다 — 표의 **내용**이 옳은지는 위 파라미터화된
+    테스트가 문서마다 잰다.
+
+    **한국어 두 문서가 함께 묶인다.** spec의 한 행이 `backup-readme.md`와
+    `backup-readme.ko.md`를 함께 지목하므로, 한국어 쪽만 지우면 그 문서의 개수가 줄어
+    여기서 죽는다 — KICKOFF 5장이 *"같은 언어의 두 문서를 똑같이 고치는 산문 편집이
+    잡히지 않는다"* 고 적은 자리의 한국어 절반이다.
+    """
+    counts = spec_correction_counts()
+    # **선택자가 비면 스스로 실패한다.** 슬라이스나 정규식이 낡아 아무것도 못 뽑으면
+    # 아래 비교가 `{} == {...}`로 죽는다 — 조용히 0회 순회하고 초록이 되지 않는다.
+    assert set(counts) == set(USER_DOCS), (
+        "spec 13장 첫 표가 사용자 문서 넷을 다 지목하지 않는다: %s" % sorted(counts))
+    assert {name: len(pairs) for name, pairs in CORRECTIONS.items()} == counts, (
+        sorted(CORRECTIONS.items()), sorted(counts.items()))
 
 
 @pytest.mark.parametrize("name,stale,fixed", PAIRS,
@@ -413,6 +453,25 @@ def test_restore_really_does_ignore_syncignore():
         "lib/syncignore.py의 정본이 restore의 결정을 적지 않는다 — 코드는 무시한다")
 
 
+CANON_POINT = re.compile(r"^(\d+)\. ", re.M)
+
+
+def syncignore_canonical_points():
+    """정본(`lib/syncignore.py`)이 **README가 말해야 한다고 정한** 항목들.
+
+    앞 판은 개수를 `== 3`으로 적어 두었고, 그러면 한 문장을 지우면서 그 숫자도 함께
+    줄이는 편집이 통과한다. 정본에 번호 목록을 두고 여기서 뽑는다 — 항목이 늘면 두
+    README와 위 표를 함께 고쳐야 이 단정이 초록이 된다.
+    """
+    with open(SYNCIGNORE_LIB, encoding="utf-8") as f:
+        text = f.read()
+    start = text.index("**README 두 벌이 말해야 하는 것**")
+    end = text.index("**왜 여기 있는가.**", start)
+    points = CANON_POINT.findall(text[start:end])
+    assert points, "정본에서 번호 목록을 뽑지 못했다 — 앵커가 낡았다"
+    return points
+
+
 @pytest.mark.parametrize("name", sorted(SYNCIGNORE_MEANING))
 def test_readme_states_what_syncignore_means(name):
     """세 문장이 함께 있어야 뜻이 온전하다.
@@ -421,7 +480,7 @@ def test_readme_states_what_syncignore_means(name):
     레포 내용으로 덮어쓰일 수 있다는 것을 모른 채 `/sync-restore`를 돌린다. 개수를
     함께 걸어 한 문장이 조용히 빠지는 것을 막는다.
     """
-    assert len(SYNCIGNORE_MEANING[name]) == 3
+    assert len(SYNCIGNORE_MEANING[name]) == len(syncignore_canonical_points())
     text = read_doc(name)
     for phrase in SYNCIGNORE_MEANING[name]:
         assert phrase in text, "%s: %r" % (name, phrase)

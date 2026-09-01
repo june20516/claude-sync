@@ -2309,6 +2309,10 @@ uv run --with pytest pytest plugins/claude-sync/tests/test_script_root.py -q -k 
 
 `plugins/claude-sync/skills/sync-status/SKILL.md`의 `### 2. 메타데이터 기반 상태 분석` **바로 위**에 다음 절을 삽입한다.
 
+> **앵커가 낡았다 (2026-09-01 재확인).** 그 헤딩은 이후 `### 2. 로컬과 레포의 차이 분석`으로
+> 바뀌었다. 이 Step은 이미 수행됐고 `1.5 호환성 검사` 절이 그 위에 있다 — 이 문단은 실행
+> 기록이므로 지시문은 그대로 두고 사실만 덧붙인다.
+
 ````markdown
 ### 1.5 호환성 검사 (경고만)
 

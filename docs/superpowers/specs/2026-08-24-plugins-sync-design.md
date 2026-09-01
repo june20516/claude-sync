@@ -1823,14 +1823,21 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 
 한 곳만 고치면 나머지가 옛 서술을 계속 말한다. `grep`으로 확인한 전수다.
 
+> **이 표의 사용자 문서 행이 `test_user_docs.py`의 `CORRECTIONS` 표의 진실 원천이다**
+> (plan ③ Task 10). 그 파일은 행을 손으로 세지 않고 여기서 뽑는다 — 손으로 세면 한 쌍을
+> 지우면서 개수도 함께 줄이는 편집이 조용히 통과한다. **파일 이름을 온전히 적는다**
+> (`.ko.md:34` 같은 축약을 쓰지 않는다). **행 번호는 정정 전의 것이다** — 정정이 끝난
+> 지금은 맞지 않고, 맞추려 해도 다음 편집에서 다시 낡는다. 파일 이름이 앵커다.
+
 | 파일:행 | 현재 서술 | 고칠 내용 |
 |---|---|---|
 | `README.md:94` / `README.ko.md:94` | "`plugins.json` is still overwritten wholesale … known limitation" / "여전히 매 백업마다 통째로 덮어쓰입니다" | **키 단위 병합**으로. 양쪽 README에 따로 있다 |
 | `README.ko.md:98` | "로컬 파일은 절대 자동으로 덮어쓰지 않습니다" 옆의 `plugins.json` 예외 문구 | **지운다.** 더 이상 예외가 아니다 |
 | `README.md:25` / `README.ko.md:25` | "Plugin/marketplace list (sensitive data excluded)" / "(민감 정보 제외)" | `pluginConfigs`를 **마스킹해서 싣는다.** "제외"는 거짓이 된다 |
 | `README.md:99` / `README.ko.md:99` | "only the plugin list is extracted" | 세 필드 + 마스킹 사실 |
-| `backup-readme.md:34` / `.ko.md:34` | "(no sensitive data)" | 위와 같은 이유 |
-| `backup-readme.md:43` / `.ko.md:43` | "`plugins.json`은 매 백업마다 새로 생성되어 덮어쓰입니다" | 키 단위 병합 |
+| `backup-readme.md:34` / `backup-readme.ko.md:34` | "(no sensitive data)" | 위와 같은 이유 |
+| `backup-readme.md:43` / `backup-readme.ko.md:43` | "`plugins.json`은 매 백업마다 새로 생성되어 덮어쓰입니다" | 키 단위 병합 |
+| `backup-readme.md:31` / `backup-readme.ko.md:31` | "Per-file modification timestamps" / "파일별 수정 시각" | **내용 해시**로. 그 해시는 **기록일 뿐 판정 입력이 아니다**(3-way의 입력은 기기별 base다). **이 행은 초판 표에 없었다** — quality review I3이 찾았고, 백업 레포를 클론한 사용자가 처음 읽는 문서만 반대를 말하고 있었다 |
 | `sync-backup/SKILL.md:33·36` | 동기화 대상 표 "플러그인/마켓플레이스 목록만" + "두 필드만 추출" | **세 필드 + 별칭 키 + `installed_plugins.json`의 `auto`** |
 | `sync-backup/SKILL.md:42` | "매 백업마다 통째로 새로 생성되어 덮어쓰인다" | 키 단위 병합 |
 | `sync-status/SKILL.md:116·120` | MCP 호출·skipped 분기 문단 | 플러그인용 **호출줄과 skipped 분기 문단 신규** |

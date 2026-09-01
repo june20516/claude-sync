@@ -35,6 +35,7 @@ python3 ~/.claude/suberpowers/tools/mutate.py \
 | `plan3-task-07.json` | 7 3차 스모크 반영 | 6 | 전부 CAUGHT |
 | `plan3-task-08.json` | 8 4단계의 로컬 확장 값 | 8 | 전부 CAUGHT |
 | `plan3-task-09.json` | 9 비원자적 로컬 쓰기 | 8 | 전부 CAUGHT |
+| `plan3-task-10.json` | 10 산문 층의 자기 축소 | 6 | 전부 CAUGHT |
 | `plan3-task-12.json` | 12 `excluded_in_repo`의 3-way | 6 | 전부 CAUGHT |
 | `plan3-task-13.json` | 13 남은 측정과 corpus 위생 | 6 | 전부 CAUGHT |
 
