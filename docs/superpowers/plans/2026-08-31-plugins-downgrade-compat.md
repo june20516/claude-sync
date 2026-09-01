@@ -39,12 +39,17 @@
 | `lib/compat.py`의 relpath별 shape 상수·판정 (spec 11.6) | 코어(`lib/keyed_sync.py`)의 판정 로직 — 건드리지 않는다 |
 | `detect_downgrade.py`의 파라미터화와 출력 스키마 교체 (spec 11.6) | 다운그레이드 **자동 복구** — 지금도 안 하고 이 plan도 안 한다 |
 | v1 → v2 승격이 다운그레이드를 삼키지 않는다 (spec 11.4) | `.syncignore`의 레포 선재 파일 삭제 — **사용자가 "의도다"로 결정**(2026-08-31). 무조치 |
-| `generate_metadata.py`의 `schema` 맵 (spec 11.3) | `unrestorable_reasons`의 status 노출 (spec 9.2 개정이 먼저다) |
+| `generate_metadata.py`의 `schema` 맵 (spec 11.3) | ~~`unrestorable_reasons`의 status 노출~~ → **Task 11이 했다** (spec 9.2를 먼저 고쳤다) |
 | 다운그레이드 대화 문단 셋 + 2.x 배포 순서 경고 네 곳 (spec 13장) | 고정 `.tmp` 이름의 동시 실행 안전성 (M3 — 역효과가 있다) |
-| 3차 스모크 반영 — 에뮬레이터와 그 위의 문장 (2026-08-31) | `SKILL.md`의 `reason` 문자열 분기 → `reason_kind` (유지보수 이월) |
-| 4단계가 로컬 확장 값을 평탄화하지 않는다 (**사용자 결정** 2026-08-31) | `SYNCIGNORE_MEANING`·`CORRECTIONS`의 손으로 고른 목록 (외부 진실 원천 없음) |
-| spec 4.4 탈출구의 `~/plugins.json.bak` 정리 안내 (**사용자 결정**) | 산문 층의 "같은 언어 두 문서 동시 편집" 탐지 (원천 없음) |
+| 3차 스모크 반영 — 에뮬레이터와 그 위의 문장 (2026-08-31) | ~~`SKILL.md`의 `reason` 문자열 분기 → `reason_kind`~~ → **Task 11이 했다** (보고 층 `lib/report.py` 신설) |
+| 4단계가 로컬 확장 값을 평탄화하지 않는다 (**사용자 결정** 2026-08-31) | ~~`SYNCIGNORE_MEANING`·`CORRECTIONS`의 손으로 고른 목록~~ → **Task 10이 했다** (원천을 spec 13장과 `syncignore` 정본으로 정했다) |
+| spec 4.4 탈출구의 `~/plugins.json.bak` 정리 안내 (**사용자 결정**) | 산문 층의 "같은 언어 두 문서 동시 편집" 탐지 — **한국어 절반은 Task 10이 닫았고**(spec 13장이 원천이다) 영어 절반만 제외로 남는다(「닫은 것」 절) |
 | `reconcile_restore.py`의 비원자적 로컬 쓰기 둘 (Task 1 리뷰 I3) | |
+| `excluded_in_repo`의 3-way 분류 (Task 12) · 부재 = 꺼짐 (Task 13의 측정) | |
+
+> **이 표는 착수 시점의 것이다 (2026-09-01 갱신).** 「제외」의 네 행이 실행 중에 거짓이
+> 됐다 — 그 아래 Task 10·11이 실제로 했다. 취소선이 그 자리다. 표를 그대로 두면 다음 감사가
+> *"이 plan이 하지 않기로 한 것"* 으로 읽는데, 코드에는 있다.
 
 **착수 시점:** 브랜치 `feat/plugin-config`, HEAD `e574e84`, **963 passed**. `main`은 `67ab092`이고 이 브랜치는 아직 merge되지 않았다 — **브랜치 마무리는 사용자가 직접 한다.**
 

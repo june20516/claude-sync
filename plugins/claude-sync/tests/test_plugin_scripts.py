@@ -231,8 +231,10 @@ def test_a_broken_repo_document_is_a_document_level_skip_from_the_cli(tmp_path, 
 
     문서 단위 skip이다: sections가 아예 없다. 섹션 단위(skipped_section)로 접으면
     "항목 0개인 정상 섹션"과 모양이 가까워져 소비자가 삭제로 읽을 수 있다.
-    reason에 "구문이 깨졌다"가 있어야 세 SKILL.md가 형식 문제(플러그인 업데이트 안내)와
-    구문 문제(레포 파일을 고치라는 안내)를 가른다 — 두 안내는 서로 쓸모가 없다.
+    **가르는 것은 `reason_kind`다**(plan ③ Task 11) — 세 SKILL.md가 그 값으로 형식 문제
+    (플러그인 업데이트 안내)와 구문 문제(레포 파일을 고치라는 안내)를 가른다. 두 안내는
+    서로 쓸모가 없다. `reason` 문장은 **표시용**이지만 여기서 함께 거는 이유는, 그 문장이
+    사용자가 보는 유일한 설명이라 relpath와 무엇이 깨졌는지를 담아야 하기 때문이다.
     """
     repo = write_broken_repo(tmp_path, TWO_DEVICE_REPO)
     home = tmp_path / "home"
@@ -250,6 +252,8 @@ def test_a_broken_repo_document_is_a_document_level_skip_from_the_cli(tmp_path, 
     out = json.loads(proc.stdout)
     assert out["status"] == "skipped"
     assert "sections" not in out
+    # 판정은 갈래가 한다(Task 11) — 문장은 표시용이다. 둘 다 건다.
+    assert out["reason_kind"] == "broken_syntax"
     assert "구문이 깨졌다" in out["reason"]
     assert pc.BACKUP_RELPATH in out["reason"]
 

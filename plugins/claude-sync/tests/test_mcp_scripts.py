@@ -230,6 +230,8 @@ def test_a_broken_repo_document_is_a_document_level_skip_from_the_cli(tmp_path, 
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
     assert out["status"] == "skipped"
+    # 판정은 갈래가 한다(Task 11) — 문장은 표시용이다. 둘 다 건다.
+    assert out["reason_kind"] == "broken_syntax"
     assert "구문이 깨졌다" in out["reason"]
     assert mc.BACKUP_RELPATH in out["reason"]
 
