@@ -1225,7 +1225,12 @@ def write_held_state(state, held_path=None):
     동기화 대상이 아니다 — 보류 선택이 타 기기로 번지지 않는다(기기별 선택이 의도다).
     """
     path = DEFAULT_HELD if held_path is None else held_path
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # `or "."` — 디렉터리 성분이 없는 경로(순수 파일명)에 `os.makedirs("")`는
+    # FileNotFoundError다. 그 예외는 apply_base에서 main()의 `except OSError`로 새어
+    # 복원 전체를 `{'status': 'skipped'}`로 만드는데, 그 시점엔 base 스테이징 파일이
+    # 이미 쓰인 뒤라 SKILL.md의 `-f` 게이트가 base를 승격시키고 리포트만 건너뛰었다고
+    # 말한다 — 보고와 결과가 갈리는 자리라 한 글자로 막는다.
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     payload = {"version": HELD_SCHEMA_VERSION,
                "pluginConfigs": state["pluginConfigs"],
                "release": state["release"]}

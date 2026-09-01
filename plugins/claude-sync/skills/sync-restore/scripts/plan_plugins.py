@@ -101,12 +101,13 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
                base_dir=ss.BASE_DIR):
     """복원 계획.
 
-    **평문 비밀이 실리지 않는 근거는 "값이 전부 정규화된다"가 아니다.** sections는 코어가
-    키 목록만 담아 돌려주므로(restore_plan) 값이 실리는 자리는 **다섯**이다 —
+    **평문 비밀이 실리지 않는 근거는 "값이 전부 정규화된다"가 아니다.** 코어가
+    돌려주는 sections는 키 목록만 담고(restore_plan), 값이 실리는 자리는 **다섯**이다 —
     marketplace_add[].arg(마스킹된 레포 값에서 뽑은 source 문자열), config_keys(값이
     아니라 물어야 할 option 키 **이름**), repo_values/local_values(enabledPlugins 전용 —
     도메인상 비밀이 없는 섹션이다), config_skipped_local_extended(로컬 enabledPlugins 값 —
-    앞의 둘과 같은 성질이고 같은 훅을 거친다), 그리고 unrestorable_reasons(아래). 그 다섯을 전부
+    앞의 둘과 같은 성질이고 같은 훅을 거친다), 그리고 이 파일이 sections 아래에 얹는
+    unrestorable_reasons(아래 — **sections에서 값을 담는 유일한 자리다**). 그 다섯을 전부
     마스킹 훅에 통과시키는 것은 근거를 구조로 바꾸기 위해서다: enabledPlugins의 정규화가
     오늘 항등(_identity)이라는 사실에 기대면, 그 섹션에 마스킹이 도입되는 순간 훅을
     우회하는 자리 하나만 조용히 남는다.
@@ -168,6 +169,24 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 그래서 이 파일에는 **정규화를 거치지 않은 로컬 값을 꺼내 쓰는 자리가 없다** —
     # local을 그대로 넘기는 곳은 코어와 훅뿐이고, 그쪽은 스스로 정규화한다.
     local_masked = hooks["enabledPlugins"]["normalize"](local["enabledPlugins"])
+
+    # **사유는 그 섹션 아래에 둔다 — 최상위로 평탄화하지 않는다.** 평탄화하면 키가
+    # `k` 하나로 서서, enabledPlugins와 pluginConfigs 양쪽에서 복원 불가인 플러그인
+    # id가 한 항목만 남고(SECTIONS 순서상 뒤가 이긴다), 플러그인 id와 이름이 겹치는
+    # 마켓플레이스는 전혀 다른 사유를 덮어쓴다. 형제 compare_plugins가 같은 사실을
+    # 섹션 안에 두므로 층위도 그쪽에 맞춘다 — 두 스킬이 같은 사실을 다른 층으로
+    # 노출하면 소비자 산문이 한쪽을 다른 쪽으로 읽는다.
+    # 접힌 섹션에는 얹지 않는다(`unrestorable` 자체가 없다) — 형제와 같은 처리다.
+    # 훅 묶음의 reason을 쓴다 — 자유 함수 unrestorable_reason에 repo를 따로 넘기면
+    # 판정(restorable)과 사유가 **다른 repo**를 볼 수 있고 양쪽 다 무증상이다
+    # (Task 6 quality review I2). build_hooks가 둘에 같은 repo를 닫아 준다.
+    for section in pc.SECTIONS:
+        entry = sections[section]
+        if "unrestorable" in entry:
+            entry["unrestorable_reasons"] = {
+                k: hooks[section]["reason"](k, masked[section].get(k))
+                for k in entry["unrestorable"]}
+
     plugins = sections["enabledPlugins"]
     markets = sections["extraKnownMarketplaces"]
     configs = sections["pluginConfigs"]
@@ -334,13 +353,6 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
                         if k in masked["enabledPlugins"]},
         "local_values": {k: local_masked[k] for k in decided if k in local_masked},
         "depends_on": _install_dependencies(candidates),
-        # 훅 묶음의 reason을 쓴다 — 자유 함수 unrestorable_reason에 repo를 따로 넘기면
-        # 판정(restorable)과 사유가 **다른 repo**를 볼 수 있고 양쪽 다 무증상이다
-        # (Task 6 quality review I2). build_hooks가 둘에 같은 repo를 닫아 준다.
-        "unrestorable_reasons": {
-            k: hooks[section]["reason"](k, masked[section].get(k))
-            for section in pc.SECTIONS
-            for k in sections[section].get("unrestorable", [])},
     }
 
 
@@ -451,13 +463,13 @@ def _next_base_sections(local, repo, base, hooks, skipped, degraded, choices,
     종류로 렌더링하게 된다.
     """
     previous_base = base or {}
-    doc, report = {}, {}
+    doc, sections_report = {}, {}
     for section in pc.SECTIONS:
         if section in skipped:
             # 판정하지 못한 섹션은 이전 base를 그대로 통과시킨다 — {}로 덮으면 다음
             # 백업이 그 섹션 전체를 "로컬 신규"로 읽는다(collect_plugins와 같은 처방).
             doc[section] = previous_base.get(section, {})
-            report[section] = pc.skipped_section(skipped[section])
+            sections_report[section] = pc.skipped_section(skipped[section])
             continue
         normalize = hooks[section]["normalize"]
         masked = normalize(repo[section])
@@ -482,10 +494,10 @@ def _next_base_sections(local, repo, base, hooks, skipped, degraded, choices,
                 nb[key] = masked[key]
                 kept_local.append(key)
         doc[section] = nb
-        report[section] = pc.with_degraded(
+        sections_report[section] = pc.with_degraded(
             {"status": "ok", "kept_stale": stale, "kept_local": kept_local,
              "base_keys": sorted(nb)}, degraded.get(section))
-    return doc, report
+    return doc, sections_report
 
 
 def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_path=None,
@@ -540,8 +552,11 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
     next_held = pc.next_held_state(held_state, pc.normalized_sections(repo), choices)
     hooks = pc.build_hooks(local, repo, auto_ids=auto_ids, held_state=next_held)
 
-    doc, report = _next_base_sections(local, repo, base, hooks, skipped, degraded,
-                                      choices, next_held)
+    # 이름이 `report`가 아닌 것은 의도다 — 그 이름은 import한 보고 층 모듈의 것이고,
+    # 여기서 가리면 형제 스크립트가 쓰는 `report.skipped(e)`를 이 함수에 더하는 순간
+    # `AttributeError: 'dict' object has no attribute 'skipped'`가 런타임에 난다.
+    doc, sections_report = _next_base_sections(
+        local, repo, base, hooks, skipped, degraded, choices, next_held)
 
     os.makedirs(staging_dir, exist_ok=True)
     pc.dump_backup(doc, os.path.join(staging_dir, pc.BACKUP_RELPATH))
@@ -553,7 +568,7 @@ def apply_base(backup_path, staging_dir, choices, settings_path=None, installed_
     # 그래도 이 게이트가 옳다 — 빈 상태로 덮으면 declined 전부가 조용히 사라진다.
     if "pluginConfigs" not in skipped:
         pc.write_held_state(next_held, held_path)
-    return {"status": "ok", "sections": report}
+    return {"status": "ok", "sections": sections_report}
 
 
 def read_choices(path):

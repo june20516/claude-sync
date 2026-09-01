@@ -1004,7 +1004,7 @@ def test_status_and_restore_give_the_same_reason_for_the_same_key(tmp_path):
     status = compare(tmp_path / "s", local={}, repo=repo)
     plan = build_plan(tmp_path / "p", local={}, repo=repo)
     assert (status["sections"]["enabledPlugins"]["unrestorable_reasons"]
-            == {"p@nowhere": plan["unrestorable_reasons"]["p@nowhere"]})
+            == plan["sections"]["enabledPlugins"]["unrestorable_reasons"])
 
 
 def test_compare_leaves_restorable_repo_only_entries_out_of_unrestorable(tmp_path):
@@ -1508,10 +1508,15 @@ def test_plan_exposes_exactly_eleven_buckets_per_section(tmp_path):
 
     MCP는 아홉이지만 플러그인은 두 축을 **노출한다** — H3의 value_held는 사용자에게
     별도 문구로 말해야 하고, action_held는 어떤 명령의 대상도 아님을 알려야 한다.
+
+    `unrestorable_reasons`는 버킷이 아니라 이 스크립트가 섹션 위에 얹는 사유 맵이다.
+    **비어 있어도 키는 있다** — 형제 compare_plugins와 같은 자리·같은 조건이라야 두
+    스킬의 소비자 산문이 한 모양을 읽는다.
     """
     out = build_plan(tmp_path)
     for section in pc.SECTIONS:
-        assert set(out["sections"][section]) == set(ks.BUCKETS) | {"status"}
+        assert set(out["sections"][section]) == set(ks.BUCKETS) | {
+            "status", "unrestorable_reasons"}
 
 
 def test_plan_routes_new_repo_entries_by_secret_need(tmp_path):
@@ -2103,8 +2108,9 @@ def test_action_held_entries_become_no_command_at_all(tmp_path):
 
 def test_plan_gives_reasons_for_unrestorable_entries(tmp_path):
     out = build_plan(tmp_path, local={}, repo={"enabledPlugins": {"p@nowhere": True}})
-    assert out["sections"]["enabledPlugins"]["unrestorable"] == ["p@nowhere"]
-    assert "소스가 없" in out["unrestorable_reasons"]["p@nowhere"]
+    section = out["sections"]["enabledPlugins"]
+    assert section["unrestorable"] == ["p@nowhere"]
+    assert "소스가 없" in section["unrestorable_reasons"]["p@nowhere"]
 
 
 def test_unrestorable_reason_and_the_verdict_read_the_same_repo(tmp_path):
@@ -2116,8 +2122,9 @@ def test_unrestorable_reason_and_the_verdict_read_the_same_repo(tmp_path):
     """
     out = build_plan(tmp_path, local={"extraKnownMarketplaces": {"m": GH}},
                      repo={"enabledPlugins": {"p@m": True}})
-    assert out["sections"]["enabledPlugins"]["unrestorable"] == ["p@m"]
-    assert "소스가 없" in out["unrestorable_reasons"]["p@m"]
+    section = out["sections"]["enabledPlugins"]
+    assert section["unrestorable"] == ["p@m"]
+    assert "소스가 없" in section["unrestorable_reasons"]["p@m"]
 
 
 def test_status_and_restore_agree_on_which_keys_are_unrestorable(tmp_path):
@@ -2194,7 +2201,27 @@ def test_plan_gives_reasons_for_unrestorable_marketplaces(tmp_path):
     section = out["sections"]["extraKnownMarketplaces"]
     assert section["unrestorable"] == ["m"]
     assert [entry["name"] for entry in out["marketplace_add"]] == ["good"]
-    assert "필드가 비어 있다" in out["unrestorable_reasons"]["m"]
+    assert "필드가 비어 있다" in section["unrestorable_reasons"]["m"]
+
+
+def test_unrestorable_reasons_are_keyed_under_their_own_section(tmp_path):
+    """최상위로 평탄화하면 섹션 간에 **키가 충돌해 사유가 덮인다.**
+
+    마켓플레이스 이름은 사용자가 정하는 문자열이라 플러그인 id와 겹칠 수 있고, 그때
+    두 섹션의 사유는 서로 **전혀 다른 처방**이다 — 하나는 "다른 기기에서 백업을
+    돌려라"이고 다른 하나는 "이 출처로는 등록 인자를 만들 수 없다"이다. 평탄화된 맵은
+    SECTIONS 순서상 뒤에 오는 섹션의 문장만 남겨, 사용자가 할 일이 조용히 바뀐다.
+    """
+    out = build_plan(tmp_path, local={}, repo={
+        "enabledPlugins": {"p@nowhere": True},
+        # github 출처인데 인자로 쓸 repo 필드가 없다 → 갈래 (a)
+        "extraKnownMarketplaces": {"p@nowhere": {"source": {"source": "github"}}}})
+    plugins = out["sections"]["enabledPlugins"]
+    markets = out["sections"]["extraKnownMarketplaces"]
+    assert plugins["unrestorable"] == ["p@nowhere"]
+    assert markets["unrestorable"] == ["p@nowhere"]
+    assert "소스가 없" in plugins["unrestorable_reasons"]["p@nowhere"]
+    assert "필드가 비어 있다" in markets["unrestorable_reasons"]["p@nowhere"]
 
 
 def test_plan_carries_no_secret_values(tmp_path):

@@ -1177,9 +1177,34 @@ def test_backup_base_gate_distinguishes_push_failure_from_staging_failure():
     assert "REPO_HAS_CONTENT=0" in sec and "이미 존재한다" in sec
 
 
-# 두 수집 단계(backup)와 두 apply-base(restore)가 **같은 디렉토리**를 쓴다. 각 단계가
-# 제 앞에서 비우면 앞 단계의 산출물이 지워지고 그 파일의 base가 영영 전진하지 않는다.
+# 두 수집 단계(backup)와 두 apply-base(restore)가 **한 스킬 안에서** 같은 디렉토리를
+# 쓴다. 각 단계가 제 앞에서 비우면 앞 단계의 산출물이 지워지고 그 파일의 base가 영영
+# 전진하지 않는다. **스킬 사이로는 공유하지 않는다** — 아래 테스트가 그것을 건다.
 STAGING_CLEAR = 'rm -rf "$BASE_STAGING"'
+STAGING_PATHS = {
+    "sync-backup": '${TMPDIR:-/tmp}/claude-sync-base-staging-backup',
+    "sync-restore": '${TMPDIR:-/tmp}/claude-sync-base-staging-restore',
+}
+
+
+def test_the_two_skills_do_not_share_a_base_staging_directory():
+    """공유하면 승격 게이트를 가르는 것이 `rm -rf` 한 줄뿐이 된다.
+
+    두 스킬은 **같은 두 relpath**를 **같은 존재 게이트**(`[ -f "$BASE_STAGING/$rel" ]`)로
+    승격한다. 그래서 어느 한쪽의 비우기 블록이 실행되지 않으면(모델이 단계를 건너뜀,
+    계획 이후 중단, bash 블록 실패) 승격 루프가 **다른 스킬이 남긴** 산출물을 이 기기의
+    base로 쓴다 — 타 기기가 추가·변경한 항목이 base에 실리고, 다음 백업이 그것을
+    "이 기기가 삭제했다"로 읽는다. 결합을 단계 순서 산문이 아니라 경로로 끊는다.
+
+    각 스킬이 **자기 경로 하나만** 쓰는 것도 함께 건다 — 한 자리만 갈아 두면 그 단계의
+    산출물이 다른 디렉토리에 남아 base가 조용히 전진하지 않는다.
+    """
+    assert len(set(STAGING_PATHS.values())) == 2
+    for skill, path in STAGING_PATHS.items():
+        text = read_skill(skill)
+        assert 'BASE_STAGING="%s"' % path in text, skill
+        other = next(p for s, p in STAGING_PATHS.items() if s != skill)
+        assert other not in text, "%s가 %r도 쓴다" % (skill, other)
 
 
 def test_backup_clears_the_shared_staging_once_before_both_collectors():

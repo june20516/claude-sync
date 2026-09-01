@@ -229,13 +229,15 @@ claude plugin update claude-sync
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging-restore"
 rm -rf "$BASE_STAGING"
 python3 "$SYNC_SCRIPTS/plan_plugins.py" plan "$SYNC_REPO/plugins.json" > /tmp/claude-sync-plugins-plan.json
 cat /tmp/claude-sync-plugins-plan.json
 ```
 
 `BASE_STAGING`은 여기서 딱 한 번 비운다. 6-6의 MCP `apply-base`가 같은 디렉토리를 쓰므로, 각 단계가 제 앞에서 `rm -rf`하면 앞 단계의 산출물이 지워지고 그 파일의 base가 전진하지 않는다.
+
+**경로는 이 스킬 전용이다**(`…-base-staging-restore`). `/sync-backup`은 `…-base-staging-backup`을 쓴다. 두 스킬이 한 디렉토리를 공유하면 같은 두 relpath를 같은 존재 게이트로 승격하게 되어, 이 `rm -rf` 줄이 실행되지 않은 실행에서 **다른 스킬이 남긴** 산출물이 이 기기의 base로 실린다 — 결합을 산문이 아니라 경로로 끊는다.
 
 `status`가 `"skipped"`면 `reason`을 알리고 플러그인 단계 전체를 건너뛴다(파일 복원과 6절의 MCP 단계는 그대로 진행한다). 갈래는 셋이다 — `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨졌다.** 어느 갈래든 **제안을 하나도 내지 않는다**: 못 읽은 문서를 "항목 0개"로 읽으면 이 기기의 플러그인이 전부 `local_stale`로 떨어져 **"전부 지웁시다"가 나가는데**, 그 근거("다른 기기가 지웠다")는 거짓이다(실측). `reason_kind`가 `unknown_schema`이면 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다.
 
@@ -399,7 +401,7 @@ claude plugin enable <id> --scope user
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging-restore"
 
 # 5-5에서 "로컬 유지"를, 5-3에서 "건너뜀"을, 5-6에서 "이 기기 값으로 통일"을 고른
 # 항목만 적는다. 나머지 선택(레포 따르기·이번엔 넘어가기)에는 override가 필요 없다.
@@ -551,7 +553,7 @@ rm -f /tmp/claude-sync-mcp-one.json
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging-restore"
 
 # 6-4에서 "로컬 유지"를, 6-5에서 "유지"를 고른 이름만 적는다.
 # 나머지 선택(제거·채택·나중에)에는 base override가 필요 없다.
@@ -571,7 +573,7 @@ rm -f /tmp/claude-sync-mcp-choices.json
 **5절과 6절 중 어느 쪽이 건너뛰어졌더라도 이 절은 실행한다.** 두 apply-base가 같은 스테이징 디렉토리에 쓰고 여기가 그것을 `base/`로 옮기는 **유일한 경로**이므로, 이 절이 어느 한쪽 단계 **안에** 있으면 그 단계가 `skipped`인 실행에서 다른 파일의 base까지 함께 영영 전진하지 않는다. 그러면 `keep_stale`·`keep_local`·`release` 선택이 조용히 무효가 되고, 사용자는 같은 질문을 매번 다시 받는다(9.3.7).
 
 ```bash
-BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging-restore"
 
 # **두 relpath를 함께 훑는다** — 한 파일에만 걸면 다른 파일의 base가 전진하지 않아
 # 그 파일의 삭제 전파가 조용히 죽는다. 계산되지 않은 파일은 스테이징에 없으므로
@@ -599,8 +601,8 @@ fi
 - **설치한 플러그인**: 5-2에서 설치한 것, 5-4에서 값을 맞춘 것
 - **건너뛴 플러그인 설정**: 5-3에서 값을 입력하지 않아 보류(`declined`)로 만든 항목. 나중에 채우는 방법을 함께 적는다
 - **보류한 항목**: `held`의 종류별(의존성 설치 / 로컬 디렉토리 마켓플레이스 / 버전 제약 / 설정 보류)로 나눠 적는다. **"버전 때문에 보류한 항목"(이 기기의 플러그인이 낮아 알아보지 못한 것)과 섞지 않는다** — 앞의 것은 이 릴리즈의 정상 동작이고 뒤의 것은 업데이트로 풀린다
-- **`orphaned`**: 마켓플레이스가 등록되지 않은 채 레포에 남은 플러그인. 해당 마켓플레이스를 가진 기기에서 `/sync-backup`을 실행하면 해소된다고 안내한다
-- **복원하지 못한 플러그인**: `blocked`(마켓플레이스 등록 실패로 시도하지 않음)와 `unrestorable`(**섹션별** 목록이고, 사유는 **최상위**의 `unrestorable_reasons`를 그대로 쓴다 — 두 이름이 다른 층이다). **둘 다 실패 건수로 세지 않는다** — 시도하지 않았기 때문이다
+- **복원하지 못한 플러그인**: `blocked`(마켓플레이스 등록 실패로 시도하지 않음)와 `unrestorable`. 뒤의 것은 목록도 사유도 **섹션 안에** 있다 — `sections[<섹션>].unrestorable`과 같은 자리의 `unrestorable_reasons`를 그대로 쓴다(`/sync-status`의 `compare_plugins`와 같은 층위다). **둘 다 실패 건수로 세지 않는다** — 시도하지 않았기 때문이다
+- **`orphaned`는 이 스킬이 보고하지 않는다.** 마켓플레이스가 등록되지 않은 채 레포에 남은 플러그인 목록은 `collect_plugins`(백업 5단계)만 낸다 — 복원 흐름의 어떤 스크립트도 그 필드를 내보내지 않으므로 **여기서 요구하면 목록을 레포 파일에서 지어내게 된다**(두 번째 파서 = 결함 B). 안내는 `/sync-backup` 쪽에 있다
 - **등록한 MCP 서버** (`add` / `needs_secret`에서 값을 받아 등록한 것)
 - **건너뛴 MCP 서버**: 비밀 값 입력을 건너뛴 것, `unrestorable`(옛 형식·이름 규칙 위반 — 실패로 세지 않는다)
 - **버전 때문에 보류한 항목**: 이 기기의 플러그인이 낮아 알아보지 못한 것. **"실패"가 아니라 "보류"로 보고한다** — 데이터는 레포에 그대로 있고 업데이트 후 다시 실행하면 복원된다

@@ -240,7 +240,7 @@ class Device:
 PLAN_TOP_LEVEL_KEYS = {
     "status", "sections", "marketplace_add", "skipped_always_known", "install",
     "skipped_already_installed", "disable_after_install", "config_keys",
-    "repo_values", "local_values", "depends_on", "unrestorable_reasons",
+    "repo_values", "local_values", "depends_on",
     # 4단계에서 뺀 id와 그 로컬 값 — 새 **단계**가 아니라 제외 보고다(9.3.1).
     "config_skipped_local_extended",
 }

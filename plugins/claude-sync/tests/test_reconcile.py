@@ -1,4 +1,5 @@
 import ast
+import json
 import sys
 import os
 import subprocess
@@ -358,6 +359,43 @@ def test_without_syncignore_the_same_file_is_reported(tmp_path):
     out = run_check_status(home, repo).stdout
     assert "agents/internal-secret.md" in out
     assert "agents/keep.md" in out
+
+
+def run_reconcile_backup(home, repo):
+    script = os.path.join(
+        os.path.dirname(__file__), "..", "skills", "sync-backup", "scripts",
+        "reconcile_backup.py")
+    proc = subprocess.run(
+        ["python3", os.path.abspath(script), str(repo)],
+        capture_output=True, text=True, env=dict(os.environ, HOME=str(home)))
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_backup_reconcile_does_not_promise_to_push_an_excluded_file(tmp_path):
+    """두 스킬이 같은 제외 파일을 **같게** 설명해야 한다.
+
+    파일 결과는 걸든 안 걸든 같다 — 4단계 bash가 레포에서 지운다. 갈리는 것은 보고다:
+    걸지 않으면 `/sync-backup`의 `push`가 이 파일을 "곧 업로드될 파일"로 렌더링하는데
+    같은 세션의 `/sync-status`는 침묵한다. 10단계가 그 목록으로 base를 갱신하므로
+    "올렸다"는 거짓 기록까지 남는다.
+
+    **대조 파일을 함께 둔다** — 없으면 "아무것도 push하지 않는다"로도 단정이 참이 되고,
+    필터가 전부를 지우는 회귀가 조용히 지나간다.
+    """
+    home, repo = status_fixture(tmp_path)
+    (home / ".claude" / ".syncignore").write_text("agents/internal-*.md\n")
+    out = run_reconcile_backup(home, repo)
+    assert out["push"] == ["agents/keep.md"]
+    assert all("internal-secret" not in rel
+               for bucket in out.values() for rel in bucket)
+
+
+def test_without_syncignore_the_backup_reconcile_pushes_both(tmp_path):
+    """대조군 — 위 단정이 "그 파일이 원래 push에 없다"로 참이 되는 것을 막는다."""
+    home, repo = status_fixture(tmp_path)
+    out = run_reconcile_backup(home, repo)
+    assert out["push"] == ["agents/internal-secret.md", "agents/keep.md"]
 
 
 def section_of(out, rel):

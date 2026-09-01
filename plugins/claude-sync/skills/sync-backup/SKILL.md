@@ -232,7 +232,7 @@ for rel in data.get("push", []):
 PY
 ```
 
-`.syncignore`가 있으면 해당 패턴을 **레포 작업 트리에서 지운다.** push 목록에서 빼는 것이 아니라 `rm -rf`다 — 이번에 복사한 파일뿐 아니라 **다른 기기가 올려 두어 이미 레포에 있던 같은 경로도 사라지고**, 10단계의 `git add -A`가 그 삭제를 커밋·푸시한다(실측). 그것이 "올리지 않는다"의 실행 형태다:
+`.syncignore`가 있으면 해당 패턴을 **레포 작업 트리에서 지운다.** 4단계의 reconcile이 이미 제외 파일을 push 목록에서 빼지만, 그것만으로는 부족하다 — 여기서 `rm -rf`가 필요한 것은 **다른 기기가 올려 두어 이미 레포에 있던 같은 경로** 때문이다. 그 삭제는 10단계의 `git add -A`가 커밋·푸시한다(실측). 그것이 "올리지 않는다"의 실행 형태다:
 
 ```bash
 if [ -f ~/.claude/.syncignore ]; then
@@ -284,9 +284,11 @@ python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 **`BASE_STAGING`은 수집 단계들보다 앞에서 딱 한 번 비운다.** 6단계의 MCP 수집이 같은 디렉토리를 쓰므로, 각 단계가 제 앞에서 `rm -rf`하면 앞 단계의 산출물이 지워지고 그 파일의 base가 영영 전진하지 않는다.
 
+**경로는 이 스킬 전용이다**(`…-base-staging-backup`). `/sync-restore`는 `…-base-staging-restore`를 쓴다. 두 스킬이 한 디렉토리를 공유하던 때는 **같은 두 relpath를 같은 존재 게이트(`[ -f "$BASE_STAGING/$rel" ]`)로 승격**했고, 둘을 가르는 것은 이 `rm -rf` 한 줄뿐이었다 — 그 줄이 실행되지 않으면(중단·건너뜀·bash 실패) 승격 루프가 **다른 스킬이 남긴** 산출물을 이 기기의 base로 썼다. 그것이 두 스크립트 docstring이 경고하는 실패다: 타 기기가 추가·변경한 항목이 base에 실리고 다음 백업이 그것을 "이 기기가 삭제했다"로 읽는다.
+
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging-backup"
 rm -rf "$BASE_STAGING"
 python3 "$SYNC_SCRIPTS/collect_plugins.py" "$SYNC_REPO" "$BASE_STAGING" > /tmp/claude-sync-plugins.json
 cat /tmp/claude-sync-plugins.json
@@ -334,7 +336,7 @@ cat /tmp/claude-sync-plugins.json
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging-backup"
 python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$BASE_STAGING" > /tmp/claude-sync-mcp.json
 cat /tmp/claude-sync-mcp.json
 ```
@@ -427,7 +429,7 @@ git diff --cached --stat
 
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
-BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging"
+BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging-backup"
 cd "$SYNC_REPO"
 REPO_HAS_CONTENT=0
 

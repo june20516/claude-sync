@@ -157,7 +157,10 @@ def iter_synced_relpaths(root):
     하나이고 backup 방향 전용이라:
     - check_status.py(sync-status)는 **로컬 열거에만** 건다. 레포에도 있는 제외 파일은
       `excluded_in_repo`로 따로 보고한다.
-    - reconcile_backup.py는 걸어도 결과가 같다 — 4단계 bash가 레포에서 지운다.
+    - reconcile_backup.py도 **로컬 열거에 건다.** 파일 결과는 걸든 안 걸든 같지만
+      (4단계 bash가 레포에서 지운다) 보고가 갈린다 — 걸지 않으면 제외 파일이
+      `/sync-backup`의 `push`에 "곧 업로드될 파일"로 나오고 `/sync-status`는 같은
+      파일에 침묵해, 사용자가 한 세션에서 모순된 말을 듣는다.
     - reconcile_restore.py는 **걸지 않는다(결정).** 복원 방향에서 존중하면 다른 기기가
       올린 같은 경로 파일을 영영 받지 못한다.
     """

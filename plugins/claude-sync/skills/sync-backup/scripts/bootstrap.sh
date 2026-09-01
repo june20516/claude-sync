@@ -47,21 +47,29 @@ fi
 # between the two leaves it behind -- and the backup step's `git add -A` would then
 # commit a half-written document to every device. One line of insurance.
 #
+# The pattern is ANCHORED (`/*.tmp`, root level only), not a bare `*.tmp` that git
+# would apply at every depth. All three repo-side documents live at the repo root
+# (plugins.json, mcp-servers.json, sync-metadata.json), so anchoring still covers every
+# temp file the writers can leave behind -- while a user's own `skills/notes/draft.tmp`
+# stays committable. An unanchored pattern would have made that file a SECOND exclusion
+# axis with no reporting path: sync-metadata.json advertises its hash, /sync-status
+# promises to push it, and `git add -A` silently never does.
+#
 # Limitation: this is NOT retroactive. bootstrap.sh only runs when a device restores
 # from scratch, so a repo whose devices all upgraded in place gets no .gitignore until
 # some device bootstraps and the next backup commits it.
 GITIGNORE="$SCRIPT_DIR/.gitignore"
 if [ ! -f "$GITIGNORE" ]; then
-  echo '*.tmp' > "$GITIGNORE"
-  echo "* .gitignore created (*.tmp)"
-elif ! grep -qxF '*.tmp' "$GITIGNORE"; then
+  echo '/*.tmp' > "$GITIGNORE"
+  echo "* .gitignore created (/*.tmp)"
+elif ! grep -qxF '/*.tmp' "$GITIGNORE"; then
   # An existing .gitignore is appended to, never overwritten. Add the missing newline
-  # first -- `echo >>` would otherwise glue *.tmp onto the user's last pattern.
+  # first -- `echo >>` would otherwise glue /*.tmp onto the user's last pattern.
   if [ -n "$(tail -c 1 "$GITIGNORE")" ]; then
     echo "" >> "$GITIGNORE"
   fi
-  echo '*.tmp' >> "$GITIGNORE"
-  echo "* .gitignore updated (*.tmp)"
+  echo '/*.tmp' >> "$GITIGNORE"
+  echo "* .gitignore updated (/*.tmp)"
 fi
 
 # Plugin and MCP server restore guide
