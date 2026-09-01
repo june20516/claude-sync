@@ -459,7 +459,7 @@ def test_downgrade_detection_is_actually_called(skill):
 #  - restore: 5-5(플러그인)와 6-5(MCP)의 local_stale 안내 문구가 이 판정에 기대므로
 #             그 앞이어야 한다. **가장 앞선 소비자**인 플러그인 계획을 앵커로 쓴다 —
 #             MCP 계획만 걸면 탐지가 5단계 뒤로 밀려도 통과하고, 그때 5-5는 억제할
-#             근거 없이 "다른 기기가 지웠습니다"를 낸다.
+#             근거 없이 "다른 기기가 삭제했습니다"를 낸다.
 # status는 읽기 전용이라 순서가 결과를 바꾸지 않으므로 표에 없다.
 DOWNGRADE_BEFORE = {
     "sync-backup": COLLECT_PLUGINS_CALL,
@@ -969,7 +969,7 @@ LOCAL_STALE_BRANCH = {
     # 억제가 repo_ahead(8)·both_changed(9)로 번지면 "다른 기기가 변경했습니다"라는
     # **참인 안내**까지 지워진다.
     "6-5. ": (mc.BACKUP_RELPATH, "다른 기기가 이 서버를 삭제했습니다", "| 선택 |", None),
-    "5-5. ": (pc.BACKUP_RELPATH, "다른 기기가 지웠습니다", "| 버킷 ",
+    "5-5. ": (pc.BACKUP_RELPATH, "다른 기기가 삭제했습니다", "| 버킷 ",
               "`local_stale`(케이스 4·5)에만"),
 }
 
@@ -997,9 +997,9 @@ def test_every_backed_up_document_has_a_local_stale_suppression():
 
 @pytest.mark.parametrize("heading", sorted(LOCAL_STALE_BRANCH))
 def test_restore_local_stale_does_not_claim_deletion_when_downgraded(heading):
-    """다운그레이드 의심 시 "다른 기기가 지웠습니다"는 거짓이고, 제거로 이끈다.
+    """다운그레이드 의심 시 "다른 기기가 삭제했습니다"는 거짓이고, 제거로 이끈다.
 
-    아무도 지우지 않았다. 낮은 버전 기기가 레포를 되돌리며 흘린 것이고, 그렇다면
+    아무도 삭제하지 않았다. 낮은 버전 기기가 레포를 되돌리며 흘린 것이고, 그렇다면
     **로컬에 남은 값이 마지막 사본**이다. 여기서 제거를 권하면 이 릴리즈가 막으려는
     사고가 완성된다 — restore가 그 마지막 피해를 내는 자리다.
 
@@ -1042,7 +1042,7 @@ def test_local_stale_branch_reads_only_its_own_document(heading):
     """**한 값이 두 안내를 함께 억제하면 안 된다.**
 
     MCP만 사고가 났을 때 플러그인 쪽 `local_stale`은 참인 안내다 — 그것까지 억제하면
-    "다른 기기가 지웠습니다"를 들어야 할 사용자가 아무 말도 못 듣고, 그 항목은 다음
+    "다른 기기가 삭제했습니다"를 들어야 할 사용자가 아무 말도 못 듣고, 그 항목은 다음
     백업까지 조용히 남는다. 반대 방향은 더 나쁘다: 플러그인만 사고가 났는데 MCP 억제가
     풀려 있으면 마지막 사본을 제거하라는 거짓 문구가 그대로 나간다.
 
