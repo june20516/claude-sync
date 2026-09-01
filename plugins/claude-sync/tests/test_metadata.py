@@ -18,6 +18,7 @@ from marks import requires_permission_bits  # noqa: E402
 
 import compat  # noqa: E402
 import mcp_config as mc  # noqa: E402
+import plugin_config as pc  # noqa: E402
 import generate_metadata as gm  # noqa: E402
 
 
@@ -50,7 +51,8 @@ def test_metadata_has_all_three_markers(tmp_path):
     )
     assert meta["written_by_version"] == "3.0.0"
     assert meta["min_reader_version"] == compat.MIN_READER_VERSION
-    assert meta["schema"] == {mc.BACKUP_RELPATH: mc.SCHEMA_VERSION}
+    assert meta["schema"] == {mc.BACKUP_RELPATH: mc.SCHEMA_VERSION,
+                              pc.BACKUP_RELPATH: pc.SCHEMA_VERSION}
     assert len(meta["files"]) == 3
 
 
@@ -94,19 +96,62 @@ def test_written_by_omitted_when_plugin_json_unreadable(tmp_path):
     assert meta["min_reader_version"] == compat.MIN_READER_VERSION
 
 
-def test_schema_map_omits_plugins_json(tmp_path):
-    """plugins.json은 아직 schema 맵에 오르지 않는다. 없는 사실을 쓰지 않는다.
+def test_schema_map_carries_both_backup_documents(tmp_path):
+    """`plugins.json`이 이 맵에 올랐다 — `version-compat` spec 5.3의 약속이 발동했다.
 
-    **plugins.json 자체에는 version 필드가 생겼다** — plugin_config.SCHEMA_VERSION = 2를
-    dump_backup이 기록한다. 이 맵이 여전히 비어 있는 이유는 레포 쓰기를 아직 레거시
-    스크립트가 하고 있어서이지, 그 필드가 없어서가 아니다.
-    스킬이 새 어댑터 기반 스크립트를 부르게 된 뒤 **별도 작업에서** 이 맵에 추가한다.
-    그때까지는 단정을 뒤집지 않는다 — 지금 추가하면 실제로 쓰이지 않는 사실을 쓰게 된다.
+    앞 판은 *"아직 오르지 않는다"*를 잠가 두었고 그 근거는 **레포 쓰기를 레거시
+    스크립트가 하고 있다**는 것이었다. 그 근거는 사라졌다 — `sync-backup/SKILL.md`가
+    `collect_plugins.py`를 부르고 그것이 `pc.dump_backup`으로 `version: 2`를 기록한다.
+
+    **두 상수를 각 모듈에서 뽑는다.** 리터럴 `"plugins.json": 2`를 적으면 상수가 바뀌어도
+    이 단정이 초록이고, 그때 표식은 실제와 다른 버전을 말하게 된다.
     """
     meta = gm.build_metadata(
         fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
     )
-    assert "plugins.json" not in meta["schema"]
+    assert meta["schema"][pc.BACKUP_RELPATH] == pc.SCHEMA_VERSION
+
+
+def test_schema_map_covers_exactly_the_two_backup_documents(tmp_path):
+    """**완전성 단정.** 맵의 키 집합이 백업 문서 둘과 정확히 같다.
+
+    없으면 셋째 문서가 생겼을 때 조용히 빠진다 — 그 문서만 스키마 요약에서 사라지고
+    아무 테스트도 실패하지 않는다(공허해지는 형태 ③). 기대 집합을 손으로 적지 않고
+    두 모듈에서 뽑는 것은 `test_compat.py`의 같은 자리와 **같은 규율**이다.
+    """
+    meta = gm.build_metadata(
+        fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
+    )
+    assert set(meta["schema"]) == {mc.BACKUP_RELPATH, pc.BACKUP_RELPATH}
+
+
+# ── 7단계의 표식 예시 JSON은 실제 산출물과 어긋나면 안 된다 ──────────────────
+#
+# **변조 실측**: 예시에서 `plugins.json` 행을 지워도 스위트 전체가 초록이었다(plan ③
+# Task 4의 S6). 이 예시는 사용자가 백업 레포에서 볼 파일의 모양을 말하는 자리이므로,
+# 어긋나면 *"내 표식에는 왜 이 키가 있지"* 를 묻게 만든다. 예시를 실제 출력에 묶는다.
+
+METADATA_EXAMPLE = re.compile(r"생성되는 파일 예시:\n\n```json\n(.*?)```", re.S)
+
+
+def metadata_example():
+    m = METADATA_EXAMPLE.search(read_skill("sync-backup"))
+    assert m, "sync-backup SKILL.md에서 표식 예시 JSON을 찾지 못했다 — 앵커가 낡았다"
+    return json.loads(m.group(1))
+
+
+def test_the_metadata_example_matches_what_the_script_writes(tmp_path):
+    """예시의 **필드 집합과 상수 값**이 실제 산출물과 같아야 한다.
+
+    `files`의 값(해시)은 예시라 다르지만 **키 집합은 같아야 한다** — 필드가 늘거나
+    줄면 예시가 낡는다. `schema`·`min_reader_version`은 상수에서 뽑아 대조한다.
+    """
+    real = gm.build_metadata(
+        fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    example = metadata_example()
+    assert set(example) == set(real), (sorted(example), sorted(real))
+    assert example["schema"] == real["schema"]
+    assert example["min_reader_version"] == compat.MIN_READER_VERSION
 
 
 def test_default_output_name_matches_compat_constant():

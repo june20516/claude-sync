@@ -379,7 +379,7 @@ python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"
     "skills/investigate/SKILL.md": "9d8e7f6a5b4c...(sha256 64자)"
   },
   "min_reader_version": "3.0.0",
-  "schema": { "mcp-servers.json": 2 },
+  "schema": { "mcp-servers.json": 2, "plugins.json": 2 },
   "written_by_version": "3.0.0"
 }
 ```

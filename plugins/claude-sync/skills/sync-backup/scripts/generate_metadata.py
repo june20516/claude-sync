@@ -15,7 +15,9 @@ lib/syncignore.py 한 곳에 있다 — 4단계의 `find -path`와 같은 규칙
 - written_by_version: 정보. 판정에 쓰지 않는다.
 - min_reader_version: **판정 근거.** 이것 하나가 backup 게이트다.
 - schema: 사람이 읽는 요약. 판정 근거가 아니다 — 항목별 보류는 각 파일 자체의
-  version 필드로 한다(spec 결정 2).
+  version 필드로 한다(spec 결정 2). **여전히 참이다**(plan ③ Task 4에서 전수 grep:
+  이 맵을 읽는 코드도 산문도 없다. 세 SKILL.md는 `newer_schema_seen`만 읽는데 그것은
+  detect_downgrade의 출력이지 이 맵이 아니다). 백업 문서 **둘 다** 싣는다.
 """
 import hashlib
 import json
@@ -27,6 +29,7 @@ sys.path.insert(
 )
 import compat  # noqa: E402
 import mcp_config as mc  # noqa: E402
+import plugin_config as pc  # noqa: E402
 import syncignore  # noqa: E402
 
 
@@ -90,7 +93,12 @@ def build_metadata(claude_dir, plugin_json_path):
     if written_by is not None:
         metadata["written_by_version"] = written_by
     metadata["min_reader_version"] = compat.MIN_READER_VERSION
-    metadata["schema"] = {mc.BACKUP_RELPATH: mc.SCHEMA_VERSION}
+    # **백업 문서 둘 다 싣는다**(version-compat spec 5.3의 약속. plan ③ Task 4).
+    # 상수를 각 모듈에서 뽑는다 — 리터럴 `"plugins.json": 2`를 적으면 SCHEMA_VERSION이
+    # 올라가도 표식만 조용히 옛 값을 말한다. 문서가 셋이 되면 여기와
+    # test_metadata의 완전성 단정을 함께 고쳐야 한다.
+    metadata["schema"] = {mc.BACKUP_RELPATH: mc.SCHEMA_VERSION,
+                          pc.BACKUP_RELPATH: pc.SCHEMA_VERSION}
     return metadata
 
 
