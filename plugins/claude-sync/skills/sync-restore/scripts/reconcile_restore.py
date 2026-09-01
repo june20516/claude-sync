@@ -30,19 +30,6 @@ import keyed_sync as ks  # noqa: E402
 import sync_state as ss  # noqa: E402
 
 
-def restore_action(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
-    """반환: skip | add | overwrite | keep | merge"""
-    cls = ss.classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists)
-    return {
-        "in_sync": "skip",
-        "repo_only": "add",
-        "fast_forward": "overwrite",
-        "local_ahead": "keep",
-        "local_only": "keep",
-        "conflict": "merge",
-    }[cls]
-
-
 def apply_set_base_from(source_root, rels, base_dir=ss.BASE_DIR):
     """각 rel에 대해 source_root/<rel> 내용을 base로 기록한다.
 
@@ -95,7 +82,7 @@ def main():
         L = ss.file_hash(local)
         R = ss.file_hash(repo)
         S = ss.base_hash(rel)
-        action = restore_action(L, R, S, L is not None, R is not None)
+        action = ss.restore_action(L, R, S, L is not None, R is not None)
 
         if action == "keep":
             if L is not None and R is not None and L != R:

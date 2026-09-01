@@ -93,6 +93,19 @@ def classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
     return "in_sync"  # L==S and R==S면 L==R이라 도달 불가 — 방어
 
 
+def restore_action(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
+    """반환: skip | add | overwrite | keep | merge"""
+    cls = classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists)
+    return {
+        "in_sync": "skip",
+        "repo_only": "add",
+        "fast_forward": "overwrite",
+        "local_ahead": "keep",
+        "local_only": "keep",
+        "conflict": "merge",
+    }[cls]
+
+
 def three_way_merge(local_bytes, base_bytes, repo_bytes):
     """git merge-file로 3-way 머지.
 

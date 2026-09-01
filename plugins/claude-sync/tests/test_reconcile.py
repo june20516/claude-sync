@@ -59,27 +59,27 @@ def test_update_base_writes_local_content(tmp_path):
 # ── restore tests ────────────────────────────────────────────────────────────
 
 def test_restore_in_sync():
-    assert rr.restore_action("a", "a", "x", True, True) == "skip"
+    assert ss.restore_action("a", "a", "x", True, True) == "skip"
 
 
 def test_restore_repo_only_add():
-    assert rr.restore_action(None, "r", None, False, True) == "add"
+    assert ss.restore_action(None, "r", None, False, True) == "add"
 
 
 def test_restore_fast_forward():
-    assert rr.restore_action("S", "R", "S", True, True) == "overwrite"
+    assert ss.restore_action("S", "R", "S", True, True) == "overwrite"
 
 
 def test_restore_local_ahead_keep():
-    assert rr.restore_action("L", "S", "S", True, True) == "keep"
+    assert ss.restore_action("L", "S", "S", True, True) == "keep"
 
 
 def test_restore_conflict_needs_merge():
-    assert rr.restore_action("L", "R", "S", True, True) == "merge"
+    assert ss.restore_action("L", "R", "S", True, True) == "merge"
 
 
 def test_restore_local_only_keep():
-    assert rr.restore_action("L", None, None, True, False) == "keep"
+    assert ss.restore_action("L", None, None, True, False) == "keep"
 
 
 def test_restore_set_base_from(tmp_path):
@@ -266,7 +266,7 @@ def test_apply_overwrite_leaves_the_local_file_whole_when_the_write_dies(tmp_pat
     (repo / rel).write_bytes(new)                           # R != S
     # 픽스처가 의도한 갈래를 실제로 타는지 고정한다 — 드리프트하면 이 테스트는 아래
     # merge 테스트의 사본이 되고, "한 곳만 고치기" 변조가 새어 나간다.
-    assert rr.restore_action(
+    assert ss.restore_action(
         ss.content_hash(old), ss.content_hash(new), ss.content_hash(old), True, True
     ) == "overwrite"
 
@@ -290,7 +290,7 @@ def test_apply_auto_merge_leaves_the_local_file_whole_when_the_write_dies(tmp_pa
     (base / "bar.md").write_bytes(base_bytes)
     (repo / "agents").mkdir(parents=True)
     (repo / rel).write_bytes(repo_bytes)
-    assert rr.restore_action(
+    assert ss.restore_action(
         ss.content_hash(local_bytes), ss.content_hash(repo_bytes),
         ss.content_hash(base_bytes), True, True
     ) == "merge"
