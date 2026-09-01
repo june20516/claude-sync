@@ -2141,3 +2141,35 @@ def test_restore_explains_the_missing_base_before_it_asks():
     )
     # 설명이 질문보다 앞서야 한다. 뒤에 있으면 사용자는 이미 다 답한 뒤에 읽는다.
     assert i < text.index("### 5. 플러그인 복원")
+
+
+def test_restore_does_not_ask_for_hold_kinds_the_plan_never_emits():
+    """복원 계획에는 보류 **사유**가 없다 — 요구하면 지어내게 된다(`orphaned`와 같은 자리).
+
+    `plan_plugins`가 `held_kinds`를 부르지 않는 것이 의도다: 그 함수는 분류 불가에
+    ValueError를 던져 **플러그인 단계 전체를 접는데**, 레포를 쓰지 않는 복원 경로에
+    그 실패 모드를 들일 이유가 없다(`plugin_config`의 held_kinds docstring).
+    """
+    with open(os.path.join(SKILLS_DIR, "sync-restore", "scripts", "plan_plugins.py"),
+              encoding="utf-8") as f:
+        assert "held_kinds" not in f.read(), (
+            "계획이 held_kinds를 부르게 됐다면 SKILL.md가 종류를 말해도 된다 — 이 단정을 다시 정하라"
+        )
+
+    # **부재로 걸지 않는다.** 금지 문장 자신이 그 이름을 인용하므로 `not in`은 스스로를
+    # 깬다 — 이 파일의 docstring이 말하는 "부재가 곧 초록인 가드"의 반대편 함정이다.
+    # 대신 **금지가 적혀 있는지**와 **대신 무엇을 적는지**를 함께 건다.
+    report = section("sync-restore", "7. 결과 보고")
+    assert "`held`의 종류별 내역을 여기서 요구하지 않는다" in report, (
+        "계획에 없는 필드를 요구하지 말라는 금지가 사라졌다"
+    )
+    for bucket in ("`value_held`", "`action_held`"):
+        assert bucket in report, "보고가 계획에 실제로 있는 버킷(%s)을 말하지 않는다" % bucket
+
+    sub = subsection("sync-restore", "5-6. 확장 포맷 값 — `value_held`")
+    # 확정되는 것과 확정되지 않는 것을 **섹션 이름으로** 가른다. 섹션 목록은 어댑터에서 뽑는다.
+    for name in pc.SECTIONS:
+        assert name in sub, "5-6이 %s 섹션을 다루지 않는다" % name
+    assert "/sync-status" in sub, (
+        "사유를 실제로 내는 명령을 가리켜야 한다 — 그러지 않으면 사용자가 갈 곳이 없다"
+    )
