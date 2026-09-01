@@ -1,0 +1,44 @@
+[
+ {
+  "id": "P1",
+  "desc": "축2 축분리 — `.git`/url 판별을 github 정규화보다 **앞**에 둔다(순서 뒤집기)",
+  "file": "plugins/claude-sync/tests/plugin_cli.py",
+  "old": "        for prefix in (\"https://github.com/\", \"http://github.com/\"):\n            if arg.startswith(prefix):\n                repo = arg[len(prefix):].rstrip(\"/\")\n                if repo.count(\"/\") == 1 and all(repo.split(\"/\")):\n                    return {\"source\": \"github\", \"repo\": repo}\n                break\n        if \"://\" not in arg and arg.count(\"/\") == 1 and all(arg.split(\"/\")):\n            return {\"source\": \"github\", \"repo\": arg}\n        if arg.startswith(\"https://\") or arg.startswith(\"http://\"):\n            # `.git`은 shallow clone을 시도하고(`Cloning repository (timeout: 120s)`),\n            # 그 밖의 http(s)는 본문을 마켓플레이스 JSON으로 파싱한다 — 3차 14장.\n            return {\"source\": \"git\" if arg.endswith(\".git\") else \"url\", \"url\": arg}",
+  "new": "        if arg.startswith(\"https://\") or arg.startswith(\"http://\"):\n            return {\"source\": \"git\" if arg.endswith(\".git\") else \"url\", \"url\": arg}\n        for prefix in (\"https://github.com/\", \"http://github.com/\"):\n            if arg.startswith(prefix):\n                repo = arg[len(prefix):].rstrip(\"/\")\n                if repo.count(\"/\") == 1 and all(repo.split(\"/\")):\n                    return {\"source\": \"github\", \"repo\": repo}\n                break\n        if \"://\" not in arg and arg.count(\"/\") == 1 and all(arg.split(\"/\")):\n            return {\"source\": \"github\", \"repo\": arg}"
+ },
+ {
+  "id": "P2",
+  "desc": "축1 훅 호출 계약 — git 출처를 {\"repo\": …}로 쓴다(실측은 url이다)",
+  "file": "plugins/claude-sync/tests/plugin_cli.py",
+  "old": "            return {\"source\": \"git\" if arg.endswith(\".git\") else \"url\", \"url\": arg}",
+  "new": "            return ({\"source\": \"git\", \"repo\": arg} if arg.endswith(\".git\")\n                    else {\"source\": \"url\", \"url\": arg})"
+ },
+ {
+  "id": "P3",
+  "desc": "축3 fail-closed — 표 밖 인자에 NotImplementedError 대신 github fallback",
+  "file": "plugins/claude-sync/tests/plugin_cli.py",
+  "old": "        raise NotImplementedError(\n            \"출처를 판별할 수 없는 marketplace add 인자다(측정된 다섯 모양 밖이다): %r\" % arg)",
+  "new": "        return {\"source\": \"github\", \"repo\": arg}"
+ },
+ {
+  "id": "P4",
+  "desc": "축1 훅 호출 계약 — _SOURCE_ARG_FIELDS[\"git\"]에서 실측 필드 url을 뺀다",
+  "file": "plugins/claude-sync/lib/plugin_config.py",
+  "old": "_SOURCE_ARG_FIELDS = {\"github\": (\"repo\",), \"url\": (\"url\",), \"git\": (\"url\", \"repo\")}",
+  "new": "_SOURCE_ARG_FIELDS = {\"github\": (\"repo\",), \"url\": (\"url\",), \"git\": (\"repo\",)}"
+ },
+ {
+  "id": "P5",
+  "desc": "축4 I/O·규약 — marketplace_add의 멱등성을 깬다(재실행 exit 1)",
+  "file": "plugins/claude-sync/tests/plugin_cli.py",
+  "old": "        data = self.settings()\n        data[\"extraKnownMarketplaces\"][name] = {\n            \"source\": self._marketplace_source(source)}",
+  "new": "        data = self.settings()\n        if name in data[\"extraKnownMarketplaces\"]:\n            return 1\n        data[\"extraKnownMarketplaces\"][name] = {\n            \"source\": self._marketplace_source(source)}"
+ },
+ {
+  "id": "P6",
+  "desc": "축2 축분리 — url 출처도 git으로 쓴다(.git 조건 제거)",
+  "file": "plugins/claude-sync/tests/plugin_cli.py",
+  "old": "            return {\"source\": \"git\" if arg.endswith(\".git\") else \"url\", \"url\": arg}",
+  "new": "            return {\"source\": \"git\", \"url\": arg}"
+ }
+]

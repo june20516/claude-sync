@@ -1,0 +1,44 @@
+[
+ {
+  "id": "S1",
+  "desc": "축1 훅 호출 계약 — pc.SCHEMA_VERSION 대신 리터럴 1 (상수를 모듈에서 뽑지 않는다)",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/generate_metadata.py",
+  "old": "                          pc.BACKUP_RELPATH: pc.SCHEMA_VERSION}",
+  "new": "                          pc.BACKUP_RELPATH: 1}"
+ },
+ {
+  "id": "S2",
+  "desc": "축3 완전성 — 새 항목을 지운다 (맵이 문서 하나만 말한다)",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/generate_metadata.py",
+  "old": "    metadata[\"schema\"] = {mc.BACKUP_RELPATH: mc.SCHEMA_VERSION,\n                          pc.BACKUP_RELPATH: pc.SCHEMA_VERSION}",
+  "new": "    metadata[\"schema\"] = {mc.BACKUP_RELPATH: mc.SCHEMA_VERSION}"
+ },
+ {
+  "id": "S3",
+  "desc": "축2 축분리 — 두 relpath를 같은 상수로 (키가 하나로 접힌다)",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/generate_metadata.py",
+  "old": "                          pc.BACKUP_RELPATH: pc.SCHEMA_VERSION}",
+  "new": "                          mc.BACKUP_RELPATH: pc.SCHEMA_VERSION}"
+ },
+ {
+  "id": "S4",
+  "desc": "축5 입력 축 — 완전성 단정의 기대 집합에서 mcp-servers.json을 뺀다(등호는 유지)",
+  "file": "plugins/claude-sync/tests/test_metadata.py",
+  "old": "    assert set(meta[\"schema\"]) == {mc.BACKUP_RELPATH, pc.BACKUP_RELPATH}",
+  "new": "    assert set(meta[\"schema\"]) == {pc.BACKUP_RELPATH}"
+ },
+ {
+  "id": "S5",
+  "desc": "축1 훅 호출 계약 — 완전성 단정의 기대 집합을 손으로 적은 리터럴로",
+  "file": "plugins/claude-sync/tests/test_metadata.py",
+  "old": "    assert set(meta[\"schema\"]) == {mc.BACKUP_RELPATH, pc.BACKUP_RELPATH}",
+  "new": "    assert set(meta[\"schema\"]) == {\"mcp-servers.json\", \"plugins.json\"}"
+ },
+ {
+  "id": "S6",
+  "desc": "축4 산문 드리프트 — SKILL.md의 예시 JSON을 옛 값으로 되돌린다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "  \"schema\": { \"mcp-servers.json\": 2, \"plugins.json\": 2 },",
+  "new": "  \"schema\": { \"mcp-servers.json\": 2 },"
+ }
+]

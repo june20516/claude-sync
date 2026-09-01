@@ -1,0 +1,36 @@
+[
+ {"id": "W1", "desc": "축1 훅 호출 계약 — reason_kind와 reason 문장을 맞바꾼다(문장으로 분기하게 된다)",
+  "file": "plugins/claude-sync/lib/report.py",
+  "old": "    return {\"status\": \"skipped\", \"reason\": str(exc), \"reason_kind\": reason_kind(exc)}",
+  "new": "    return {\"status\": \"skipped\", \"reason\": reason_kind(exc), \"reason_kind\": str(exc)}"},
+
+ {"id": "W2", "desc": "축3 {} vs None — 모르는 예외를 아는 갈래로 접는다",
+  "file": "plugins/claude-sync/lib/report.py",
+  "old": "    return \"unknown\"",
+  "new": "    return \"broken_syntax\""},
+
+ {"id": "W3", "desc": "축2 축분리 — 갈래 하나를 목록에서 뺀다(산문과 어긋난다)",
+  "file": "plugins/claude-sync/lib/report.py",
+  "old": "    (OSError, \"io_error\"),\n",
+  "new": ""},
+
+ {"id": "W4", "desc": "축4 보고 층 — 사유 없이 unrestorable만 싣는다(조용한 누락)",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/compare_plugins.py",
+  "old": "            \"unrestorable_reasons\": {k: hooks[section][\"reason\"](k, repo_norm.get(k))\n                                     for k in unrestorable},",
+  "new": "            \"unrestorable_reasons\": {},"},
+
+ {"id": "W5", "desc": "축2 축분리 — status의 사유를 자유 함수로 부른다(판정과 다른 repo를 본다)",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/compare_plugins.py",
+  "old": "            \"unrestorable_reasons\": {k: hooks[section][\"reason\"](k, repo_norm.get(k))\n                                     for k in unrestorable},",
+  "new": "            \"unrestorable_reasons\": {k: pc.unrestorable_reason(section, k, repo_norm.get(k), local)\n                                     for k in unrestorable},"},
+
+ {"id": "W6", "desc": "축2 축분리 — 보고 분할을 한쪽만 되돌린다(중복이 실제로 없어졌는가)",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/collect_mcp.py",
+  "old": "        \"conflicts\": report.split_conflicts(result[\"conflicts\"], servers),",
+  "new": "        \"conflicts\": {\"repo_kept\": [n for n in result[\"conflicts\"] if n in local],\n                      \"repo_absent\": [n for n in result[\"conflicts\"] if n not in local]},"},
+
+ {"id": "W7", "desc": "축5 입력 축 — 산문의 갈래 목록에서 하나를 뺀다",
+  "file": "plugins/claude-sync/skills/sync-status/SKILL.md",
+  "old": "갈래는 `broken_syntax` · `unknown_schema` · `local_unreadable` · `io_error` · `contract_violation` 다섯이고",
+  "new": "갈래는 `broken_syntax` · `unknown_schema` · `local_unreadable` · `io_error` 넷이고"}
+]

@@ -1,0 +1,31 @@
+[
+ {"id": "V1", "desc": "축5 입력 축 — CORRECTIONS에서 한국어 문서의 한 쌍만 지운다(동시 편집 결속)",
+  "file": "plugins/claude-sync/tests/test_user_docs.py",
+  "old": "        (\"민감 정보 미포함\",\n         \"설정 키 이름 (settings.json에서 추출, 설정 값은 마스킹)\"),\n",
+  "new": ""},
+
+ {"id": "V2", "desc": "축5 입력 축 — 원천(spec 13장)에서 .ko.md 지목을 지운다",
+  "file": "docs/superpowers/specs/2026-08-24-plugins-sync-design.md",
+  "old": "| `backup-readme.md:34` / `backup-readme.ko.md:34` |",
+  "new": "| `backup-readme.md:34` |"},
+
+ {"id": "V3", "desc": "축3 선택자 — spec 슬라이스 앵커를 깬다(추출기가 비면 초록인가)",
+  "file": "plugins/claude-sync/tests/test_user_docs.py",
+  "old": "    end = text.index(\"### \", start)",
+  "new": "    end = start"},
+
+ {"id": "V4", "desc": "축1 훅 호출 계약 — 문서 앵커 정규식을 좁혀 아무것도 못 뽑게 한다",
+  "file": "plugins/claude-sync/tests/test_user_docs.py",
+  "old": "DOC_ANCHOR = re.compile(r\"`([A-Za-z0-9._-]+\\.md):\\d+`\")",
+  "new": "DOC_ANCHOR = re.compile(r\"`(NOPE\\.md):\\d+`\")"},
+
+ {"id": "V5", "desc": "축5 입력 축 — README의 세 문장 중 하나를 표에서 지운다",
+  "file": "plugins/claude-sync/tests/test_user_docs.py",
+  "old": "        \"**경로를 제외해도 로컬 파일이 덮어쓰이지 않게 보호되지는 않습니다**\",\n",
+  "new": ""},
+
+ {"id": "V6", "desc": "축2 축분리 — 정본의 번호 목록에서 항목 하나를 지운다",
+  "file": "plugins/claude-sync/lib/syncignore.py",
+  "old": "3. **제외해도 로컬 파일이 덮어쓰이지 않게 보호되지는 않는다** — 2에서 곧바로 나온다\n",
+  "new": ""}
+]
