@@ -46,6 +46,9 @@ Then in Claude Code:
 >
 > The `min_reader_version` marker in `sync-metadata.json` is there to block a machine too old to understand this backup. **A v2.x machine is exactly that machine — and it has no code that reads the marker**, because the guard first shipped in v3.0.0. Upgrade order is therefore the only thing that prevents this. Recovering afterwards means restoring those files from this repository's git history.
 
+**Then: one machine backs up, every other machine restores first.** A machine that has never reconciled this repo has no shared base, so `/sync-restore` reports every entry present on both sides as changed on both sides and asks about each one. Answer once and the base is written. Running `/sync-backup` first on such a machine does not ask — the merge falls back to a union and **the local value silently replaces the repo value for every shared entry, with no conflict reported.**
+
+
 ### About `mcp-servers.json`
 
 Values under `headers` and `env` are stored as `<REDACTED>`; the key names are kept so a restore knows what to ask for. **Secrets passed through `args` or a URL query string are not masked** — keep this repository private. When you restore, `/sync-restore` prompts for each masked value; skipping a prompt leaves that server unregistered rather than creating one with broken auth.

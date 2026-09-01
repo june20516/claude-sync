@@ -78,12 +78,19 @@ v3.0.0 changes the `mcp-servers.json` and `plugins.json` schemas and **is not ba
 >
 > A v2 `/sync-status` will also abort with a `TypeError`. And nothing stops the v2.x machine itself: the `min_reader_version` marker v3.0.0 writes only blocks a reader **older than** the version it names, and **v2.x has no code that reads the marker** — that guard first shipped in v3.0.0. Upgrade order is the only thing that prevents this.
 
-Upgrade every machine first, then back up:
+Upgrade every machine first:
 
 ```bash
 claude plugin marketplace update claude-sync
 claude plugin update claude-sync    # restart required to apply
 ```
+
+Then run the two commands in this order. **Do not run `/sync-backup` on every machine.**
+
+1. **One machine backs up.** A single `/sync-backup` migrates the repo to the new format.
+2. **Every other machine restores first.** Run `/sync-restore` before that machine's first `/sync-backup`. It has no shared base yet, so entries present on both sides are all reported as changed on both sides and it asks about each one — that is the mechanism that keeps your choices, not a defect. Answer once and the base is written; later runs are quiet.
+
+Backing up first on a machine with no base does **not** ask: the merge falls back to a union and **the local value silently overwrites the repo value for every shared entry, with no conflict reported.** Entries this machine does not have are kept, so nothing is deleted — but a value you set elsewhere can be replaced without a word.
 
 From v3.0.0 on, a machine that meets a backup it cannot recognize skips that step — the MCP step and the plugin step both follow this rule — leaves the repo file untouched, and tells you to update the plugin, so this class of damage cannot repeat in later upgrades.
 

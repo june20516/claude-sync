@@ -2086,3 +2086,58 @@ def test_backup_report_table_covers_every_held_kind():
     assert kinds, "plugin_config에서 보류 종류를 못 뽑았다"
     for kind in sorted(kinds):
         assert "`held.%s`" % kind in sec, kind
+
+
+# ── 기준선(base) 부재: 첫 실행의 조용한 덮어쓰기 ────────────────────────────
+#
+# `merge`는 base가 None이면 판정표를 타지 않고 **합집합으로 degrade**하는데, 그때
+# 양쪽에 있는 키는 로컬 값이 레포를 덮는다(같은 함수의 docstring). 그 덮어쓰기는
+# conflicts에도 repo_ahead에도 실리지 않아 **보고가 비어 있다**(실측 — 2026-09-01).
+# 두 스킬이 그 사실을 사용자에게 말하지 않으면, 두 번째 기기의 첫 백업이 첫 기기가
+# 올린 값을 아무 말 없이 바꾼다. 산문이 유일한 방어이므로 산문을 건다.
+BASE_DIR_ANCHOR = ".sync-state/base"
+
+
+def test_backup_checks_the_missing_base_before_it_collects():
+    """4.6은 수집(5·6)보다 **앞**이어야 하고, 두 문서를 함께 봐야 한다.
+
+    뒤에 두면 이미 레포를 덮은 뒤에 묻게 되고, 한 문서만 보면 다른 문서의 덮어쓰기가
+    조용히 지나간다 — 4.5(다운그레이드 탐지)가 같은 이유로 같은 자리에 있다.
+    """
+    text = read_skill("sync-backup")
+    sec = section("sync-backup", "4.6")
+    for anchor in ("### 4.6", "### 5. plugins.json", "### 6. mcp-servers.json"):
+        assert anchor in text, anchor
+    assert text.index("### 4.6") < text.index("### 5. plugins.json")
+    assert text.index("### 4.6") < text.index("### 6. mcp-servers.json")
+
+    # 두 백업 문서를 어댑터에서 뽑아 대조한다 — 손으로 적으면 relpath 개명을 못 따라온다.
+    for relpath in (mc.BACKUP_RELPATH, pc.BACKUP_RELPATH):
+        assert relpath in sec, "4.6이 %s를 보지 않는다" % relpath
+    assert BASE_DIR_ANCHOR in sec, "기준선을 어디서 찾는지 말하지 않는다"
+
+    # **게이트가 두 축이다.** 레포에 파일이 없으면 덮을 상대가 없으므로 묻지 않는다 —
+    # 한 축만 걸면 첫 기기의 최초 백업에 근거 없는 경고가 낀다.
+    assert "$SYNC_REPO/$rel" in sec, "레포에 그 파일이 있는지를 게이트에 넣지 않았다"
+    assert "충돌로 보고되지 않습니다" in sec, (
+        "덮어쓰기가 **보고되지 않는다**는 것이 이 절의 핵심 사실이다"
+    )
+
+
+def test_restore_explains_the_missing_base_before_it_asks():
+    """복원은 그 상태를 **설명**한다 — 막지 않는다. 그리고 잘못된 지름길을 금지한다.
+
+    기준선이 없으면 케이스 7·8이 전부 both_changed로 뭉치므로 질문이 몰린다. 그것을
+    "결함"으로 읽고 `/sync-backup`을 먼저 돌리면 위 4.6이 막는 그 덮어쓰기가 난다 —
+    질문이 많은 것이 곧 방어라는 것을 같은 자리에서 말해야 한다.
+    """
+    text = read_skill("sync-restore")
+    i = text.index("## 모델 (git-like, pull-only)")
+    model = text[i:text.index("## 설정 파일")]
+    assert BASE_DIR_ANCHOR in model, "기준선이 없다는 것이 무엇인지 말하지 않는다"
+    assert "both_changed" in model, "무엇으로 뭉치는지 말하지 않는다"
+    assert "`/sync-backup`을 먼저 돌려라\"고 안내하지 않는다" in model, (
+        "잘못된 지름길을 금지하지 않는다 — 그 지름길이 4.6이 막는 덮어쓰기다"
+    )
+    # 설명이 질문보다 앞서야 한다. 뒤에 있으면 사용자는 이미 다 답한 뒤에 읽는다.
+    assert i < text.index("### 5. 플러그인 복원")

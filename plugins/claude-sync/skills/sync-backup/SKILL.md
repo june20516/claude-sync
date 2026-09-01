@@ -278,6 +278,27 @@ python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 **자동으로 복구하지 않는다.** 옛 기기가 *의도적으로* 지운 항목까지 되살리기 때문이다.
 
+### 4.6 기준선(base) 확인 — 첫 백업의 조용한 덮어쓰기를 막는다
+
+**수집 단계(5·6)보다 먼저 한다.** 이 기기에 그 문서의 기준선이 없으면 병합이 판정표를 타지 못하고 **합집합으로 degrade**하는데, 그때 **양쪽에 있는 항목은 이 기기의 값이 레포를 덮는다**(`lib/keyed_sync.py`의 `merge`). 다른 기기 전용 항목은 보존되지만 겹치는 항목은 **`conflicts`에도 `repo_ahead`에도 실리지 않아 보고가 비어 있다** — 사용자가 알 방법이 없다(실측).
+
+```bash
+for rel in plugins.json mcp-servers.json; do
+  if [ ! -f "$HOME/.claude/.sync-state/base/$rel" ] && [ -f "$SYNC_REPO/$rel" ]; then
+    echo "기준선 없음(레포에는 있음): $rel"
+  fi
+done
+```
+
+**두 조건이 함께 참일 때만 묻는다.** 레포에 그 파일이 없으면 덮을 상대가 없다 — 첫 기기의 최초 백업이 그 경우이고, 거기서 물으면 정상 흐름에 근거 없는 경고가 낀다.
+
+출력된 문서마다 알리고 고르게 한다.
+
+> "이 기기에는 `<rel>`의 비교 기준선이 아직 없습니다. 이 상태로 백업하면 레포와 로컬을 합치되 **양쪽에 있는 항목은 이 기기의 값으로 덮어씁니다 — 충돌로 보고되지 않습니다.** 다른 기기가 이미 백업한 레포라면 `/sync-restore`를 먼저 실행해 항목마다 선택한 뒤 백업하세요."
+
+- **중단하고 `/sync-restore`를 먼저 실행한다** — 권장. restore가 항목마다 묻고, 그 답이 기준선을 만든다. 그 뒤 백업은 판정표를 정상적으로 탄다.
+- **계속한다** — 이 기기의 값으로 통일하겠다는 뜻일 때만 고른다.
+
 ### 5. plugins.json 생성 (키 단위 3-way 병합)
 
 `~/.claude/settings.json`의 세 필드(`enabledPlugins`·`extraKnownMarketplaces`/`additionalMarketplaces`·`pluginConfigs`)와 `~/.claude/plugins/installed_plugins.json`의 `auto` 플래그를 읽어 레포의 `plugins.json`과 **섹션별 키 단위로 병합**한다. `claude plugin list`는 호출하지 않는다.
