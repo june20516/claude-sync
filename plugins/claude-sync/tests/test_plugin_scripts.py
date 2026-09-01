@@ -1536,17 +1536,31 @@ def test_plan_omits_dependency_for_always_known_marketplaces(tmp_path):
     assert out["depends_on"] == {}
 
 
-def test_plan_disables_only_what_install_would_leave_wrong(tmp_path):
-    """로컬 키가 없으면 **켜져 있다고 추정한다**(부재 = 매니페스트 defaultEnabled에
-    위임이고 그 기본이 true다). 레포가 false인 것만 계획 시점의 disable 대상이다.
+def test_plan_disables_only_what_the_local_value_actually_requires(tmp_path):
+    """**로컬 키의 부재는 꺼짐이다** — 실측(2026-09-01 스모크 4차 18장).
+
+    앞 판은 부재를 `True`로 **추정**했다(*"매니페스트 defaultEnabled에 위임한다"*).
+    스모크 4차가 그 근거를 없앴다: `defaultEnabled`는 install 시점에 한 번 쓰여
+    settings.json으로 물질화될 뿐이고(16장), 그 뒤의 부재를 CLI는 꺼짐으로 읽는다
+    (`disable`은 exit 1, `enable`은 exit 0으로 키를 만든다 — 설치 여부와 무관하다).
+
+    세 행이 서로 다른 절을 건다:
+      `off@m` 로컬 부재 + 레포 `false` → **명령 없음**(이미 같은 상태다)
+      `up@m`  로컬 부재 + 레포 `true`  → `enable`이 필요하다. 이 목록은 disable 전용이라
+              담기지 않고 실제 명령은 `recheck-values`가 낸다(9.3.1)
+      `on@m`  로컬 `true` + 레포 `false` → **disable.** 이 행이 없으면 아래 단정이
+              빈 목록으로 저절로 참이 된다
 
     **이 목록은 계획 시점의 예상이다** — 실제로 나가는 명령은 3단계 직전에
     `recheck-values`가 로컬을 다시 읽어 정한다(9.3.1).
     """
-    out = build_plan(tmp_path, local={},
-                     repo={"enabledPlugins": {"on@m": True, "off@m": False},
-                           "extraKnownMarketplaces": {"m": GH}})
-    assert out["disable_after_install"] == ["off@m"]
+    out = build_plan(
+        tmp_path,
+        local={"enabledPlugins": {"on@m": True}},
+        repo={"enabledPlugins": {"on@m": False, "off@m": False, "up@m": True},
+              "extraKnownMarketplaces": {"m": GH},
+              "pluginConfigs": {"on@m": {"options": {}}}})
+    assert out["disable_after_install"] == ["on@m"]
 
 
 def test_plan_disables_nothing_outside_the_install_list(tmp_path):
@@ -1554,17 +1568,22 @@ def test_plan_disables_nothing_outside_the_install_list(tmp_path):
     로컬에 있는 항목까지 대상이 된다.
 
     wait@m은 케이스 9로 사용자 선택을 기다리는 중인데 레포 값이 false다. 범위가
-    넓어지면 선택을 묻기도 전에 disable 명령이 나간다. 같은 fixture에서 install에
-    **있는** off@m은 대상이 되는 것을 함께 못박는다 — 안 그러면 "아무것도 disable하지
+    넓어지면 선택을 묻기도 전에 disable 명령이 나간다. 같은 fixture에서 candidates에
+    **있는** on@m은 대상이 되는 것을 함께 못박는다 — 안 그러면 "아무것도 disable하지
     않는다"로 저절로 참이 된다.
+
+    둘 다 로컬 `true` · 레포 `false`로 두어 **값이 아니라 범위만이 둘을 가른다.**
+    on@m은 pluginConfigs가 기여해 candidates에 들고 wait@m은 어느 설치 버킷에도 없다.
     """
-    out = build_plan(tmp_path, local={"enabledPlugins": {"wait@m": True}},
-                     repo={"enabledPlugins": {"wait@m": False, "off@m": False},
-                           "extraKnownMarketplaces": {"m": GH}})
+    out = build_plan(tmp_path,
+                     local={"enabledPlugins": {"wait@m": True, "on@m": True}},
+                     repo={"enabledPlugins": {"wait@m": False, "on@m": False},
+                           "extraKnownMarketplaces": {"m": GH},
+                           "pluginConfigs": {"on@m": {"options": {}}}})
     section = out["sections"]["enabledPlugins"]
-    assert section["both_changed"] == ["wait@m"]     # 레포 값이 false인 미설치 대상
-    assert out["install"] == ["off@m"]
-    assert out["disable_after_install"] == ["off@m"]
+    assert section["both_changed"] == ["on@m", "wait@m"]
+    assert out["install"] == ["on@m"]
+    assert out["disable_after_install"] == ["on@m"]
 
 
 def test_plan_does_not_disable_a_plugin_that_is_already_off_locally(tmp_path):
@@ -1579,20 +1598,21 @@ def test_plan_does_not_disable_a_plugin_that_is_already_off_locally(tmp_path):
     disable 판정이 로컬 값 자리에 상수 true를 넣으면 "true → false이니 disable"로 읽혀
     이미 꺼진 플러그인에 명령이 나가고, enable/disable은 멱등이 아니라 exit 1이다.
 
-    같은 fixture에 진짜 신규 설치인 off@m을 함께 둔다 — 없으면 "아무것도 disable하지
+    같은 fixture에 로컬 `true`인 on@m을 함께 둔다 — 없으면 "아무것도 disable하지
     않는다"로 저절로 참이 되어 판별력을 잃는다.
     """
     out = build_plan(
         tmp_path,
-        local={"enabledPlugins": {"already@m": False}},
-        repo={"enabledPlugins": {"already@m": False, "off@m": False},
+        local={"enabledPlugins": {"already@m": False, "on@m": True}},
+        repo={"enabledPlugins": {"already@m": False, "on@m": False},
               "extraKnownMarketplaces": {"m": GH},
-              "pluginConfigs": {"already@m": {"note": "x"}}})
+              "pluginConfigs": {"already@m": {"note": "x"},
+                                "on@m": {"options": {}}}})
     section = out["sections"]["enabledPlugins"]
     # 로컬 값이 이미 레포와 같다 — 이 단정이 없으면 아래가 "레포에 없어서"로도 참이 된다.
     assert section["in_sync"] == ["already@m"]
-    assert out["install"] == ["already@m", "off@m"]
-    assert out["disable_after_install"] == ["off@m"]
+    assert out["install"] == ["already@m", "on@m"]
+    assert out["disable_after_install"] == ["on@m"]
 
 
 def test_plan_sorts_install_across_both_contributing_sections(tmp_path):
@@ -1761,8 +1781,9 @@ def test_plan_keeps_the_value_and_dependency_steps_on_both_lists(tmp_path):
     """3·4단계의 기준은 2단계 목록이 아니라 **두 목록의 합집합**이다.
 
     disable_after_install — 이미 설치된 id도 값 맞추기(3단계) 대상이다. here@m은 설치돼
-      있고 로컬 enabledPlugins에 값이 없으며(매니페스트 기본값에 위임 = 켜짐으로 가정)
-      레포가 false다. 2단계 목록으로 좁히면 이 disable이 사라져 플러그인이 켜진 채 남는다.
+      있고 로컬 값이 `true`인데 레포가 `false`다. 2단계 목록으로 좁히면 이 disable이
+      사라져 플러그인이 켜진 채 남는다. (앞 판은 로컬 키를 **비워** 두고 "부재 = 켜짐
+      추정"에 기댔는데, 스모크 4차가 부재를 꺼짐으로 쟀으므로 이제 값을 명시한다.)
     depends_on — 근거는 명령의 형태다. 두 단계 모두 `plugin install <id@marketplace>`
       형태라 1단계 등록에 의존한다(9.3.2의 단계 종속이 아니다 — 그쪽은 2단계 실패를
       다루고 skipped_already_installed에는 2단계가 없다). 좁히면 등록에 실패한
@@ -1774,7 +1795,7 @@ def test_plan_keeps_the_value_and_dependency_steps_on_both_lists(tmp_path):
     들어가는 fixture를 쓴다.
     """
     out = build_plan(
-        tmp_path, local={},
+        tmp_path, local={"enabledPlugins": {"here@m": True, "gone@m": True}},
         repo={"enabledPlugins": {"here@m": False, "gone@m": False},
               "extraKnownMarketplaces": {"m": GH},
               "pluginConfigs": {"here@m": {"options": {"apiKey": pc.SENTINEL}},
@@ -1875,7 +1896,7 @@ def test_step_four_proceeds_when_the_local_value_is_a_boolean(tmp_path, local_va
 
 
 def test_step_four_proceeds_when_the_local_key_is_absent(tmp_path):
-    """**부재는 확장 값이 아니다.** 키 부재는 매니페스트 기본값에 위임하는 상태다(9.3.3).
+    """**부재는 확장 값이 아니다.** 키 부재는 꺼짐이지 지킬 값이 아니다(스모크 4차 18장).
 
     부재를 확장 값으로 읽으면 새 플러그인의 설정이 **어디에서도** 채워지지 않는다 —
     복원의 4단계가 통째로 죽는데 증상이 없다.

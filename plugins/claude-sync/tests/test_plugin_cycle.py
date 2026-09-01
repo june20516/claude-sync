@@ -191,8 +191,9 @@ class Device:
         인자로 준다. 여기서 계획 dict를 직접 스크립트 함수에 넘기면 그 배선이 서브프로세스
         경계를 건너뛰어, 인자 형태가 깨져도 이 파일이 초록으로 지나간다.
 
-        공개 메서드인 것은 `assumed` 표식을 재는 시나리오 때문이다 — 그 표식은 CLI 호출에
-        나타나지 않으므로(SKILL.md의 렌더링만 읽는다) restore의 부작용으로는 관측할 수 없다.
+        공개 메서드인 것은 **명령이 나가지 않는 갈래**를 재는 시나리오 때문이다 — 그것은
+        restore의 부작용(`dev.commands`)으로는 "아직 안 왔다"와 구별되지 않는다.
+        (앞 판의 이유는 `assumed` 표식이었는데 그 표식은 제거됐다 — 스모크 4차 18장.)
         """
         path = os.path.join(self.home, "plan.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -499,19 +500,18 @@ def test_a_config_and_disable_id_ends_at_the_repo_value(tmp_path):
 def test_a_default_disabled_plugin_gets_no_disable_command(tmp_path):
     """14.1 — 레포도 매니페스트도 `false`인 미설치 id에 3단계 명령이 나가지 않는다.
 
-    계획은 로컬 키 부재를 `True`로 **추정**해 이 id를 `disable_after_install`에 싣는다
-    (`local_masked.get(k, True)`). 그런데 2단계 `install`이 매니페스트의
-    `defaultEnabled: false`를 이미 써 두므로(2026-08-29 스모크 2차 7장) 계획 시점 판정으로
-    `disable`을 내면 `already disabled`(exit 1)로 죽는다 — **최종 상태는 옳은데 사용자는
-    실패를 본다.** 실행 시점에 다시 읽으면 값이 같으므로 명령이 아예 나가지 않는다.
+    **이제 계획 층에서도 걸러진다.** 앞 판은 로컬 키 부재를 `True`로 **추정**해 이 id를
+    `disable_after_install`에 싣고 실행 시점의 재읽기가 그것을 걸러 냈다. 스모크 4차
+    (2026-09-01, 18장)가 부재를 **꺼짐**으로 쟀으므로 계획 시점 판정도 레포 `false`와
+    같다고 읽는다 — 두 층이 같은 답을 낸다.
 
-    **판정을 계획 시점으로 되돌리면 이 테스트가 실패한다.**
+    **판정을 `True` 추정으로 되돌리면 아래 첫 단정이 실패한다** — 그것이 이 단정의 판별력이다.
 
-    `dev.commands`를 보는 것이 이 주제의 유일한 관측 지점이다 — 최종 값만 보면 명령이
+    `dev.commands`를 보는 것이 나머지의 유일한 관측 지점이다 — 최종 값만 보면 명령이
     나가서 실패한 것과 아예 나가지 않은 것이 **구별되지 않는다**(둘 다 `False`다).
 
     `set_manifest(default_enabled=False)`를 빼면 2단계가 `True`를 써서 3단계가 실제로
-    `disable`을 내야 하고, 그러면 아래 두 단정이 함께 죽는다 — 그 입력이 이 시나리오를
+    `disable`을 내야 하고, 그러면 아래 단정들이 함께 죽는다 — 그 입력이 이 시나리오를
     지탱한다.
     """
     dev = make_device(tmp_path, repo_init={
@@ -519,8 +519,8 @@ def test_a_default_disabled_plugin_gets_no_disable_command(tmp_path):
         "extraKnownMarketplaces": {"m": GH}})
     dev.cli.set_manifest("p@m", default_enabled=False)
     plan = dev.restore()
-    # 계획은 추정으로 이 id를 3단계에 싣는다 — 그래야 "재읽기가 걸러 냈다"가 성립한다.
-    assert plan["disable_after_install"] == ["p@m"]
+    # 부재를 꺼짐으로 읽으므로 레포 `false`와 이미 같다 — 계획이 3단계에 싣지 않는다.
+    assert plan["disable_after_install"] == []
     assert plan["install"] == ["p@m"]
     assert ("disable", "p@m") not in [(step, name) for step, name, _ in dev.commands]
     # 거짓 실패가 하나도 없다. 실행된 명령은 전부 exit 0이다.
@@ -559,53 +559,59 @@ def test_the_value_step_covers_a_key_the_plan_did_not_list(tmp_path):
     assert repo_doc(dev.repo)["enabledPlugins"]["r@m"] is False
 
 
-def test_the_value_step_marks_an_assumed_judgement(tmp_path):
-    """10.2 — 실행 시점에도 로컬 값이 없어 **추정**으로 판정한 id는 그렇게 표시된다.
+def test_a_missing_local_key_reads_as_off_at_the_value_step(tmp_path):
+    """**부재 = 꺼짐**(실측 — 2026-09-01 스모크 4차 18장). 세 갈래를 한 시나리오로 건다.
 
-    2·4단계 어느 명령의 대상도 아닌 id에는 재읽기에도 읽을 값이 없다(9.3.1의 남는 갈래).
-    그때 나가는 명령이 exit 1이면 그것은 "이미 그 상태"이지 실패가 아니고, SKILL.md 5-4가
-    그 갈래만 복원 실패로 렌더링하지 않는다. **표식이 없으면 그 구별을 할 수 없다.**
+    앞 판은 부재를 `true`로 **추정**하고 그 사실을 `assumed` 표식으로 10.2에 알렸다.
+    스모크 4차가 부재의 뜻을 쟀으므로 추정도 표식도 사라졌다 — 그리고 **두 방향이
+    모두 옳아졌다**:
 
-    `q@m` 절반이 대조군이다 — 로컬에 값이 있는 id는 추정이 아니다. 없으면 표식을 언제나
-    `true`로 두는 구현도 통과한다.
+      `p@m` 부재 + 레포 `false` → **명령 없음.** 앞 판은 `disable`을 내고 CLI가
+            `already disabled`(exit 1)로 죽어 거짓 실패가 됐다
+      `r@m` 부재 + 레포 `true`  → **`enable`.** 앞 판은 `true`로 추정해 아무 명령도 내지
+            않았고, 그래서 레포의 `true`가 **조용히 복원되지 않았다**
+      `q@m` 로컬 `true` + 레포 `false` → `disable`. 대조군이다 — 없으면 "아무 명령도
+            내지 않는다"는 구현도 통과한다
 
-    `dev.commands`로는 잴 수 없다 — 표식은 CLI 호출에 나타나지 않고 안내 문구에만 쓰인다.
-    그래서 재읽기의 출력을 직접 본다.
+    `dev.commands`로는 잴 수 없다(명령이 나가지 **않는** 것이 절반이다). 재읽기의 출력을
+    직접 본다.
     """
     dev = make_device(tmp_path, repo_init={
-        "enabledPlugins": {"p@m": False, "q@m": False},
+        "enabledPlugins": {"p@m": False, "q@m": False, "r@m": True},
         "extraKnownMarketplaces": {"m": GH},
         "pluginConfigs": {"q@m": {"options": {"token": pc.SENTINEL}}}})
-    dev.cli.install("p@m")
-    dev.cli.install("q@m")
-    # p@m만 settings의 키를 지운다 — **설치돼 있으면서** 매니페스트 기본값에 위임하는
-    # 상태다(부재 ≠ 꺼짐). 공개 명령으로는 만들 수 없으므로 파일을 직접 손댄다.
+    for plugin_id in ("p@m", "q@m", "r@m"):
+        dev.cli.install(plugin_id)
+    # p@m·r@m의 키만 지운다 — **설치돼 있으면서** settings에 키가 없는 상태다.
+    # 공개 명령으로는 만들 수 없으므로 파일을 직접 손댄다.
     settings = dev.cli.settings()
     settings["enabledPlugins"].pop("p@m")
+    settings["enabledPlugins"].pop("r@m")
     with open(dev.cli.settings_path, "w", encoding="utf-8") as f:
         json.dump(settings, f)
     plan = dev.plan()
-    # 전제 — 둘 다 2단계 대상이 아니고, 4단계 대상은 q@m뿐이다.
-    assert plan["skipped_already_installed"] == ["p@m", "q@m"]
+    # 전제 — 셋 다 2단계 대상이 아니고, 4단계 대상은 q@m뿐이다.
+    assert plan["skipped_already_installed"] == ["p@m", "q@m", "r@m"]
     assert plan["install"] == []
     assert plan["config_keys"] == {"q@m": ["token"]}
     assert dev.value_commands(plan) == [
-        {"id": "p@m", "command": "disable", "assumed": True},
-        {"id": "q@m", "command": "disable", "assumed": False}]
+        {"id": "q@m", "command": "disable"},
+        {"id": "r@m", "command": "enable"}]
 
 
 def test_a_failed_install_does_not_leave_a_ghost_key(tmp_path):
     """9.3.2 — 2단계가 **실패한** id는 3단계의 대상이 아니다. 유령 키가 생기지 않는다.
 
     `blocked` 필터는 **1단계 등록 실패**만 거른다. 설치 자체가 다른 사유로 실패한 id
-    (1-b #4 — 없는 플러그인)는 그 필터를 통과하므로, 3단계가 그대로 `disable`을 낸다.
-    실제 CLI는 그때 exit 1이 아니라 **exit 0으로 `{id: false}` 키를 만든다**
-    (2026-08-29 스모크 2장 — 옛 추정 4번을 뒤집은 자리). 설치 기록이 없는 그 키가
-    **유령 키**다.
+    (1-b #4 — 없는 플러그인)는 그 필터를 통과하므로, 3단계가 그대로 명령을 낸다.
+    미설치 id에 `enable`을 내면 CLI가 exit 1이 아니라 **exit 0으로 `{id: true}` 키를
+    만든다** — 1차 스모크 2장이 옛 추정 4번을 뒤집은 자리이고, 4차(18장)가 **2.1.252에서도
+    `enable` 쪽은 그대로임을 재확인**했다(`disable` 쪽은 그 판본에서 exit 1이다).
+    설치 기록이 없는 그 키가 **유령 키**다.
 
     **이것은 레포 오염도 데이터 손실도 아니다** — 값은 레포와 같고 base 전진도 그
-    값에 대해서는 옳다. 잃는 것은 **실패의 흔적**이다: 다음 백업이 로컬 `false`를
-    레포 `false`와 같다고 읽어 base를 전진시키면, 그 id는 더 이상 `add` 버킷에 오지 않아
+    값에 대해서는 옳다. 잃는 것은 **실패의 흔적**이다: 다음 백업이 로컬 값을 레포 값과
+    같다고 읽어 base를 전진시키면, 그 id는 더 이상 `add` 버킷에 오지 않아
     **영영 설치되지 않는다.** 실패한 항목의 base가 전진하지 않는 규칙(10.4)이 노리는
     "다음 회차에 다시 보인다"를 유령 키가 우회한다.
 
@@ -618,21 +624,24 @@ def test_a_failed_install_does_not_leave_a_ghost_key(tmp_path):
     정상적으로 전진한다. 없으면 "base가 통째로 얼어붙은" 구현도 이 테스트를 통과한다.
     """
     dev = make_device(tmp_path, repo_init={
-        "enabledPlugins": {"p@m": False, "q@m": True},
+        "enabledPlugins": {"p@m": True, "q@m": True},
         "extraKnownMarketplaces": {"m": GH},
         "pluginConfigs": {"p@m": {"options": {"token": pc.SENTINEL}}}})
     dev.cli.set_install_failure("p@m")
     plan = dev.restore(secrets={"p@m": {"token": "s3cr3t"}})
     # 픽스처가 의도한 계획인지 먼저 확인한다 — p@m이 2·3·4단계 **모두**의 대상이어야
-    # 두 필터가 걸릴 자리가 있다.
+    # 두 필터가 걸릴 자리가 있다. 3단계 쪽은 `disable_after_install`에 나타나지 않는다:
+    # 로컬 키가 없어 꺼짐으로 읽히고 레포가 `true`이므로 예정된 명령이 `enable`이며,
+    # 그 목록은 disable 전용이다(실제 명령은 재읽기가 낸다 — 9.3.1).
     assert plan["install"] == ["p@m", "q@m"]
-    assert plan["disable_after_install"] == ["p@m"]
+    assert plan["disable_after_install"] == []
+    assert dev.value_commands(plan) == [{"id": "p@m", "command": "enable"}]
     assert plan["config_keys"] == {"p@m": ["token"]}
     # 유령 키가 없다. 3·4단계 명령이 둘 다 나가지 않았다 — 4단계 쪽은 다시 실패해
     # 사용자에게 같은 실패를 두 번 보이는 것을 막는다(값에는 나타나지 않는다).
     assert "p@m" not in dev.cli.settings()["enabledPlugins"]
     attempted = [(step, name) for step, name, _ in dev.commands]
-    assert ("disable", "p@m") not in attempted
+    assert ("enable", "p@m") not in attempted
     assert ("config", "p@m") not in attempted
     assert dev.cli.settings()["enabledPlugins"]["q@m"] is True      # 대조군
 
@@ -644,7 +653,7 @@ def test_a_failed_install_does_not_leave_a_ghost_key(tmp_path):
     assert dev.restore()["install"] == ["p@m"]
     dev.cli.set_install_failure("p@m", failing=False)
     dev.restore(secrets={"p@m": {"token": "s3cr3t"}})
-    assert dev.local()["enabledPlugins"]["p@m"] is False
+    assert dev.local()["enabledPlugins"]["p@m"] is True
     assert dev.cli.settings()["pluginConfigs"]["p@m"]["options"] == {"token": "s3cr3t"}
 
 

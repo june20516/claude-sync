@@ -207,7 +207,10 @@ def fixture():
     tmp = tempfile.mkdtemp(prefix="claude-sync-restore-prose-")
     settings = os.path.join(tmp, "settings.json")
     with open(settings, "w", encoding="utf-8") as f:
-        json.dump({"enabledPlugins": {"inst@m": True, "was@m": True},
+        # cfg@m2는 로컬 `true` · 레포 `false`다 — **계획 시점** disable의 유일한 갈래다.
+        # 부재는 꺼짐으로 읽히므로(스모크 4차 18장) 로컬 키가 없는 id로는 이 버킷을
+        # 채울 수 없다. 비면 test_the_fixture_fills_every_bound_bucket이 잡는다.
+        json.dump({"enabledPlugins": {"inst@m": True, "was@m": True, "cfg@m2": True},
                    "extraKnownMarketplaces": {"m": GH},
                    "pluginConfigs": {}}, f)
     repo_dir = os.path.join(tmp, "repo")
@@ -216,7 +219,7 @@ def fixture():
     pc.dump_backup({
         "enabledPlugins": {"inst@m": True, "was@m": False, "have@m2": True,
                            "dormant@m2": False, "off@m2": False, "new@m2": True,
-                           "orph@gone": True},
+                           "cfg@m2": False, "orph@gone": True},
         "extraKnownMarketplaces": {"m": GH, "m2": GH2, "builtin": GH},
         "pluginConfigs": {"cfg@m2": {"options": {"apiKey": pc.SENTINEL}}},
     }, repo_path)
@@ -243,8 +246,8 @@ def fixture():
     # 로컬이 계획 시점과 다르다는 것이므로, 계획과 같은 파일을 다시 읽으면 이 출력이
     # 재계산을 재지 못한다. `new@m2`는 매니페스트 `defaultEnabled: false`로 꺼진 채
     # 깔린 갈래이고, 레포가 `true`이므로 `enable`이 나가야 한다.
-    # `dormant@m2`는 이미 설치돼 있어 2단계의 대상이 아니고 로컬 키도 없다 — 실행
-    # 직전에도 값을 읽을 수 없어 `assumed`가 참으로 남는 유일한 갈래다(9.3.1).
+    # `dormant@m2`는 이미 설치돼 있어 2단계의 대상이 아니고 로컬 키도 없다 — 부재는
+    # 꺼짐으로 읽히고 레포도 `false`이므로 **명령이 나가지 않는 갈래**다(스모크 4차 18장).
     after = os.path.join(tmp, "settings-after-install.json")
     with open(after, "w", encoding="utf-8") as f:
         json.dump({"enabledPlugins": {"inst@m": True, "was@m": True, "have@m2": True,
@@ -459,35 +462,6 @@ def test_the_value_clause_takes_its_commands_from_the_recheck_output():
     # 재계산이 실제로 내는 명령 값이 그 문장 안에 그대로 있어야 한다.
     for verb in sorted({c["command"] for c in out["commands"]}):
         assert "`%s`" % verb in hits[0], (verb, hits[0])
-
-
-def test_the_value_clause_explains_both_branches_of_the_recheck_flag():
-    """`assumed`는 불리언이므로 갈래가 **둘**이고, 산문은 둘 다 말해야 한다.
-
-    참인 항목의 exit 1은 실패가 아니라 "이미 그 상태"이고, 거짓인 항목의 exit 1은 진짜
-    실패다. 한쪽만 말하면 복원 성공이 실패로(또는 실패가 성공으로) 보고된다. 그 갈래를
-    말하는 자리는 5-4뿐이다.
-
-    **한 갈래를 지워도 다른 갈래의 언급이 대신 충족시킨다** — 이름만 절 전체에서 찾으면
-    그렇다(실측 — 참 갈래 문단을 지운 변조가 SURVIVED였다). 그래서 갈래마다 문장을
-    따로 요구한다. 필드 이름과 갈래의 개수는 재계산 출력에서 뽑는다.
-    """
-    out = recheck_output()
-    assert any(item.get("assumed") for item in out["commands"]), (
-        "픽스처가 assumed=true 항목을 내지 않는다 — 입력 축")
-    flags = {item["assumed"] for item in out["commands"]}
-    assert flags and all(isinstance(flag, bool) for flag in flags), sorted(flags)
-    text = clauses()["5-4"]
-    literals = sorted(json.dumps(value) for value in (True, False))
-    # **갈래의 개수를 함께 건다.** 순회를 한쪽으로 줄이면 나머지 갈래를 재지 않는데,
-    # 줄여도 남은 단정은 그대로 참이다(실측 — (True,)로 줄인 변조가 SURVIVED였다).
-    assert len(literals) == 2, literals
-    for literal in literals:
-        # 문장 단위로 세지 않는다 — 참 갈래를 말하는 문장이 `false`를 **다른 뜻으로**
-        # 함께 부른다(매니페스트 `defaultEnabled`가 그것이다). 갈래의 머리를 건다.
-        needle = "`assumed`가 `%s`" % literal
-        assert text.count(needle) == 1, (
-            "5-4에서 '%s' 갈래를 여는 자리가 %d곳이다" % (needle, text.count(needle)))
 
 
 def test_the_recheck_fixture_exercises_both_directions():

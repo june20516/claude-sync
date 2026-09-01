@@ -113,8 +113,9 @@ def test_enable_and_disable_are_not_idempotent(tmp_path):
     바꾼다"*(1-b #5). 초판은 exit code만 쟀고, 그래서 `_set_value`가 값을 바꾸는 대신
     **키를 지우도록** 만드는 변조가 이 파일을 통과했다(실측 — 그때 잡은 것은 교대
     시나리오 하나뿐이었다). 키가 사라지면 그 항목은 로컬에 "없는" 상태가 되어 다음
-    백업이 케이스 3(삭제)이나 케이스 2로 오독한다 — 값이 `false`인 것과 의미가 반대다
-    (`value_command`의 *"로컬의 부재는 false가 아니다"*가 같은 사실을 반대편에서 쓴다).
+    백업이 케이스 3(삭제)이나 케이스 2로 오독한다 — **동기화 층에서** 값이 `false`인
+    것과 의미가 반대다(9.3.3). CLI 명령의 층에서는 부재도 꺼짐으로 읽히지만(스모크 4차
+    18장) 그 둘은 다른 질문이고, `value_command`의 docstring이 그 구별을 적는다.
     """
     cli = PluginCLI(str(tmp_path))
     cli.install("p@m")

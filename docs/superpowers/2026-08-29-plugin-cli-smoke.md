@@ -297,3 +297,78 @@ github 출처에 내는 것은 `repo` 필드(`"o/r"`)이지 URL이 아니다.
 > 이 문서를 인용해 갱신됐다. **남은 미측정은 14.5의 #4~#7**이다 — `defaultEnabled`를 되읽는
 > 파일(#4), `install --config`의 `defaultEnabled: false` 조합(#5), 그리고 이 스모크가 새로
 > 세운 둘: `https://github.com/o/r.git`의 판별 순서(#6)와 `a@b@m` 꼴 id의 연쇄 삭제(#7).
+
+
+# 스모크 4차 (2026-09-01, plan ③ Task 13)
+
+- CLI: `claude` **2.1.252** — 3차는 2.1.251, 1·2차는 2.1.250이었다. **판본 차이가 이 회차의
+  결과 하나를 갈랐다**(18장의 유령 키 행).
+- 방법: 같은 임시 HOME 기법. 실제 `~/.claude`와 sync 레포는 건드리지 않았고 측정 뒤
+  **오염이 없음을 확인**했다(실제 홈의 마켓플레이스는 `claude-sync`·`planning-with-files`·`suberpower` 셋 그대로).
+- 픽스처: 로컬 디렉토리 마켓플레이스 `smoke4-mkt`에 플러그인 둘 —
+  `alpha`(`defaultEnabled: false`)와 `beta`(그 필드 **없음** = 기본 `true`).
+- 목적: spec 14.5 **#4**(설치된 플러그인의 `defaultEnabled`를 어느 파일에서 되읽는가).
+
+## 16. #4의 답 — **되읽는 파일이 없다**
+
+`defaultEnabled`는 **설치 시점에 한 번** 쓰이고 `settings.json`으로 **물질화**된다.
+
+| 명령 | `enabledPlugins`에 쓰인 값 |
+|---|---|
+| `install alpha@smoke4-mkt` (`defaultEnabled: false`) | `false` — CLI가 *"This plugin is disabled by default"* 를 함께 출력한다 |
+| `install beta@smoke4-mkt` (필드 없음) | `true` |
+
+설치 뒤 임시 HOME 전체에서 `defaultEnabled`를 담은 파일은 **하나도 없다**
+(`grep -rl defaultEnabled <HOME>` → 출력 없음). 캐시에는 플러그인 자신의 매니페스트만
+복사된다(`plugins/cache/<mkt>/<plugin>/<version>/.claude-plugin/plugin.json`) — 마켓플레이스
+매니페스트는 복사되지 않는다. 디렉토리 출처에서는 `plugins/known_marketplaces.json`의
+`installLocation`이 **원본 경로를 가리킬 뿐**이다.
+
+**그래서 "부재 = 매니페스트 기본값에 위임"은 명령 시점에는 성립하지 않는다.** 그 위임은
+`install`이 이미 해소했고, 그 뒤의 부재는 다른 뜻이다 — 아래 18장.
+
+## 17. 물질화의 귀결 — `assumed` 갈래가 서 있던 전제
+
+spec 9.3.1의 3단계 세 번째 귀결은 *"2·4단계 어느 명령의 대상도 아니면서 로컬
+`enabledPlugins`에 **키가 없는** id는 실행 시점에도 읽을 값이 없어 추정(`true`)에 머문다"*
+였다. 16장이 그 추정의 근거(매니페스트 위임)를 없앴고, 18장이 **참값**을 준다.
+
+## 18. **부재 = 꺼짐** — 통합 규칙 (설치 여부와 무관)
+
+`alpha`(설치됨)와 `ghost`(미설치)를 같은 표에 넣고 네 값 × 두 명령을 전부 쟀다.
+**두 id의 모든 행이 같았다** — 이 두 명령은 설치 기록을 보지 않는다.
+
+| `enabledPlugins` 값 | CLI가 읽는 현재 상태 | `enable` | `disable` |
+|---|---|---|---|
+| `true` | 켜짐 | **exit 1** (already enabled) | exit 0 → `false` |
+| `false` | 꺼짐 | exit 0 → `true` | **exit 1** (already disabled) |
+| `["1.0.0"]` · `{"v":"1"}` | 꺼짐 | exit 0 → `true` (값 파괴) | **exit 1**, 값 보존 |
+| **부재** | **꺼짐** | exit 0 → `true` (**키 생성**) | **exit 1**, **키를 만들지 않는다** |
+
+3차까지의 표에 **부재 행 하나가 더해진 것**이고, 그 행이 나머지 셋과 같은 규칙을 따른다.
+
+**1차 스모크 2장의 유령 키 행이 이 판본에서 재현되지 않는다.** 1차(2.1.250)는
+*"미설치 id에 `disable` → **exit 0이고 키를 만든다**(`ghost@smoke-mkt: false`)"* 로 쟀는데,
+2.1.252에서는 **exit 1이고 키를 만들지 않는다.** `enable` 쪽은 그대로다 — 미설치 id에도
+exit 0으로 `{id: true}`를 만든다. 원인이 판본 변화인지 1차 픽스처의 차이인지는 **이 측정으로
+가릴 수 없다**(1차의 그 시점 `enabledPlugins` 상태가 기록돼 있지 않다).
+
+**그래서 유령 키의 위험은 절반만 남는다** — `enable`은 여전히 만들고 `disable`은 이 판본에서
+만들지 않는다. 함대에 옛 판본이 섞일 수 있으므로 **에뮬레이터는 더 위험한 쪽(1차 동작)을
+그대로 재현한다.** 재현하는 쪽이 검증의 상위집합이고, 방어(설치 실패한 id를 3·4단계에서
+뺀다)는 두 판본 모두에서 필요하다.
+
+## 19. 이 측정이 고칠 것을 지목하는 자리
+
+| 자리 | 무엇을 |
+|---|---|
+| `plan_plugins.build_plan`·`recheck_values`의 `get(…, True)` | **부재를 `True`로 추정하는 것이 틀렸다.** 부재는 꺼짐이므로 `False`다 |
+| 같은 파일의 `assumed` 표식과 `sync-restore/SKILL.md` 10.2의 그 갈래 | 추정이 사라지므로 **갈래 자체가 사라진다** |
+| `plugin_config.value_command`의 *"로컬의 부재는 false가 아니다"* | **거짓이 됐다**(명령 시점 기준) |
+| spec 9.3.1의 세 번째 귀결 · 14.5 #4 | #4가 닫혔다. 귀결 3은 전제가 사라졌다 |
+| spec 14.3 · `tests/plugin_cli.py` 항목 4의 유령 키 서술 | **판본 표식을 단다** — 2.1.250에서 관측, 2.1.252에서 `disable` 쪽은 재현되지 않는다 |
+
+**틀린 방향이 둘이다.** 부재를 `True`로 읽으면 ⑴ 레포가 `true`인데 로컬 키가 없는
+**설치된** 플러그인에 아무 명령도 나가지 않아 **꺼진 채로 남는다**(조용한 미복원), ⑵ 레포가
+`false`이면 `disable`이 나가 exit 1의 거짓 실패가 된다. `False`로 읽으면 **둘 다 옳아진다** —
+⑴은 `enable`(exit 0), ⑵는 명령 없음이다.

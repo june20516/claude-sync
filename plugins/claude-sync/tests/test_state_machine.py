@@ -12,8 +12,11 @@ MCP, 그리고 플러그인의 두 섹션이다.
 고유의 것을 하나도 재지 못한다는 것이다. 그 섹션은 아래 **보류 시나리오**가 맡는다 —
 보류의 유지·이탈은 회차 사이에 상태가 변해야 표현되므로 애초에 다른 하네스가 필요하다.
 
-(파일 이름이 여전히 test_mcp_state_machine.py인 것은 앵커를 늘리지 않기 위해서다.
-내용은 더 이상 MCP 전용이 아니다.)
+(2026-09-01에 `test_mcp_state_machine.py`에서 개명했다 — 내용이 더 이상 MCP 전용이
+아니어서다. 옛 이름을 가리키는 문서들은 **날짜가 붙은 기록**이므로 고치지 않았다:
+`2026-08-20-mcp-redesign-STATUS.md`, `2026-08-20-plugins-sync-followup-BRIEF.md`,
+`2026-08-24-plugins-sync-STATUS.md`, `2026-08-25-plugin-config-HANDOFF.md`,
+`plans/2026-08-20-mcp-integration.md`. 그 이름으로 grep하는 사람을 위해 여기 적어 둔다.)
 """
 import pytest
 

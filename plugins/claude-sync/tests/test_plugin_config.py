@@ -1288,7 +1288,12 @@ def test_value_command_refuses_extended_repo_values():
     assert pc.value_command(True, {"version": "1"}) is None
 
 
-def test_value_command_treats_absent_local_as_needing_the_command():
-    """부재는 false가 아니다 — 매니페스트 기본값에 위임하는 상태다 (9.3.3)."""
+def test_value_command_treats_a_non_boolean_local_as_needing_the_command():
+    """불리언이 아닌 로컬 값에는 언제나 명령이 필요하다 — `None`도 그중 하나다.
+
+    **호출부는 부재에 `None`을 넣지 않는다.** 스모크 4차(18장)가 부재를 **꺼짐**으로
+    쟀으므로 `plan_plugins`는 `get(k, False)`로 읽는다. 이 단정이 재는 것은 그 위의
+    성질 하나다: 비불리언이 들어오면 "현재 상태와 같다"로 접지 않는다.
+    """
     assert pc.value_command(None, False) == "disable"
     assert pc.value_command(None, True) == "enable"

@@ -985,8 +985,16 @@ def value_command(local_value, repo_value):
     보수적 선택이 옳다(spec 7.3의 H3가 값 보류인 것과 같은 사실이다). 이 표는
     `tests/test_plugin_cli.py::test_a_non_boolean_value_reads_as_off`가 고정한다.
 
-    **로컬의 부재는 false가 아니다** — 매니페스트 기본값(defaultEnabled)에
-    위임하는 상태이므로 의미가 반대다. 따라서 부재는 "명령이 필요하다"로 다룬다.
+    **부재는 이 함수가 보지 않는다 — 호출부가 기본값을 넣는다. 그 기본값은 `False`다.**
+    실측이다(2026-09-01 스모크 4차 18장): CLI는 `enabledPlugins`에 키가 없는 id를 **꺼짐**
+    으로 읽는다(`disable`은 exit 1, `enable`은 exit 0으로 키를 만든다). 매니페스트의
+    `defaultEnabled`는 install 시점에 한 번 쓰여 settings.json으로 물질화될 뿐이고, 그
+    뒤로는 어느 파일에서도 되읽히지 않는다(16장) — 앞 판의 근거 *"부재는 매니페스트
+    기본값에 위임하는 상태"* 는 그래서 사라졌다.
+
+    **동기화 층의 「부재」와 혼동하지 말 것.** 백업 방향에서는 부재(다른 기기가 지웠다)와
+    `false`(껐다)가 여전히 다른 뜻이다(9.3.3) — 여기서 말하는 것은 *"이 CLI 명령이
+    필요한가"* 하나다.
     """
     if not isinstance(repo_value, bool):
         return None

@@ -144,8 +144,8 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     아래 disable_after_install은 그 재계산의 **계획 시점 예상**이고, 실제로 나가는
     명령을 정하는 것은 recheck_values다.
     가르는 기준은 **설치 집합 하나**이고 로컬 섹션 문서가 아니다 —
-    enabledPlugins의 키 부재는 미설치가 아니라 매니페스트 defaultEnabled에 위임하는
-    상태이므로(value_command가 같은 사실을 반대편에서 쓴다) 그것으로 가르면 이미 설치된
+    enabledPlugins의 키 부재는 미설치가 아니라 **꺼짐**이므로(실측 — 스모크 4차 18장.
+    value_command의 docstring이 같은 사실을 쓴다) 그것으로 가르면 이미 설치된
     플러그인이 2단계로 간다.
     """
     local = pc.read_local_sections(settings_path)
@@ -199,8 +199,8 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 다르다** — "이미 같은 상태"로 뭉뚱그리면 (b)에서 실측으로 거짓이 된다:
     #   (a) enabledPlugins 기여이고 레포 값이 **불리언**인데 현재 상태와 같다
     #       (value_command가 None을 냈다). 여기서 "현재 상태"는 로컬 키가 없을 때
-    #       아래 local_masked.get(k, True)로 **가정한** 값이다 — 매니페스트
-    #       defaultEnabled가 true라는 가정이고, false인 플러그인에서는 참이 아니다.
+    #       아래 local_masked.get(k, False)로 **읽은** 값이다 — 가정이 아니라 실측이다
+    #       (스모크 4차 18장: CLI가 키 부재를 꺼짐으로 읽는다). 그래서 단서가 붙지 않는다.
     #   (b) enabledPlugins 기여인데 레포 값이 **확장 포맷**이라 밀 CLI가 없다(H3).
     #       value_command는 레포 값이 불리언이 아니면 무조건 None이므로 여기도 명령이
     #       없지만, **상태가 같다는 뜻이 아니다** — 현재 상태는 알려진 바가 없다.
@@ -221,18 +221,22 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 상태를 깨고 (b)의 확장 값을 평탄화한다(배열만 살아남는다) — 조용한 상태 파괴다.
     skipped_already_installed = [k for k in candidates if k in installed_ids]
     # **3단계의 기준은 두 목록 전부(candidates)다.** 이미 설치된 id도 값 맞추기 대상이다 —
-    # 로컬 enabledPlugins에 값이 없고(매니페스트 기본값에 위임) 레포가 false이면 그
-    # 플러그인은 켜진 채 남으므로 disable이 필요하다. 2단계로 좁히면 그 명령이 사라진다.
+    # 이미 설치된 id의 로컬 값이 `true`인데 레포가 `false`이면 그 플러그인은 켜진 채
+    # 남으므로 disable이 필요하다. 2단계로 좁히면 그 명령이 사라진다. (로컬 키가 **없는**
+    # 경우는 꺼짐으로 읽히므로 레포 `false`와 이미 같다 — 스모크 4차 18장.)
     # **candidates의 절반은 "설치될 것"이 아니다.** enabledPlugins 경로의 키는 정의상
     # 로컬 섹션 문서에 없지만, pluginConfigs 경로의 키는 이미 로컬에 값이 있을 수 있다 —
     # 그 섹션의 route_new는 "그 섹션에" 레포 전용인 키를 훑을 뿐 플러그인 자체의 설치
     # 여부와 무관하기 때문이다.
-    # 그래서 로컬에 값이 있으면 **그 값**을 쓰고, 없을 때만 True로 떨어진다. 상수 True를
+    # 그래서 로컬에 값이 있으면 **그 값**을 쓰고, 없을 때만 기본값으로 떨어진다. 상수를
     # 넣으면 value_command가 지키라고 받는 규칙("현재 상태와 다를 때만 낸다")을 이 자리가
-    # 우회하고, 이미 꺼진 플러그인에 disable이 실려 exit 1의 거짓 실패가 된다.
-    # **부재를 True로 읽는 것은 추정이다** — 매니페스트 defaultEnabled가 true라는 가정이고
-    # 그 필드는 false일 수 있다(2026-08-29 스모크 2차 7장). 그 추정이 틀린 갈래는
-    # 10.2가 "이미 그 상태입니다"로 안내하고, 대부분은 recheck_values의 재읽기가 닫는다.
+    # 우회하고, 이미 그 상태인 플러그인에 명령이 실려 exit 1의 거짓 실패가 된다.
+    # **부재는 False다 — 추정이 아니라 실측이다**(2026-09-01 스모크 4차 18장).
+    # CLI는 `enabledPlugins`에 키가 없는 id를 **꺼짐으로 읽는다**: `disable`은 exit 1
+    # (already disabled)이고 `enable`은 exit 0으로 키를 만든다. 설치 여부와 무관하다.
+    # 매니페스트의 defaultEnabled는 **install 시점에 한 번** 쓰여 settings.json으로
+    # 물질화되고(16장) 그 뒤로는 어느 파일에서도 되읽히지 않는다 — 그래서 "부재는
+    # 매니페스트 기본값에 위임하는 상태"라는 앞 판의 근거가 사라졌다.
     # **이 목록은 계획 시점의 예상이다.** 실제로 나가는 명령은 3단계 직전에
     # recheck_values가 로컬을 다시 읽어 정한다(9.3.1) — 그 사이에 2·4단계가 같은 키를
     # 쓰기 때문이다. 여기서 지우면 안 되는 것은 **대상 집합**이고(candidates), 값 판정은
@@ -240,7 +244,7 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     disable_after_install = [
         k for k in candidates
         if k in masked["enabledPlugins"]
-        and pc.value_command(local_masked.get(k, True),
+        and pc.value_command(local_masked.get(k, False),
                              masked["enabledPlugins"][k]) == "disable"]
 
     # 값을 맞춰야 하는 세 갈래에 양쪽 값을 실어 준다 — 케이스 8·9(repo_ahead·
@@ -271,7 +275,7 @@ def build_plan(backup_path, settings_path=None, installed_path=None, held_path=N
     # 판정 입력은 local_masked다 — 계획이 값을 실을 때(local_values) 쓰는 **같은 표**여야
     # 한다. 한쪽만 정규화하면 이 섹션에 마스킹이 도입되는 날 두 값이 갈린다.
     #
-    # **키 부재는 확장 값이 아니다.** 부재는 매니페스트 기본값에 위임하는 상태이므로(9.3.3)
+    # **키 부재는 확장 값이 아니다.** 부재는 꺼짐이지 지킬 값이 아니므로(스모크 4차 18장)
     # 여기서 빼면 새 플러그인의 설정이 어디에서도 채워지지 않는다.
     #
     # **지킬 값이 있을 때만 건너뛴다**(사용자 결정 2026-08-31 — 이 조건이 그 결정의 사유를
@@ -367,12 +371,18 @@ def recheck_values(backup_path, plan, settings_path=None):
     `defaultEnabled: false`라 2단계가 `false`를 써 둔 id가 그 갈래다.
     비불리언 레포 값(H3)에는 어느 쪽도 나가지 않는다 — `value_command`가 `None`이다.
 
-    **`assumed`는 10.2가 쓴다.** 실행 직전에도 로컬 키가 없어 값을 `true`로 **추정**한
-    id다. 그때 나가는 명령이 exit 1을 내면 그것은 실패가 아니라 "이미 그 상태"이고,
-    SKILL.md는 그 갈래를 복원 실패로 렌더링하지 않는다. 추정이 남는 이유는 하나다 —
-    2·4단계 어느 명령의 대상도 아니어서 이 시점에도 읽을 값이 없다.
-    (매니페스트의 `defaultEnabled`를 되읽으면 없앨 수 있으나, **설치된 플러그인에서 그
-    필드를 어느 파일로 읽는지는 미측정**이다 — spec 14.5로 이월돼 있다.)
+    **추정 갈래(`assumed`)는 사라졌다** — 스모크 4차(2026-09-01, 18장)가 부재의 뜻을
+    쟀기 때문이다. **로컬 키의 부재는 꺼짐이다**: `disable`은 exit 1(already disabled)이고
+    `enable`은 exit 0으로 키를 만든다. 설치 여부와 무관하고, 매니페스트 `defaultEnabled`는
+    install 시점에 한 번 쓰여 `settings.json`으로 물질화될 뿐 되읽히지 않는다(16장).
+    그래서 `local_now.get(key, False)`는 추정이 아니라 **읽은 값**이고, 여기서 나가는
+    명령에는 "추정이 틀려서 나는 거짓 실패"가 없다 — 앞 판이 `assumed` 표식으로
+    10.2에 알리던 갈래가 통째로 닫혔다.
+
+    **두 방향이 모두 옳아진다.** 앞 판은 부재를 `true`로 추정했는데, 그러면 레포가
+    `true`인 id에 아무 명령도 나가지 않아 **꺼진 채로 남고**(조용한 미복원) 레포가
+    `false`인 id에는 `disable`이 나가 거짓 실패가 됐다. `False`로 읽으면 전자는 `enable`,
+    후자는 명령 없음이다.
 
     **차단·실패 필터는 여기 없다.** 등록이 실패한 마켓플레이스(9.3.2의 `blocked`)와
     2단계가 실패한 id를 거르는 것은 SKILL.md의 실행 층이다 — 2·4단계가 같은 필터를
@@ -390,11 +400,10 @@ def recheck_values(backup_path, plan, settings_path=None):
     for key in candidates:
         if key not in masked:
             continue
-        command = pc.value_command(local_now.get(key, True), masked[key])
+        command = pc.value_command(local_now.get(key, False), masked[key])
         if command is None:
             continue
-        commands.append({"id": key, "command": command,
-                         "assumed": key not in local_now})
+        commands.append({"id": key, "command": command})
     return {"status": "ok", "commands": commands}
 
 
