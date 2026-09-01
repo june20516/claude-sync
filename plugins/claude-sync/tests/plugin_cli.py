@@ -57,11 +57,14 @@ CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`·`set_manifest`�
      언제나 github 출처로 썼다. 실제 CLI는 **인자에서 출처 종류를 판별한다** — 디렉토리
      절대경로는 `directory`(2장), `o/r`와 `https://github.com/o/r`는 **같은 github 값으로
      정규화**된다(9장). 이제 `marketplace_add`가 그 셋을 판별한다.
-     **url·git 출처는 여전히 미측정이다**(9장 — https github URL이 github으로
-     정규화되므로 url 갈래는 raw `.json` URL이나 비-github 호스트에서만 나온다).
-     `marketplace_arg`는 그 둘에서도 인자를 만들어 내므로, 그런 인자를 받으면 여기서
-     `NotImplementedError`를 던진다 — 조용히 github 모양으로 쓰면 그 시나리오를 쓰는
-     사람이 어긋남을 볼 자리가 없다.
+     **url·git 출처도 3차 스모크가 닫았다**(14장). 2차로는 만들 수 없던 갈래였는데
+     (https github URL이 github으로 정규화되므로 url 갈래는 raw `.json` URL이나 비-github
+     호스트에서만 나온다) 3차가 로컬 http 서버를 세워 쟀다 — `.git`으로 끝나는 http(s)는
+     `git`, 그 밖의 http(s)는 `url`이고 **둘 다 필드는 `url`**이다. 이제 `_marketplace_source`가
+     다섯 모양을 판별한다. **표 밖의 인자에는 여전히 `NotImplementedError`를 던진다** —
+     조용히 github 모양으로 쓰면 그 시나리오를 쓰는 사람이 어긋남을 볼 자리가 없다.
+     **여전히 미측정: `https://github.com/o/r.git`** — github 정규화와 `.git` 규칙 중
+     어느 쪽이 이기는지는 네트워크 없이 잴 수 없다(14장). 프로덕션에 도달 경로가 없다.
   7. **[실측]** directory 출처 값의 모양(`set_directory_marketplace`)은
      `{"source": {"source": "directory", "path": "<절대경로>"}}`다 — **가정과 정확히
      같았다**(2장). `plugin_config._source_kind`가 읽는 형태다.
@@ -73,17 +76,20 @@ CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`·`set_manifest`�
      평탄화한다**(2장). 1-c C1과 spec 1.2의 표는 네 행뿐이었고 — 배열/미설치·배열/재실행·
      객체/미설치·건드리지 않음 — **객체/재실행 행이 없었다.** 이 에뮬레이터는 설치 여부로
      분기하지 않으므로 측정된 객체/미설치 행과 같은 결과를 냈고, 그 결과가 맞았다.
- 10. **[미확인]** `marketplace remove`의 **소속 판정 규칙**(`pid.endswith("@" + name)`).
-     1-b #8은 소속 플러그인이 전부 사라진다는 **결과**만 쟀지 소속을 무엇으로 판정하는지는
-     재지 않았다. 2차 스모크가 그 마켓플레이스에 플러그인 **둘**을 세워 둘 다 사라지는
-     것을 읽었으나(8장), 그것도 **결과**다 — false-positive를 가를 입력이 없었으므로
-     규칙 자체는 여전히 미측정이다(그 문서가 같은 자리에 그렇게 적는다).
-     `plugin_config.marketplace_of`는 `@`가 정확히 하나일 때만 마켓플레이스를
-     알아보므로 `a@b@m` 같은 id에서 두 규칙이 갈린다.
+ 10. **[실측]** `marketplace remove`의 **소속 판정 규칙**(`pid.endswith("@" + name)`).
+     1-b #8과 2차 스모크(8장)가 잰 것은 소속 플러그인이 전부 사라진다는 **결과**뿐이라
+     false-positive를 가를 입력이 없었다. **3차 스모크 11장이 그 입력을 만들었다** —
+     이름이 서로의 접미인 마켓플레이스 둘(`m`·`sub-m`)을 세우고 `remove m`을 냈더니
+     `beta@sub-m`이 **남았다.** `endswith(name)`·`includes(name)`이었다면 함께 사라졌을
+     것이므로 세 후보 중 `endswith("@" + name)` 하나만 살아남는다.
+     **여전히 미측정: `a@b@m`처럼 `@`가 둘인 id.** 이 규칙으로는 지워지는데
+     `plugin_config.marketplace_of`는 `@`가 정확히 하나일 때만 마켓플레이스를 알아보므로
+     **그 자리에서 프로덕션과 CLI가 갈린다.** 11장의 픽스처는 그 입력을 만들지 않았다.
  11. **[실측]** **삭제 명령의 실패 갈래가 두 파일 어느 쪽도 건드리지 않는다**(`uninstall`·
      `marketplace_remove`의 exit 1 갈래). 1-b #6·#8이 잰 것은 "재실행은 exit 1"까지였다.
      스모크가 `uninstall ghost`(미설치)를 내고 **두 파일이 불변**임을 읽었다(2장).
-     `marketplace_remove`의 실패 갈래는 재지 않았으나 같은 규율을 폈다.
+     `marketplace_remove`의 실패 갈래는 **3차 스모크 12장**이 마저 쟀다 — 미등록 이름에
+     exit 1이고 두 파일이 **바이트 동일**이다. 두 명령 모두 실측으로 닫혔다.
  12. **[실측]** `install`이 쓰는 값은 **"언제나 `true`"가 아니다.** 2차 스모크 7장의
      일곱 행이 규칙이다 — 기존 값이 **배열이면 보존**, 이미 **`true`면 유지**, 그 밖에는
      매니페스트의 `defaultEnabled`(선택 필드, 기본 `true`)를 쓴다. 1차가 "언제나 `true`"로
@@ -101,9 +107,10 @@ CLI 명령이 아닌 픽스처 장치(`__init__`·`set_enabled`·`set_manifest`�
      (계획도 SKILL.md도 구별하지 않는다. #3의 사유 쪽 **결과**는 `Device.restore`의
      `fail_marketplaces`가 층을 바꿔 흉내내는 것과 짝이다).
 
-**미확인 하나를 닫는 방법**(다음 스모크에 인계): 한 마켓플레이스 `m`에 `a@b@m` 꼴의
-id를 가진 플러그인을 두고 `marketplace remove m`을 낸다(→ 10번). 1·8번은 2차 스모크가
-닫았다.
+**열셋이 전부 실측이 됐다.** 마지막 미확인이던 10번은 3차 스모크 11장이 닫았고, 11번의
+나머지 절반(삭제 명령의 실패 갈래)은 12장이 닫았다. 남은 것은 항목의 등급이 아니라
+항목 **안**의 좁은 미측정 둘이다 — 10번의 `a@b@m`(프로덕션과 CLI가 갈리는 자리)과
+6번의 `https://github.com/o/r.git`(프로덕션에 도달 경로 없음). 둘 다 해당 항목에 적혀 있다.
 
 **목록에 없던 것 하나가 저장소 안에서 이미 반증돼 있었다.** *"이미 설치된 id에 bare
 install을 내면 exit 1로 죽는다"*는 문장이 프로덕션 산문 여러 곳에 있었는데, 브리프 1-b
@@ -417,15 +424,28 @@ class PluginCLI:
     def _marketplace_source(arg):
         """인자 하나에서 출처 값을 판별한다 — **실측**(모듈 docstring 6번).
 
-        측정된 세 모양만 안다(2차 스모크 9장):
+        측정된 다섯 모양(2차 스모크 9장 · **3차 스모크 14장**):
           절대경로                        → {"source": "directory", "path": <그대로>}
           `https://github.com/o/r`        → github, repo는 `o/r`로 **정규화**
           `o/r`                           → github, repo는 그대로
+          `.git`으로 끝나는 http(s)       → {"source": "git", "url": <그대로>}
+          그 밖의 http(s)                 → {"source": "url", "url": <그대로>}
 
-        **그 밖의 인자에는 값을 지어내지 않고 죽는다.** `marketplace_arg`는 `url`·`git`
-        출처에서도 인자를 만들어 내는데(`_SOURCE_ARG_FIELDS`), 그 갈래가 실제로 어떤 값을
-        남기는지는 **미측정**이다(9장). 조용히 github 모양으로 쓰면 그 시나리오를 쓰는
-        사람이 왕복이 깨지는 것을 볼 자리가 없다 — 이 하네스가 이미 한 번 그렇게 틀렸다.
+        **순서가 규칙이다** — github 정규화가 `.git` 규칙보다 **먼저**다. 그래서
+        `https://github.com/o/r.git`는 여기서 github이 되는데 **그 모양은 여전히
+        미측정이다**(둘 중 어느 규칙이 이기는지는 네트워크 없이 잴 수 없다 — 14장).
+        프로덕션에는 도달 경로가 없다: `marketplace_arg`가 github 출처에 내는 것은
+        `repo` 필드(`"o/r"`)이지 URL이 아니다. 순서를 뒤집으면 **측정된** 두 행이 아니라
+        이 미측정 행 하나가 바뀌므로, 순서 자체는 실측이 아니라 **선택**이다.
+
+        **`file://`는 3차 스모크가 거부(exit 1)로 쟀지만 여기서 재현하지 않는다.**
+        `marketplace_add`의 계약이 "멱등, exit 0"이고 거부 갈래를 넣으면 그 계약이
+        갈리는데, 프로덕션에는 그 인자를 만들 경로가 사실상 없다. 아래 예외와 같은
+        자리에서 죽는 편이 좁다.
+
+        **표 밖의 인자에는 값을 지어내지 않고 죽는다.** 조용히 github 모양으로 쓰면 그
+        시나리오를 쓰는 사람이 왕복이 깨지는 것을 볼 자리가 없다 — 이 하네스가 이미 한 번
+        그렇게 틀렸다.
         """
         if arg.startswith("/"):
             return {"source": "directory", "path": arg}
@@ -437,8 +457,12 @@ class PluginCLI:
                 break
         if "://" not in arg and arg.count("/") == 1 and all(arg.split("/")):
             return {"source": "github", "repo": arg}
+        if arg.startswith("https://") or arg.startswith("http://"):
+            # `.git`은 shallow clone을 시도하고(`Cloning repository (timeout: 120s)`),
+            # 그 밖의 http(s)는 본문을 마켓플레이스 JSON으로 파싱한다 — 3차 14장.
+            return {"source": "git" if arg.endswith(".git") else "url", "url": arg}
         raise NotImplementedError(
-            "출처를 판별할 수 없는 marketplace add 인자다(url·git 갈래는 미측정): %r" % arg)
+            "출처를 판별할 수 없는 marketplace add 인자다(측정된 다섯 모양 밖이다): %r" % arg)
 
     def marketplace_add(self, name, source):
         """멱등. exit 0. source는 marketplace_arg가 만든 문자열이다.
@@ -465,10 +489,10 @@ class PluginCLI:
         `extraKnownMarketplaces`·`enabledPlugins`·`installed_plugins.json` 셋 모두에서
         소속 항목이 사라지는 것은 **실측**(모듈 docstring 2번)이다.
         pluginConfigs 연쇄도 **실측**(모듈 docstring 1번 — 2차 스모크 8장).
-        소속 판정 규칙(`endswith`)만 **실측 없음 — 추정**(모듈 docstring 10번) —
-        2차 스모크가 잰 것은 소속 **둘**이 함께 사라지는 결과이고 규칙이 아니다.
-        실패 갈래가 두 파일 어느 쪽도 건드리지 않는 것도 **실측 없음 — 추정**
-        (모듈 docstring 11번) — 스모크가 잰 것은 `uninstall`의 실패 갈래뿐이다.
+        소속 판정 규칙(`endswith("@" + name)`)도 **실측**(모듈 docstring 10번) —
+        3차 스모크 11장이 이름이 서로의 접미인 마켓플레이스 둘로 세 후보를 갈랐다.
+        실패 갈래가 두 파일 어느 쪽도 건드리지 않는 것도 **실측**
+        (모듈 docstring 11번) — 3차 스모크 12장이 `marketplace remove`의 갈래를 마저 쟀다.
         """
         data = self.settings()
         if name not in data["extraKnownMarketplaces"]:

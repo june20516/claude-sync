@@ -6,7 +6,8 @@
 - 상태: **3차 리뷰 두 건이 "4차 설계 라운드는 불필요, 다음은 plan"으로 판정했다.**
 - 브랜치: `feat/plugins-sync` (`release/3.0.0`에서 분기)
 - 근거 문서: `2026-08-20-plugins-sync-followup-BRIEF.md` (실측 1-b·1-c, 결정 D1~D3),
-  **`2026-08-29-plugin-cli-smoke.md` (실환경 스모크 1·2차 — 14.5의 물음을 닫은 실측)**
+  **`2026-08-29-plugin-cli-smoke.md` (실환경 스모크 1·2·3차 — 14.5의 물음을 닫은 실측.
+  3차는 2026-08-31, CLI 2.1.251)**
 - 선행 설계: `specs/2026-08-20-mcp-config-source-design.md` (판정표·base 규칙의 원본)
 - 리뷰 보고서: `~/.claude/suberpowers/reviews/2026-08-24-claude-sync-plugins-spec-{statemachine,skills}.md`
 - 상태: **현행 설계.** plan은 이 문서가 굳은 뒤에 쓴다.
@@ -1119,7 +1120,7 @@ CLI가 이미 실행할 명령 전문과 승인 방법을 알려준다.
 | `source.source` | 인자 | 측정 여부 | 비고 |
 |---|---|---|---|
 | `github` | `<repo>` (예: `june20516/suberpower`) | **측정됨** (2026-08-29 스모크 9장) | 복원 가능. 왕복이 닫혔다 — 아래 |
-| `url` / `git` | 해당 URL 문자열 | **미측정** | 복원 가능**하다고 본다**(근거는 아래) |
+| `url` / `git` | 해당 URL 문자열 (`source.url`) | **측정됨** (2026-08-31 스모크 3차 13장) | 복원 가능. 왕복이 닫혔다 — 아래 |
 | `directory` | — | 측정됨 (스모크 2장 추정 7) | H2로 `held`이므로 여기 오지 않는다 |
 | 그 밖 / 인자를 만들 수 없음 | — | — | **`unrestorable`** |
 
@@ -1130,19 +1131,26 @@ CLI가 이미 실행할 명령 전문과 승인 방법을 알려준다.
 만드는 인자(`repo` 필드)와 **일치한다.** `https://github.com/…` 형태도 **같은 github 값으로
 정규화된다.**
 
-**`url`·`git` 갈래는 여전히 미측정이다**(감사 ② 권고 2). https github URL이 github으로
-정규화되므로 **url 갈래는 raw `.json` URL이나 비-github 호스트에서만 나온다** — 스모크 2차의
-픽스처로는 만들 수 없었다. 그래서 이 두 행의 **필드 이름과 값 모양이 확인되지 않았다.**
-미측정을 "복원 가능"으로만 적으면 다음 소비자가 왕복을 검증된 것으로 읽는다.
-정직한 상태는 이렇다:
+**`url`·`git` 왕복도 닫혔다**(2026-08-31 스모크 3차 13장 — 감사 ② 권고 2가 지적한 자리다).
+2차 픽스처로는 만들 수 없던 갈래였다: https github URL이 github으로 정규화되므로 **url 갈래는
+raw `.json` URL이나 비-github 호스트에서만 나온다.** 3차가 로컬에 http 서버를 세워 쟀다
+(`url`은 `python3 -m http.server`가 낸 raw `.json`, `git`은 **smart HTTP** 서버 — dumb HTTP로는
+CLI의 shallow clone이 실패한다).
 
-- **확인된 것** — CLI는 `marketplace add`의 **인자에서 출처 종류를 판별한다**(스모크 2장 추정 6).
-  따라서 URL 문자열을 그대로 넘기는 우리 인자 생성은 형태상 성립한다.
-- **확인되지 않은 것** — 그 출처가 `settings.json`에 어떤 **필드 이름**으로 기록되는지.
-  어댑터는 `url`은 `source.url`을, `git`은 `source.url` → `source.repo` 순으로 읽는다.
-  이 이름들이 실제 CLI와 다르면 인자를 만들지 못해 `unrestorable`로 접힌다.
-  틀렸다면 그 대상은 프로덕션이 아니라 **에뮬레이터일 가능성이 높다**(스모크 9장).
-- → 14.5의 미측정 목록에 이월한다.
+| 인자 | 기록된 값 | 재등록 결과 |
+|---|---|---|
+| `http://…/marketplace.json` | `{"source":{"source":"url","url":<인자>}}` | **바이트 동일** |
+| `http://…/x.git` | `{"source":{"source":"git","url":<인자>}}` | **바이트 동일** |
+
+**`git` 출처의 필드도 `repo`가 아니라 `url`이다.** 어댑터의 `_SOURCE_ARG_FIELDS`가
+`git`에 후보 둘(`url` → `repo`)을 두는데 **첫 후보가 옳았다.** 둘째는 지우지 않고 방어로
+남긴다 — 지우면 `repo`만 가진 값이 조용히 `unrestorable`이 되고, 남기는 비용은 0이다
+(그 근거가 그 자리 주석에 있다. 앞 판의 근거 *"어느 쪽이 옳은 필드인지 모르므로"* 는 이
+측정으로 사라졌다).
+
+**틀린 것은 프로덕션이 아니라 에뮬레이터였다** — `marketplace_arg`가 두 갈래에 내던 인자는
+실측과 일치했고, `tests/plugin_cli.py`의 `_marketplace_source`만 그 인자에
+`NotImplementedError`를 던지고 있었다(3차 15장). 이제 다섯 모양을 판별한다.
 
 ---
 
@@ -1970,7 +1978,7 @@ base가 없으면 `merge`는 합집합으로 degrade한다. **정확한 의미�
 | `enable`/`disable`에 **미설치 id** | **exit 0이고 키를 만든다**(유령 키). ~~exit 1, 아무것도 안 씀~~ 은 실측으로 틀렸다 |
 | `uninstall` | `enabledPlugins`·`pluginConfigs`에서 **키 삭제**. 없으면 exit 1 |
 | `marketplace add` | 멱등. exit 0. **인자에서 출처 종류를 판별한다** — 디렉토리 경로는 `directory`, `o/r`과 github URL은 둘 다 `github` |
-| `marketplace remove` | `extraKnownMarketplaces`·`enabledPlugins`·`pluginConfigs`·`installed_plugins.json`에서 **소속 항목 연쇄 삭제.** 재실행은 exit 1 |
+| `marketplace remove` | `extraKnownMarketplaces`·`enabledPlugins`·`pluginConfigs`·`installed_plugins.json`에서 **소속 항목 연쇄 삭제.** 소속 판정은 **`id.endswith("@" + 이름)`** — 실측(스모크 3차 11장)이고 접미가 겹치는 이름(`m` / `sub-m`)을 가르는 픽스처가 근거다. 재실행은 exit 1이고 **두 파일 모두 바이트 동일**(3차 12장). 디스크 캐시(`~/.claude/plugins/cache/`)는 지우지 않는다 |
 
 **`install` 행은 4차 개정이 실측에 맞춘 것이다**(0.3장 ④). 초판은 *"키를 `true`로. 단 기존 값이
 배열이면 보존"* 이었는데, `defaultEnabled: false`인 플러그인에서 CLI는 **`false`를 쓴다**
@@ -2008,18 +2016,26 @@ CLI 2.1.250, 임시 HOME + 로컬 디렉토리 마켓플레이스).
 (7장 — `defaultEnabled`), 4단계가 3단계를 되돌린다는 이월 미확인 ⑴(4장, **확정**),
 github 출처 왕복(9장), `configure` 서브커맨드의 부재(10장).
 
+**3차 스모크(2026-08-31, CLI 2.1.251)가 #1·#2·#3을 닫았다.** 같은 문서 11~14장이다.
+
+| # | 물음 | 상태 |
+|---|---|---|
+| ~~1~~ | **`url` 출처의 값 모양** | **닫힘** — `{"source":"url","url":<인자>}`. 왕복 바이트 동일 (13장) |
+| ~~2~~ | **`git` 출처의 값 모양** | **닫힘** — 필드는 `repo`가 아니라 **`url`**이다. 왕복 바이트 동일 (13장) |
+| ~~3~~ | `marketplace remove`의 **소속 판정 규칙** | **닫힘** — `endswith("@" + name)`이다. 이름이 서로의 접미인 마켓플레이스 둘로 세 후보를 갈랐다 (11장) |
+
 **아직 미측정 — 다음 스모크로 이월한다:**
 
 | # | 물음 | 왜 남았나 | 어디가 이것을 가정하고 있나 |
 |---|---|---|---|
-| 1 | **`url` 출처의 값 모양** | https github URL이 **github으로 정규화**되므로, url 갈래는 raw `.json` URL이나 비-github 호스트에서만 나온다. 2차 픽스처로는 만들 수 없었다 | 8.6의 `url`/`git` 행, `marketplace_arg`의 `_SOURCE_ARG_FIELDS` |
-| 2 | **`git` 출처의 값 모양** | 위와 같다 | 같음 |
-| 3 | `marketplace remove`의 **소속 판정 규칙**(`endswith` 여부) | 소속 플러그인이 **전부** 지워지는 것은 확인했으나, 이름이 겹치는 false-positive를 만드는 픽스처가 없었다 | 14.3의 `marketplace remove` 행, H2의 연쇄 삭제 방어 |
 | 4 | **설치된 플러그인의 `defaultEnabled`를 어느 파일에서 되읽는가** | 스모크는 그 필드를 마켓플레이스 픽스처에만 썼다 | 9.3.1의 3단계 세 번째 귀결(추정이 남는 갈래) |
 | 5 | `install --config`가 `defaultEnabled: false`인 플러그인의 값도 bare `install`과 같게 쓰는가 | 2차 픽스처가 그 조합을 만들지 않았다 | 14.3의 `install --config` 행 |
+| 6 | `https://github.com/o/r.git` — github 정규화와 `.git` 규칙 중 **어느 쪽이 이기는가** | 네트워크 없이 잴 수 없다 (14장) | `tests/plugin_cli.py::_marketplace_source`의 판별 **순서**. 프로덕션에는 도달 경로가 없다 — github 출처에 내는 인자는 `repo` 필드다 |
+| 7 | `a@b@m`처럼 `@`가 둘인 id를 `marketplace remove`가 지우는가 | 11장의 픽스처가 그 입력을 만들지 않았다 | CLI 규칙(`endswith("@m")`)으로는 지워지는데 `plugin_config.marketplace_of`는 `@`가 정확히 하나일 때만 알아본다 — **그 자리에서 프로덕션과 CLI가 갈린다** |
 
 **미측정을 "복원 가능"으로만 적지 않는다**(감사 ② 권고 2). 이 목록이 그 표식의 정본이고,
-8.6·14.3의 해당 행이 여기를 가리킨다.
+8.6·14.3의 해당 행이 여기를 가리킨다. **닫은 항목은 번호를 재사용하지 않는다** — 위 취소선
+행이 그 번호의 묘비다(참조가 깨지지 않게 한다).
 
 ---
 

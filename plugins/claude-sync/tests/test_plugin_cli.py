@@ -265,29 +265,112 @@ def test_marketplace_add_is_idempotent_and_writes_a_github_source(tmp_path):
         "m": {"source": {"source": "github", "repo": "o/r"}}}
 
 
-def test_marketplace_add_detects_the_source_from_the_argument(tmp_path):
-    """**실측**(plugin_cli 모듈 docstring 6번 — 2026-08-29 스모크 2차 9장).
+# ── `marketplace add`의 출처 분류 (3차 스모크 14장의 표 전부) ──────────────────
+#
+# 표를 **여기 한 벌** 두고 아래 셋이 함께 쓴다 — 판별, 왕복, 완전성. 세 곳에 손으로
+# 나열하면 한 곳에서 행이 빠져도 나머지가 초록이다.
+#
+# **순서가 규칙이다.** github 정규화가 `.git` 규칙보다 먼저다. 그래서
+# `https://github.com/o/r.git`는 이 에뮬레이터에서 github이 되는데, 그 모양은
+# **여전히 미측정이다**(네트워크가 필요하다). 프로덕션에는 도달 경로가 없다 —
+# `marketplace_arg`가 github 출처에 내는 것은 `repo` 필드이지 URL이 아니다.
+SOURCE_ARG_TABLE = [
+    ("/tmp/mkt", {"source": "directory", "path": "/tmp/mkt"}),
+    ("o/r", {"source": "github", "repo": "o/r"}),
+    # 정규화 — 인자 모양이 달라도 값이 같다.
+    ("https://github.com/o/r", {"source": "github", "repo": "o/r"}),
+    ("http://127.0.0.1:8733/gitmkt.git",
+     {"source": "git", "url": "http://127.0.0.1:8733/gitmkt.git"}),
+    ("http://127.0.0.1:8731/marketplace.json",
+     {"source": "url", "url": "http://127.0.0.1:8731/marketplace.json"}),
+]
+
+# 표 밖의 모양. **값을 지어내지 않고 죽는다** — 조용히 github으로 쓰면 그 시나리오를
+# 쓰는 사람이 왕복이 깨지는 것을 볼 자리가 없다(이 하네스가 이미 한 번 그렇게 틀렸다).
+UNCLASSIFIED_ARGS = [
+    "file:///tmp/mkt",          # 실측으로는 CLI가 exit 1로 거부한다 — 아래 테스트 참조
+    "./relative/path",
+    "just-a-word",
+    "ftp://example.com/mkt.json",
+]
+
+
+@pytest.mark.parametrize("arg,source", SOURCE_ARG_TABLE, ids=[a for a, _ in SOURCE_ARG_TABLE])
+def test_marketplace_add_detects_the_source_from_the_argument(tmp_path, arg, source):
+    """**실측**(plugin_cli 모듈 docstring 6번 — 2026-08-29 스모크 2차 9장 · 3차 14장).
 
     초판 에뮬레이터는 **언제나 github 모양**으로 썼다. 실제 CLI는 인자 하나에서 출처
-    종류를 판별한다 — 측정된 세 모양이 아래 셋이고, `https://github.com/o/r`는 `o/r`와
-    **같은 값으로 정규화**된다(그래서 github 왕복이 닫혔다).
-
-    **미측정 모양에는 값을 지어내지 않는다.** `marketplace_arg`는 `url`·`git` 출처에서도
-    인자를 만들어 내는데(`_SOURCE_ARG_FIELDS`) 그 갈래가 남기는 값은 재지 않았다.
-    조용히 github으로 쓰면 그 시나리오를 쓰는 사람이 왕복이 깨지는 것을 볼 자리가 없다 —
-    이 하네스가 이미 한 번 정확히 그렇게 틀렸다.
+    종류를 판별한다. 2차가 앞의 셋을, 3차가 뒤의 둘(`git`·`url`)을 쟀다 — 로컬에
+    http 서버를 세워야 나오는 갈래라 2차 픽스처로는 만들 수 없었다.
     """
     cli = PluginCLI(str(tmp_path))
-    cli.marketplace_add("gh", "o/r")
-    cli.marketplace_add("url", "https://github.com/o/r")
-    cli.marketplace_add("dir", "/tmp/mkt")
-    assert cli.settings()["extraKnownMarketplaces"] == {
-        "gh": {"source": {"source": "github", "repo": "o/r"}},
-        # 정규화 — 인자 모양이 달라도 값이 같다.
-        "url": {"source": {"source": "github", "repo": "o/r"}},
-        "dir": {"source": {"source": "directory", "path": "/tmp/mkt"}}}
+    assert cli.marketplace_add("m", arg) == 0
+    assert cli.settings()["extraKnownMarketplaces"]["m"] == {"source": source}
+
+
+@pytest.mark.parametrize("arg", UNCLASSIFIED_ARGS)
+def test_marketplace_add_refuses_to_invent_a_source_for_an_unmeasured_shape(tmp_path, arg):
+    """표 밖의 인자에는 `NotImplementedError`다 — fail-closed를 유지한다.
+
+    `file://`는 3차 스모크 14장이 **거부(exit 1)** 로 쟀지만 이 에뮬레이터는 그 갈래를
+    재현하지 않는다. `marketplace_add`의 계약이 "멱등, exit 0"이고 거부 갈래를 넣으면
+    그 계약이 갈리는데, **프로덕션에는 그 인자를 만들 경로가 사실상 없다**(사용자가
+    settings에 손으로 `{"source":"url","url":"file://…"}`를 적은 경우뿐이다).
+    모르는 모양과 같은 자리에서 죽는 편이 좁고, 죽으면 그 시나리오를 쓰는 사람이 본다.
+    """
+    cli = PluginCLI(str(tmp_path))
     with pytest.raises(NotImplementedError):
-        cli.marketplace_add("raw", "https://example.com/marketplace.json")
+        cli.marketplace_add("m", arg)
+
+
+def test_the_emulator_writes_every_source_kind_production_can_build_an_argument_for():
+    """**완전성 단정.** 위 표에서 행이 빠지면 그 출처가 아무 데서도 재지지 않는다.
+
+    기준을 손으로 적지 않고 **프로덕션의 `_SOURCE_ARG_FIELDS`에서 뽑는다** — 그 맵이
+    인자를 만들 수 있는 출처의 정본이고, 거기 있는 종류를 에뮬레이터가 못 쓰면 왕복을
+    검증할 자리가 없다. `directory`는 그 맵에 없다(H2로 보류되어 인자를 만들지 않는다)
+    — 그래도 값의 모양은 이 에뮬레이터가 쓰므로 함께 센다.
+    """
+    produced = {PluginCLI._marketplace_source(arg)["source"] for arg, _ in SOURCE_ARG_TABLE}
+    assert produced == set(pc._SOURCE_ARG_FIELDS) | {"directory"}
+
+
+# 3차 스모크 13장의 **두 행**이 이 픽스처의 근거다. 값도 인자도 그 표에서 그대로 옮겼다.
+ROUND_TRIP = [
+    ({"source": {"source": "url", "url": "http://127.0.0.1:8731/marketplace.json"}},
+     "http://127.0.0.1:8731/marketplace.json"),
+    ({"source": {"source": "git", "url": "http://127.0.0.1:8733/gitmkt.git"}},
+     "http://127.0.0.1:8733/gitmkt.git"),
+    # github 행도 함께 둔다 — 왕복이 닫힌 것이 셋임을 한 자리에서 말한다(2차 9장).
+    ({"source": {"source": "github", "repo": "o/r"}}, "o/r"),
+]
+
+
+def test_the_round_trip_table_covers_every_source_kind_that_gets_an_argument():
+    """**완전성 단정.** 아래 표에서 행이 빠지면 그 출처의 왕복이 아무 데서도 재지지 않는다.
+
+    기준을 손으로 적지 않고 `_SOURCE_ARG_FIELDS`에서 뽑는다 — 인자를 만들 수 있는 출처의
+    정본이 그 맵이고, 거기 있는 종류의 왕복이 비면 8.6이 "복원 가능"이라고 적는 근거가
+    사라진다. 위 판별 표(`SOURCE_ARG_TABLE`)와는 **다른 것을 잰다**: 저쪽은 인자 → 값,
+    이쪽은 값 → 인자 → 값이다. 한쪽만 있으면 `marketplace_arg` 쪽 결함이 새어 나간다.
+    """
+    assert {v["source"]["source"] for v, _ in ROUND_TRIP} == set(pc._SOURCE_ARG_FIELDS)
+
+
+@pytest.mark.parametrize("value,arg", ROUND_TRIP,
+                         ids=[v["source"]["source"] for v, _ in ROUND_TRIP])
+def test_a_marketplace_value_round_trips_through_the_registration_argument(tmp_path, value, arg):
+    """레포 값 → `marketplace_arg` → 에뮬레이터 `marketplace add` → **같은 값**.
+
+    왕복이 깨지면 복원이 등록한 마켓플레이스가 다음 백업에서 **다른 값**으로 보여
+    그 항목이 영원히 `changed`로 남는다. 8.6이 "복원 가능"이라고 적는 근거가 이 왕복이고,
+    `url`·`git` 두 행은 3차 스모크(13장)가 실측으로 닫았다 — 그전에는 필드 이름조차
+    확인되지 않아 spec이 그 둘을 14.5의 미측정 목록으로 이월하고 있었다.
+    """
+    assert pc.marketplace_arg(value) == arg
+    cli = PluginCLI(str(tmp_path))
+    assert cli.marketplace_add("m", arg) == 0
+    assert cli.settings()["extraKnownMarketplaces"]["m"] == value
 
 
 def test_set_directory_marketplace_writes_a_directory_source(tmp_path):
@@ -365,9 +448,12 @@ def test_installing_at_user_scope_keeps_other_scope_entries(tmp_path):
 
     이 동기화는 전부 user 스코프로 동작하므로(9.3.1), project 항목을 함께 지우면
     read_installed의 스코프 필터가 필터로 동작하는 입력 자체를 만들 수 없게 된다.
-    **실측 없음 — 추정**(plugin_cli 모듈 docstring 8번): N4가 배열의 존재와 항목의 필드를
-    쟀을 뿐, `install --scope user`가 다른 스코프 항목을 건드리지 않는다는 것은 재지 않았다.
-    2026-08-29 스모크도 **스코프 하나만** 세워 이 자리를 닫지 못했다.
+    **실측**(plugin_cli 모듈 docstring 8번 — 2026-08-29 스모크 2차 8장): N4는 배열의
+    존재와 항목의 필드를 쟀을 뿐이고 1차 스모크는 **스코프 하나만** 세워 닫지 못했는데,
+    2차가 `--scope project`로 한 벌 더 설치한 뒤 `--scope user`로 재설치해
+    `["project", "user"]` 둘 다 남는 것을 읽었다.
+    (이 문단은 모듈 docstring 8번이 승격될 때 함께 고쳐지지 않아 **한쪽만 낡아 있었다** —
+    표시 규약이 요구하는 양방향 갱신을 Task 7의 전수 grep이 잡았다.)
     """
     cli = PluginCLI(str(tmp_path))
     with open(cli.installed_path, "w", encoding="utf-8") as f:
