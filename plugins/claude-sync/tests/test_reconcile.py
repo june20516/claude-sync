@@ -1,3 +1,4 @@
+import ast
 import sys
 import os
 import subprocess
@@ -444,3 +445,115 @@ def test_an_excluded_file_left_in_the_repo_is_not_reported_as_all_synced(tmp_pat
     # 대조군이 실제로 in_sync여야 위 단정이 "제외 파일 때문에" 참인 것이 된다 —
     # 대조군이 어긋나 있으면 어느 항목이 그 줄을 막았는지 알 수 없다.
     assert "동일" in section_of(out, "agents/keep.md")
+
+# ── 제외 파일도 **항목마다** 복원 처방이 다르다 ──────────────────────────────
+#
+# 앞 판은 이 묶음에 3-way 판정을 태우지 않고 머리말 하나로 *"평소의 3-way 판정을 그대로
+# 받는다(추가·덮어쓰기·머지·보존)"* 만 말했다. 그러면 **항목별 처방을 적을 수 없다** —
+# 레포에만 있는 파일은 복원이 **로컬에 만들고**, 로컬이 앞선 파일은 **손대지 않는다.**
+# 사용자가 할 일이 그 둘에서 다르다.
+#
+# **backup 방향은 항목과 무관하게 하나다**(레포 사본이 지워진다). 그쪽은 머리말이 말하고
+# 여기 섞지 않는다 — 섞으면 `keep` 항목에 "backup 시 push"가 붙는데 제외 파일에서
+# 그것은 거짓이다.
+
+
+def excluded_three_way_fixture(tmp_path):
+    """제외 파일 셋이 **서로 다른** 3-way 판정을 받는 상태.
+
+    한 갈래만 두면 "모든 항목에 같은 문구"를 쓰는 구현도 통과한다.
+    """
+    home, repo = status_fixture(tmp_path)
+    (home / ".claude" / ".syncignore").write_text("agents/internal-*.md\n")
+    # add — 레포에만 있다(로컬에 없다)
+    (repo / "agents" / "internal-new.md").write_text("다른 기기가 올린 것")
+    # skip — 양쪽이 같다
+    (home / ".claude" / "agents" / "internal-same.md").write_text("같음")
+    (repo / "agents" / "internal-same.md").write_text("같음")
+    # keep — 로컬이 앞섰다(base == 레포)
+    (home / ".claude" / "agents" / "internal-mine.md").write_text("이 기기가 고쳤다")
+    (repo / "agents" / "internal-mine.md").write_text("옛 내용")
+    base = home / ".claude" / ".sync-state" / "base" / "agents"
+    base.mkdir(parents=True)
+    (base / "internal-mine.md").write_text("옛 내용")
+    return home, repo
+
+
+def restore_prescription_table():
+    """`check_status.py`의 처방표. **소스에서 읽는다** — 그 파일은 import하면 곧바로
+    실행되는 스크립트라(모듈 최상위에서 argv를 읽고 출력한다) import로는 꺼낼 수 없다.
+    """
+    path = os.path.join(os.path.dirname(__file__), "..", "skills", "sync-status",
+                        "scripts", "check_status.py")
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename=path)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "RESTORE_PRESCRIPTION"
+                for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError("check_status.py에서 RESTORE_PRESCRIPTION을 찾지 못했다")
+
+
+def prescription_of(out, rel):
+    """`rel` 줄 **바로 다음** 줄의 처방. 없으면 None."""
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == rel and i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+            return nxt if nxt.startswith("복원:") else None
+    return None
+
+
+def test_each_excluded_file_carries_its_own_restore_prescription(tmp_path):
+    """셋이 **서로 다른** 처방을 받는다. 같으면 판정을 안 태운 것이다."""
+    home, repo = excluded_three_way_fixture(tmp_path)
+    out = run_check_status(home, repo).stdout
+    got = {rel: prescription_of(out, "agents/" + rel) for rel in
+           ("internal-new.md", "internal-same.md", "internal-mine.md")}
+    assert all(got.values()), (got, out)
+    assert len(set(got.values())) == 3, got
+    assert "추가" in got["internal-new.md"], got
+    assert "유지" in got["internal-mine.md"], got
+    # 셋 다 같은 머리말 아래여야 한다 — 판정을 태우면서 묶음을 흩뜨리면 "backup 시
+    # push" 같은 거짓 머리말이 다시 붙는다.
+    heads = {section_of(out, "agents/" + rel) for rel in got}
+    assert len(heads) == 1 and ".syncignore" in heads.pop(), out
+
+
+def test_the_ordinary_files_get_no_restore_prescription_line(tmp_path):
+    """대조군 — 처방 줄은 제외 묶음에만 붙는다.
+
+    일반 파일에도 붙이면 머리말이 이미 말하는 것을 두 번 말하게 되고, 그 둘이 갈리는
+    자리가 생긴다(머리말은 backup·restore 양쪽을 말하고 이 줄은 restore만 말한다).
+    """
+    home, repo = excluded_three_way_fixture(tmp_path)
+    out = run_check_status(home, repo).stdout
+    assert prescription_of(out, "agents/keep.md") is None, out
+
+
+def test_the_prescription_table_covers_every_action_the_shared_mapping_emits():
+    """**완전성 단정 — 두 소비자가 같은 매핑을 쓴다.**
+
+    `ss.restore_action`은 이제 소비자가 둘이다(`reconcile_restore`가 실행하고
+    `check_status`가 설명한다). 처방표에 없는 동작이 나오면 그 항목은 `KeyError`로 죽거나
+    조용히 빈 문구를 받는다 — 어느 쪽도 사용자에게 도달하지 않는다.
+
+    기대 집합을 손으로 적지 않고 **매핑을 실제로 돌려서** 뽑는다. 아래 여섯 입력이
+    `classify`의 여섯 출력을 남김없이 덮는지는 **같은 단정이 자기 몸통에서 확인한다** —
+    덮지 못하면 이 단정이 재는 동작 집합이 조용히 줄어든다.
+    """
+    inputs = {
+        "in_sync":      ("a", "a", "a", True, True),
+        "repo_only":    (None, "r", None, False, True),
+        "local_only":   ("l", None, None, True, False),
+        "local_ahead":  ("l", "s", "s", True, True),
+        "fast_forward": ("s", "r", "s", True, True),
+        "conflict":     ("l", "r", "s", True, True),
+    }
+    for name, args in inputs.items():
+        assert ss.classify(*args) == name, (name, ss.classify(*args))
+    actions = {ss.restore_action(*args) for args in inputs.values()}
+    assert set(restore_prescription_table()) == actions
+
+

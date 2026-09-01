@@ -118,6 +118,8 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 **레포에도 있는 제외 파일은 여전히 보고된다.** 다만 `local_ahead`("backup 시 push")가 아니라 **`⊘ .syncignore 제외인데 레포에 남아 있음 (backup 시 레포에서 삭제)`**로 따로 묶인다. 셋 중 참인 문구가 없어서다: push는 거짓이고(4단계가 지운다), 침묵도 거짓이며(레포에 있으니 restore가 건드린다), "restore 시 내려옴"도 거짓이다(`in_sync`는 skip, `local_ahead`는 keep). 스크립트는 그 묶음 아래에 두 줄을 덧붙인다 — 다음 백업이 레포 사본을 지우고 **다른 기기가 올려 둔 같은 경로 파일도 함께 사라진다**는 것, 그리고 restore는 `.syncignore`를 보지 않으므로 지워지기 전에 복원하면 그 파일도 평소의 3-way 판정을 받는다는 것.
 
+**그 3-way 판정은 항목마다 다르므로 항목별로 적는다.** 각 파일 줄 바로 아래에 `복원: …` 한 줄이 붙는다 — 레포에만 있는 파일은 **로컬에 추가되고**, 로컬이 앞선 파일은 **손대지 않으며**, 양쪽이 갈린 파일은 병합·충돌로 간다. 사용자가 할 일이 그 셋에서 다르므로 묶음 머리말 하나로는 말할 수 없다. **backup 방향은 항목과 무관하게 하나**(레포 사본이 지워진다)이고 그것은 머리말과 위 두 줄이 말한다 — 항목 줄에 섞지 않는다.
+
 ```bash
 SYNC_REPO="${TMPDIR:-/tmp}/claude-sync-repo"
 python3 $SYNC_SCRIPTS/check_status.py "$SYNC_REPO"

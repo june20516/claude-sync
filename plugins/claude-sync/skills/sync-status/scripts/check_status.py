@@ -55,20 +55,46 @@ buckets = {
     "excluded_in_repo": [],   # backup 시 레포에서 삭제
 }
 
+# 제외 파일에 대한 **복원 방향** 처방. 문구의 원천은 `sync-restore/SKILL.md` 3단계다
+# (skip·add·overwrite·keep·auto_merge가 각각 무엇을 하는지) — 새로 지어내지 않는다.
+#
+# **backup 방향은 여기 넣지 않는다.** 그쪽은 항목과 무관하게 하나이고(레포 사본이
+# 지워진다) 아래 EXCLUDED_NOTE가 말한다. 섞으면 `keep` 항목에 일반 파일용 문구인
+# "backup 시 push"가 붙는데 **제외 파일에서 그것은 거짓이다**(4단계가 레포에서 지운다).
+#
+# 이 표의 키 집합이 `ss.restore_action`이 낼 수 있는 값 전부와 같은지는
+# `test_reconcile.py::test_the_prescription_table_covers_every_action_the_shared_mapping_emits`
+# 가 건다 — 매핑의 소비자가 둘(여기와 reconcile_restore)이므로 한쪽만 고쳐지는 자리다.
+RESTORE_PRESCRIPTION = {
+    "skip": "복원: 손대지 않음 (로컬과 같음)",
+    "add": "복원: 로컬에 추가됨",
+    "overwrite": "복원: 로컬이 레포 내용으로 덮임 (레포가 앞섬)",
+    "keep": "복원: 손대지 않음 (로컬 유지)",
+    "merge": "복원: 병합 — 겹치면 충돌 해소로 넘어감",
+}
+
+# 제외 항목의 복원 처방 {rel: 문구}. 아래 출력이 항목 줄 바로 다음에 붙인다.
+excluded_prescription = {}
+
 for rel in rels:
     # 여기 오는 제외 대상은 **반드시 레포에 있다** — `rels`의 로컬 쪽 절반은 이미
     # 걸러졌으므로 제외 패턴에 걸린 채 남은 경로는 레포 열거에서만 올 수 있다.
-    # 3-way 분류를 하지 않는 이유: 그 결과(local_ahead/fast_forward/…)가 말하는 것은
-    # "이 파일을 어느 쪽으로 옮기는가"인데, 이 파일들에 대해 backup이 하는 일은
-    # 옮기는 것이 아니라 **레포에서 지우는 것**이라 어느 분류에도 해당하지 않는다.
-    if syncignore.is_excluded(rel, patterns):
-        buckets["excluded_in_repo"].append(rel)
-        continue
     local = os.path.join(HOME_CLAUDE, rel)
     repo = os.path.join(repo_path, rel)
     L = ss.file_hash(local)
     R = ss.file_hash(repo)
     S = ss.base_hash(rel)
+    if syncignore.is_excluded(rel, patterns):
+        # **3-way 판정을 똑같이 태운다.** 복원은 `.syncignore`를 보지 않으므로 이 파일도
+        # 평소의 판정을 그대로 받고, 그래서 **항목마다 일어나는 일이 다르다** — 레포에만
+        # 있는 파일은 로컬에 만들어지고 로컬이 앞선 파일은 손대지 않는다.
+        # (앞 판은 여기서 판정을 건너뛰며 *"backup이 하는 일은 옮기는 것이 아니라
+        # 지우는 것이라 어느 분류에도 해당하지 않는다"* 고 적었다. backup 방향에 대해서는
+        # 참이지만 **restore 방향을 빠뜨린 문장**이었고, 그래서 항목별 처방을 쓸 수 없었다.)
+        buckets["excluded_in_repo"].append(rel)
+        excluded_prescription[rel] = RESTORE_PRESCRIPTION[
+            ss.restore_action(L, R, S, L is not None, R is not None)]
+        continue
     cls = ss.classify(L, R, S, local_exists=L is not None, repo_exists=R is not None)
     buckets[cls].append(rel)
 
@@ -93,7 +119,7 @@ EXCLUDED_NOTE = (
     "  ↳ push되지 않는다. 다음 backup이 레포 사본을 지우고 그 삭제를 푸시하므로,\n"
     "    다른 기기가 올려 둔 같은 경로 파일도 함께 사라진다.\n"
     "  ↳ restore는 `.syncignore`를 보지 않는다 — 지워지기 전에 복원하면 이 파일도\n"
-    "    평소의 3-way 판정을 그대로 받는다(추가·덮어쓰기·머지·보존)."
+    "    평소의 3-way 판정을 그대로 받는다 — 항목마다 다르므로 위에 각각 적었다."
 )
 
 for key, label in labels:
@@ -102,6 +128,8 @@ for key, label in labels:
         print("\n%s (%d개):" % (label, len(items)))
         for f in items:
             print("  " + f)
+            if f in excluded_prescription:
+                print("      " + excluded_prescription[f])
         if key == "excluded_in_repo":
             print(EXCLUDED_NOTE)
 

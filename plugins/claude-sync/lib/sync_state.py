@@ -94,7 +94,17 @@ def classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
 
 
 def restore_action(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
-    """반환: skip | add | overwrite | keep | merge"""
+    """복원이 이 파일에 무엇을 하는가. 반환: skip | add | overwrite | keep | merge.
+
+    **소비자가 둘이다.** `reconcile_restore.py`가 이 값으로 **실행**하고,
+    `check_status.py`가 같은 값으로 `excluded_in_repo` 항목의 **처방을 설명한다**
+    (`.syncignore`는 복원 방향에 적용되지 않으므로 제외 파일도 이 판정을 그대로 받는다).
+    그래서 이 파일이 `lib/`에 있다 — 한쪽에만 있으면 설명과 실행이 갈리고, 갈려도
+    증상이 없다(사용자는 틀린 문구를 볼 뿐이다).
+
+    `check_status`의 처방표가 여기서 나올 수 있는 값 **전부**를 덮는지는
+    `test_reconcile.py`의 완전성 단정이 건다.
+    """
     cls = classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists)
     return {
         "in_sync": "skip",
