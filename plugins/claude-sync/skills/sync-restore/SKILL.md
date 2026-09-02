@@ -143,7 +143,7 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 **restore를 막지 않는 이유**: 버전이 낮아 backup이 막힌 사용자가 업데이트 안내를 받을 수 있는 경로가 restore다. 여기까지 막으면 탈출구가 사라진다.
 
-#### 다운그레이드 탐지 결과
+#### 레포 문서 진단 결과 — 다운그레이드·구문 손상
 
 **출력은 파일별 맵이다.** 최상위에 있는 것은 `status`·`reason`·`files` 셋뿐이고 판정은 전부 `files[<relpath>]` 아래에 있다. `files`의 키는 `mcp-servers.json`과 `plugins.json`이다. **항목마다 한 번씩, 둘 다 본다** — 첫 항목에서 멈추면 다른 문서의 사고가 뒤 단계에서 거짓 문구로 그대로 나간다.
 
@@ -152,6 +152,12 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 `files`의 항목마다 — 그 항목의 키를 `<relpath>`라 하자:
 
 `status`가 `"skipped"`면 **그 문서에 대해 `reason`을 알리고** 계속한다 — "사고가 없다"가 아니라 "확인하지 못했다"이다. `repo_shape`·`base_shape`를 함께 보여준다.
+
+`broken_syntax`가 참이면 **레포의 `<relpath>`가 JSON으로 읽히지 않는다.** 이 실행에서는 그 문서를 건너뛴다(5·6절의 `broken_syntax` 갈래) — 파일 동기화와 다른 문서는 그대로 진행한다. **막지 않는다 — 알리고 계속한다.** `downgrade_suspected`와 동시에 참일 수 없다.
+
+> "백업 레포의 `<relpath>`가 JSON으로 읽히지 않습니다. 이 실행에서는 그 문서를 건너뜁니다. **복구는 `/sync-backup`에서 합니다** — 4.5단계가 마지막 정상 판본으로 되돌릴지 묻습니다. restore는 리모트에 push하지 않으므로 여기서 레포를 고칠 수 없습니다."
+
+`candidate`가 **있으면** 그 커밋의 `sha`·`date`·`subject`와 `entries`의 버킷별 항목 수를 참고용으로 보여준다("그 판본을 찾았습니다"). **없으면** "git 이력에 이 버전이 읽을 수 있는 정상 판본이 없습니다"까지 말한다. `newer_schema_seen`이 참이면 후보가 그보다 오래된 것임을 명시한다.
 
 `downgrade_suspected`가 `false`면 그 문서는 조용히 넘어간다.
 

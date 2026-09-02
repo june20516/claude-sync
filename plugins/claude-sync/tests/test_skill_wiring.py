@@ -437,7 +437,7 @@ DOWNGRADE_CALLERS = SKILLS
 # 탐지 호출이 있어야 할 절. 파일 어딘가면 되는 검사는 호출이 엉뚱한 단계로 옮겨져도
 # 통과한다 — 실측으로, 호출을 MCP 계획 바로 앞으로 옮겼을 때 스위트 전체가 통과했다.
 DOWNGRADE_SECTION = {
-    "sync-backup": "4.5 다운그레이드 사고 탐지",
+    "sync-backup": "4.5 레포 문서 진단",
     "sync-status": "1.5 호환성 검사",
     "sync-restore": RESTORE_CHECK_SECTION,
 }
@@ -492,7 +492,7 @@ def test_downgrade_detection_precedes_what_it_informs(skill):
 # 탐지 **결과를 렌더링하는** 절. 호출 절과 같지 않다 — status와 restore는 compat.py의
 # 산문(`blocked`·`message`와 그 reason 값들)과 한 절을 쓰므로, 그 안의 하위 절만 잘라야
 # 아래 어휘 대조가 남의 키를 이 스크립트의 것으로 세지 않는다.
-DOWNGRADE_RESULT_SUBSECTION = "다운그레이드 탐지 결과"
+DOWNGRADE_RESULT_SUBSECTION = "레포 문서 진단 결과"
 DOWNGRADE_PROSE = {
     "sync-backup": lambda: section("sync-backup", DOWNGRADE_SECTION["sync-backup"]),
     "sync-status": lambda: subsection("sync-status", DOWNGRADE_RESULT_SUBSECTION),
@@ -696,6 +696,8 @@ DOWNGRADE_BRANCHES = (
     ("`downgrade_suspected`가 `true`면",
      "백업 레포의 `<relpath>`가 옛 형식으로 되돌아가 있습니다",
      "사용자에게 실제로 보일 경고. 지워지면 사고가 통째로 조용해진다"),
+    ("`broken_syntax`가 참이면", "JSON으로 읽히지 않",
+     "구문 손상은 base 없이도 사실이다. 지워지면 5·6단계의 건너뜀에 이유가 없어진다(spec 5.1)"),
     ("`newer_schema_seen`이 `true`면", "알아보지 못하는 백업",
      "'후보 없음'과 '알아보지 못해 건너뜀'은 다른 말이다"),
     ("`candidate`가 있으면", "`entries`",
@@ -736,6 +738,27 @@ def test_downgrade_prose_keeps_every_branch(skill, marker, needle, why):
     )
 
 
+def test_backup_broken_branch_offers_repair_only_when_there_is_a_candidate():
+    """spec 5.2 — 후보가 있으면 「복구한다」를 주고, 없으면 손으로 되돌리는 안내가 **거기에만** 남는다."""
+    sec = DOWNGRADE_PROSE["sync-backup"]()
+    branch = branch_slice(sec, "`broken_syntax`가 참이면")
+    assert "**복구한다**" in branch and 'show "<sha>:<relpath>"' in branch
+    assert "복구하지 않고 계속한다" in branch and "**중단한다.**" in branch
+    assert "후보를 못 찾은 경우에만 남는 마지막 수단이다" in branch
+    assert "그냥 지우라고 안내하지 않는다" in branch
+
+
+@pytest.mark.parametrize("skill,pointer", [
+    ("sync-restore", "**복구는 `/sync-backup`에서 합니다**"),
+    ("sync-status", "**`/sync-backup`이 복구를 제안합니다**"),
+])
+def test_read_only_skills_point_the_broken_branch_at_backup(skill, pointer):
+    """0장의 결정 — restore·status는 진단하고 backup을 가리킨다. 레포를 고치지 않는다."""
+    branch = branch_slice(DOWNGRADE_PROSE[skill](), "`broken_syntax`가 참이면")
+    assert pointer in branch
+    assert 'show "<sha>' not in branch, "%s가 레포를 되돌린다" % skill
+
+
 def test_the_downgrade_branch_table_did_not_shrink():
     """표가 스스로 줄면 그 갈래가 아무 소리 없이 검사에서 빠진다.
 
@@ -746,7 +769,7 @@ def test_the_downgrade_branch_table_did_not_shrink():
     `assert DOWNGRADE_BRANCHES`가 수집 단계에서 잡는다. 빈 표는 위 파라미터화를 FAIL이
     아니라 skip으로 만들기 때문이다(실측). 이 단정이 잡는 것은 **행이 하나씩 빠지는 쪽**이다.
     """
-    assert len(DOWNGRADE_BRANCHES) == 6, DOWNGRADE_BRANCHES
+    assert len(DOWNGRADE_BRANCHES) == 7, DOWNGRADE_BRANCHES
     assert len(set(DOWNGRADE_BRANCH_MARKERS)) == len(DOWNGRADE_BRANCHES), "표식이 겹친다"
 
 
@@ -952,7 +975,7 @@ def test_restore_reports_downgrade_and_points_at_the_writable_path():
     여기서 "복구했다"고 말하거나 복구를 실행하는 시늉을 하면, 사용자는 레포가
     나은 줄 알고 떠난다.
     """
-    sub = subsection("sync-restore", "다운그레이드 탐지 결과")
+    sub = subsection("sync-restore", DOWNGRADE_RESULT_SUBSECTION)
     assert "downgrade_suspected" in sub
     assert "push하지 않으므로" in sub
     assert "/sync-backup" in sub
