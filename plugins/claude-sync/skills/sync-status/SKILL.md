@@ -142,7 +142,7 @@ fi
 
 출력 JSON의 `status`가 `"skipped"`면 `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 플러그인 비교만 생략한다 — 읽기 실패를 "0개"로 오인하지 않기 위해서다. 그렇게 오인하면 레포에만 있는 항목이 `only_repo`에서 통째로 사라지고 이 기기의 항목이 전부 `only_local`로 뒤집힌다(실측). **"동일합니다"로 보고하지 않는다.** `reason_kind`가 `unknown_schema`이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다.
 
-`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다(레포 git 이력에 정상 판본이 있으면 그것으로 복구한다). **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다. 이 상태에서는 `/sync-backup`도 같은 문서를 건너뛴다.
+`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 레포의 이 문서가 손상됐습니다(1.5단계 참조) — `/sync-backup`이 복구를 제안합니다. status는 복구하지 않는다. **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다. 이 상태에서는 `/sync-backup`도 같은 문서를 건너뛴다.
 
 **분기는 `reason_kind`로 한다 — `reason` 문장으로 하지 않는다.** 그 문장은 사람이 읽는 표시용이고, 문구를 다듬는 편집이 스킬의 경로를 **조용히** 바꾼다(예외도 빈 결과도 나지 않는다). 갈래는 `broken_syntax` · `unknown_schema` · `local_unreadable` · `io_error` · `contract_violation` 다섯이고, 표에 없는 값이면 처방을 지어내지 말고 `reason`만 보여준다.
 
@@ -172,7 +172,7 @@ if [ -f "$SYNC_REPO/mcp-servers.json" ]; then
 fi
 ```
 
-출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인하지 않기 위해서다. `reason_kind`가 `broken_syntax`이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다(플러그인 업데이트는 소용이 없다). `reason_kind`가 `unknown_schema`이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다. 다섯 필드가 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
+출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인하지 않기 위해서다. `reason_kind`가 `broken_syntax`이면 레포 파일이 손상된 것이다(플러그인 업데이트는 소용이 없다) — 1.5단계 참조. `/sync-backup`이 복구를 제안합니다. **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 서버가 레포에서 사라진다. `reason_kind`가 `unknown_schema`이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다. 다섯 필드가 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
 
 `only_repo`의 항목 중 **`unrestorable`에 있는 것**에는 "restore가 설치합니다"라고 말하지 않는다 — 어느 기기도 복원할 수 없는 항목이다(이름이 CLI 규칙을 어겼거나 `command`도 `url`+`type`도 없다. 2.x가 `claude mcp list` 출력을 긁어 넣은 계정 커넥터와 v1 승격 항목이 그 형태다). 항목마다 `unrestorable_reasons`에 사유가 있다 — 그 문장을 그대로 보여주고 이렇게 말한다: "어느 기기도 복원할 수 없는 항목입니다. `/sync-backup`이 레포에서 정리할지 묻습니다." 이 맵의 키는 `unrestorable`과 **같은 집합**이다 — 사유 없는 항목은 결함이지 침묵할 자리가 아니다. "동일"의 판정은 다섯 필드가 전부 빈 것이다.
 

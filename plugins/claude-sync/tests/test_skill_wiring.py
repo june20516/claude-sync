@@ -2055,6 +2055,42 @@ def test_no_skill_branches_on_the_reason_sentence():
     assert offenders == [], offenders
 
 
+# `reason_kind`가 broken_syntax인 분기 **줄**. 세 스킬에 여섯 줄이다(backup 5·6, restore 5·6,
+# status 2단계의 플러그인·MCP). 손으로 세지 않고 정규식으로 뽑되 개수를 함께 건다.
+BROKEN_BRANCH = re.compile(r"`reason_kind`가 \*{0,2}`broken_syntax`\*{0,2}이면")
+REPAIR_POINTER = {
+    "sync-backup": "4.5단계에서 「복구한다」",
+    "sync-restore": "**복구는 `/sync-backup`이**",
+    "sync-status": "`/sync-backup`이 복구를 제안합니다",
+}
+MANUAL_REPAIR = "정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다"
+
+
+def test_every_broken_syntax_branch_points_at_the_plugin_repair():
+    """spec 5.3 — 여섯 줄 전부가 플러그인의 복구 경로를 가리키고, "손으로 되돌려라"는 backup의
+    후보 없음 갈래에만 남는다. restore·status는 그 문장을 아예 쓰지 않는다(0장의 결정).
+
+    앞 판의 여섯 줄은 똑같이 "그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다"였다
+    — 행위자가 사용자이고, 그 상태에서는 세 스킬이 전부 그 문서를 건너뛰어 탈출구가 없었다.
+    """
+    found = 0
+    for skill in SKILLS:
+        for line in read_skill(skill).splitlines():
+            if not BROKEN_BRANCH.search(line):
+                continue
+            found += 1
+            plain = line.replace("**", "")
+            assert REPAIR_POINTER[skill].replace("**", "") in plain, (skill, line[:90])
+            if skill == "sync-backup":
+                assert MANUAL_REPAIR in plain and plain.index("후보가 없었던 경우") < plain.index(MANUAL_REPAIR), (
+                    "backup의 손 복구 안내는 후보 없음 갈래 뒤에만 온다")
+            else:
+                assert MANUAL_REPAIR not in plain, "%s가 레포 수리를 사용자에게 떠넘긴다" % skill
+            assert "그냥 지우라고 안내하지 않는다" in plain, "삭제 금지 경고가 사라졌다"
+    assert found == 6, found
+
+
+
 def test_the_script_contract_table_did_not_shrink():
     """위 표는 **손으로 고른 목록**이라 대조할 외부 진실 원천이 없다.
 

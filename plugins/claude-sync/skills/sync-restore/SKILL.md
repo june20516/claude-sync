@@ -255,7 +255,7 @@ cat /tmp/claude-sync-plugins-plan.json
 
 `status`가 `"skipped"`면 `reason`을 알리고 플러그인 단계 전체를 건너뛴다(파일 복원과 6절의 MCP 단계는 그대로 진행한다). 갈래는 셋이다 — `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨졌다.** 어느 갈래든 **제안을 하나도 내지 않는다**: 못 읽은 문서를 "항목 0개"로 읽으면 이 기기의 플러그인이 전부 `local_stale`로 떨어져 **"전부 지웁시다"가 나가는데**, 그 근거("다른 기기가 삭제했다")는 거짓이다(실측). `reason_kind`가 `unknown_schema`이면 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다.
 
-`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다(레포 git 이력에 정상 판본이 있으면 그것으로 복구한다). **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다.
+`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 레포의 이 문서가 손상됐습니다(2.5단계 참조) — **복구는 `/sync-backup`이** 마지막 정상 판본으로 되돌릴지 묻는다. restore는 레포에 쓰지 않는다. **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다.
 
 **분기는 `reason_kind`로 한다 — `reason` 문장으로 하지 않는다.** 그 문장은 사람이 읽는 표시용이고, 문구를 다듬는 편집이 스킬의 경로를 **조용히** 바꾼다(예외도 빈 결과도 나지 않는다). 갈래는 `broken_syntax` · `unknown_schema` · `local_unreadable` · `io_error` · `contract_violation` 다섯이고, 표에 없는 값이면 처방을 지어내지 말고 `reason`만 보여준다.
 
@@ -461,7 +461,7 @@ cat /tmp/claude-sync-mcp-plan.json
 
 **계획 JSON은 두 층이다 — 5절의 플러그인 계획과 같은 구조다.** 버킷은 `sections["servers"]` 안에 있고(섹션이 플러그인은 셋, MCP는 하나 — 이름은 `mcp_config.SECTIONS`), 실행 재료인 `configs`·`secret_keys`는 **최상위**다. 최상위에서 `add`나 `local_stale`을 찾으면 없고, 그러면 아래 표의 어느 버킷도 처리되지 않는다.
 
-`status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원과 5절의 플러그인 단계는 그대로 진행한다). `reason_kind`가 `unknown_schema`이면 레포가 **이 기기보다 상위 버전으로 백업된 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다. `reason_kind`가 **`broken_syntax`**이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다 — 이 갈래도 **제안을 하나도 내지 않는다.** 못 읽은 문서를 "서버 0개"로 읽으면 이 기기의 서버가 전부 `local_stale`로 떨어져 거짓 근거의 제거 제안이 나가기 때문이다(실측). `"ok"`면 버킷별로 처리한다.
+`status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원과 5절의 플러그인 단계는 그대로 진행한다). `reason_kind`가 `unknown_schema`이면 레포가 **이 기기보다 상위 버전으로 백업된 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다. `reason_kind`가 **`broken_syntax`**이면 레포의 이 문서가 손상됐습니다(2.5단계 참조) — **복구는 `/sync-backup`이** 마지막 정상 판본으로 되돌릴지 묻는다. restore는 레포에 쓰지 않는다. 이 갈래도 **제안을 하나도 내지 않는다.** **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 서버는 이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다 — 지우면 그 서버가 레포에서 사라진다. 못 읽은 문서를 "서버 0개"로 읽으면 이 기기의 서버가 전부 `local_stale`로 떨어져 거짓 근거의 제거 제안이 나가기 때문이다(실측). `"ok"`면 버킷별로 처리한다.
 
 | 버킷 (`sections["servers"]` 안) | 처방 |
 |---|---|

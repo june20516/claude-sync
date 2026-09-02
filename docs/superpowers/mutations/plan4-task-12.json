@@ -1,0 +1,27 @@
+[
+ {"id": "M1", "desc": "축4 I/O 층 — restore 6절 줄에 옛 문장(손으로 되돌려라)을 되살린다",
+  "file": "plugins/claude-sync/skills/sync-restore/SKILL.md",
+  "old": "레포의 이 문서가 손상됐습니다(2.5단계 참조) — **복구는 `/sync-backup`이** 마지막 정상 판본으로 되돌릴지 묻는다. restore는 레포에 쓰지 않는다. 이 갈래도 **제안을 하나도 내지 않는다.**",
+  "new": "레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다 — 이 갈래도 **제안을 하나도 내지 않는다.**"},
+
+ {"id": "M2", "desc": "축2 축분리 — backup 줄에서 \"후보가 없었던 경우에만\"을 지운다(무조건 손 복구)",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "4.5단계에 후보가 없었던 경우에만 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다.",
+  "new": "그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다.",
+  "count": 2},
+
+ {"id": "M3", "desc": "축5 입력 축 — status MCP 줄의 분기 표식을 문장으로 풀어 여섯 줄에서 뺀다",
+  "file": "plugins/claude-sync/skills/sync-status/SKILL.md",
+  "old": "`reason_kind`가 `broken_syntax`이면 레포 파일이 손상된 것이다",
+  "new": "구문이 깨진 경우라면 레포 파일이 손상된 것이다"},
+
+ {"id": "M4", "desc": "축3 {} vs None — 한 줄에서 삭제 금지 경고를 지운다",
+  "file": "plugins/claude-sync/skills/sync-status/SKILL.md",
+  "old": "`/sync-backup`이 복구를 제안합니다. **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 서버가 레포에서 사라진다.",
+  "new": "`/sync-backup`이 복구를 제안합니다."},
+
+ {"id": "M5", "desc": "축1 훅 호출 계약 — status의 복구 주체를 restore로 바꾼다",
+  "file": "plugins/claude-sync/skills/sync-status/SKILL.md",
+  "old": "레포의 이 문서가 손상됐습니다(1.5단계 참조) — `/sync-backup`이 복구를 제안합니다. status는 복구하지 않는다.",
+  "new": "레포의 이 문서가 손상됐습니다(1.5단계 참조) — restore가 복구합니다. status는 복구하지 않는다."}
+]
