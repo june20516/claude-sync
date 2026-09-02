@@ -1,4 +1,4 @@
-# 변조 명세 corpus (plan ③)
+# 변조 명세 corpus (plan ③·④)
 
 각 task의 **Step 4b**가 돌린 변조 명세다. 여기 있는 이유는 하나다 — **이 plan의 완료
 정의("Step 4b가 실제로 돌았다")를 검증할 수 있게 하려는 것**이다. plan ③ 착수 시점에는
@@ -39,6 +39,19 @@ python3 ~/.claude/suberpowers/tools/mutate.py \
 | `plan3-task-11.json` | 11 사유를 구조로 | 7 | 전부 CAUGHT |
 | `plan3-task-12.json` | 12 `excluded_in_repo`의 3-way | 6 | 전부 CAUGHT |
 | `plan3-task-13.json` | 13 남은 측정과 corpus 위생 | 6 | 전부 CAUGHT |
+| `plan4-task-01.json` | 1 `reject`의 두 갈래 | 5 | 전부 CAUGHT |
+| `plan4-task-02.json` | 2 `in_sync`의 기준선 | 5 | 전부 CAUGHT |
+| `plan4-task-03.json` | 3 표식이 레포 트리를 걷는다 | 5 | 전부 CAUGHT |
+| `plan4-task-04.json` | 4 status의 `no_base` 묶음 | 5 | **M4만 SURVIVED — 등가 변조** (아래) |
+| `plan4-task-05.json` | 5 README의 표식 문장 | 3 | 전부 CAUGHT |
+| `plan4-task-06.json` | 6 MCP 계획의 `sections` 층 | 5 | 전부 CAUGHT (Task 8 뒤 앵커 갱신) |
+| `plan4-task-07.json` | 7 복원 불가 사유 함수 | 5 | **M4만 SURVIVED — 등가 변조** (아래) |
+| `plan4-task-08.json` | 8 세 스크립트의 `unrestorable` | 5 | 전부 CAUGHT |
+| `plan4-task-09.json` | 9 `prune_mcp`와 고정점 | 5 | 전부 CAUGHT |
+| `plan4-task-10.json` | 10 backup 6.5단계 | 5 | 전부 CAUGHT |
+| `plan4-task-11.json` | 11 `broken_syntax` 진단 | 5 | **M4만 SURVIVED — 등가 변조** (아래) |
+| `plan4-task-12.json` | 12 `broken_syntax` 문구 여섯 줄 | 5 | 전부 CAUGHT |
+| `plan4-task-13.json` | 13 언어 스위치 | 5 | 전부 CAUGHT |
 
 **`S5`는 등가 변조다(SURVIVED가 정상).** 완전성 단정의 기대 집합을 상수 대신 리터럴로
 바꾸는 변조인데, 오늘 그 리터럴이 상수와 같아서 통과/실패가 **완전히 동일**하다. 그 규칙
@@ -54,3 +67,27 @@ python3 ~/.claude/suberpowers/tools/mutate.py \
 **검증 시점:** 2026-09-01, 네 명세 전부 재실행해 `SURVIVED`·`APPLY_FAIL` 0건.
 대조군은 **1173 passed**였다. 명세는 그 시점의 트리에 대한 것이므로, 코드가 바뀌면
 앵커가 낡는다 — `APPLY_FAIL`이 나오면 **앵커를 갱신하고 다시 돌린다.**
+
+## plan ④ (3.1.0) — 열셋 전부 있다
+
+plan ③과 달리 **task 열넷 중 코드·산문을 바꾸는 열셋 전부**의 명세가 여기 있다(Task 14는
+릴리즈 게이트라 자기 변조가 없고, 대신 위 열셋을 전부 재실행하는 것이 그 task의 검증이다).
+
+**등가 변조 셋(SURVIVED가 정상).**
+
+- `plan4-task-04.json` `M4` — status 테스트의 대조군 절반(기준선을 쓰고 진짜 충돌을 확인하는
+  쪽)을 삭제한다. 남은 절반이 여전히 참이므로 스위트는 초록이다. 이 변조가 재는 것은
+  "대조군이 있는가"이고 그것은 테스트가 아니라 **리뷰**가 지키는 성질이다.
+- `plan4-task-07.json` `M4` — `unrestorable_reason ⟺ restorable` 동치 픽스처에서 정상 케이스
+  둘을 뺀다. 그러면 "항상 사유가 있다"는 구현으로도 단정이 참이 된다. 같은 이유로 등가다.
+- `plan4-task-11.json` `M4` — `broken_syntax` 판정의 파라미터에서 `plugins` 케이스를 뺀다.
+  두 문서에 같은 코드가 돌므로 오늘은 재는 것이 같다.
+
+**보강한 자리 하나.** `plan4-task-09.json` `M4`(`if pruned:` 가드 제거)는 처음에 SURVIVED였다
+— 같은 v2 문서를 다시 써도 바이트가 같아 기존 단정이 아무것도 재지 못했다. 규칙대로 구현이
+아니라 **테스트를 보강했다**: `test_prune_does_not_rewrite_the_repo_document_when_it_prunes_nothing`이
+v1 배열 문서를 픽스처로 써서, 지운 것이 없는데 다시 쓰면 문서가 v2로 승격되는 것을 잡는다.
+
+**검증 시점:** 2026-09-02, 열세 명세 전부 재실행해 `APPLY_FAIL` 0건 · SURVIVED는 위 셋뿐.
+대조군은 **1265 passed**였다. 마지막 재실행 커밋: `ff83930`.
+

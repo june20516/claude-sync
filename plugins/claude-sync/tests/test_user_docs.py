@@ -30,6 +30,7 @@ bash를 **실행해서** 재고, `test_skill_wiring.py`는 세 SKILL.md의 **배
 - 새 한계의 **내용**은 같은 언어의 두 문서끼리, 백틱 토큰은 한↔영끼리 대조한다
 """
 import inspect
+import json
 import os
 import re
 
@@ -1102,3 +1103,27 @@ def test_each_document_section_cites_the_deploy_order_section_by_its_full_title(
     assert title in section_titled(name, relpath), (
         "%s: %s 절이 배포 순서 절을 제목 전체로 가리키지 않는다 — %r"
         % (name, relpath, title))
+
+
+# --- 릴리즈 노트 두 벌 (spec 8) ---
+
+RELEASE_NOTES = {
+    "ko": os.path.join(ROOT, "docs", "RELEASE-NOTES-3.1.0.md"),
+    "en": os.path.join(ROOT, "docs", "RELEASE-NOTES-3.1.0.en.md"),
+}
+
+
+def test_release_notes_come_in_two_languages_with_the_same_shape():
+    """한 언어만 갱신되는 회귀 — `##` 절의 개수와 순서가 같아야 한다(README 쌍과 같은 처방)."""
+    shapes = {}
+    for lang, path in RELEASE_NOTES.items():
+        with open(path, encoding="utf-8") as f:
+            shapes[lang] = [line for line in f.read().splitlines() if line.startswith("## ")]
+        assert len(shapes[lang]) >= 4, (lang, shapes[lang])
+    assert len(shapes["ko"]) == len(shapes["en"]), shapes
+    with open(os.path.join(ROOT, "plugins", "claude-sync", ".claude-plugin", "plugin.json"),
+              encoding="utf-8") as f:
+        version = json.load(f)["version"]
+    for lang, path in RELEASE_NOTES.items():
+        assert version in open(path, encoding="utf-8").read(), (lang, version)
+
