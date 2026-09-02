@@ -269,7 +269,8 @@ def test_compare_converges_when_local_secret_is_plaintext(tmp_path):
     local = write_local(tmp_path, {"c7": dict(repo_cfg, headers={"K": "sk-real"})})
     repo = write_repo(tmp_path, {"c7": repo_cfg})
     out = compare_mcp.compare(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local)
-    assert out == {"status": "ok", "only_local": [], "only_repo": [], "changed": []}
+    assert out == {"status": "ok", "only_local": [], "only_repo": [], "changed": [],
+                   "unrestorable": [], "unrestorable_reasons": {}}
 
 
 def test_compare_reports_three_buckets(tmp_path):
@@ -279,6 +280,59 @@ def test_compare_reports_three_buckets(tmp_path):
     assert out["only_local"] == ["mine"]
     assert out["only_repo"] == ["theirs"]
     assert out["changed"] == ["both"]
+
+
+GARBAGE = {"url": "https://mcp.example/mcp", "type": "HTTP"}    # 2.x가 긁어 넣은 형태
+
+
+def test_compare_reports_unrestorable_with_reasons(tmp_path):
+    """spec 4.2 — status가 `only_repo` 중 어느 기기도 복원할 수 없는 것을 가른다."""
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo(tmp_path, {"claude.ai Slack": GARBAGE, "theirs": B})
+    out = compare_mcp.compare(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local)
+    assert out["only_repo"] == ["claude.ai Slack", "theirs"]
+    assert out["unrestorable"] == ["claude.ai Slack"]
+    assert set(out["unrestorable_reasons"]) == {"claude.ai Slack"}
+    assert "이름 규칙" in out["unrestorable_reasons"]["claude.ai Slack"]
+
+
+@pytest.mark.parametrize("base", [None, {"mine": A}], ids=["no_base", "with_base"])
+def test_collect_lists_unrestorable_repo_only_entries_with_or_without_base(tmp_path, base):
+    """spec 4.2 — backup은 **병합 결과**에서 뽑는다. 기준선이 없으면 레포 전용 항목이
+    `repo_ahead`에 실리지 않으므로(합집합 degrade) 거기서 뽑으면 놓친다.
+
+    로컬에 있는 이름은 이름이 이상해도 오지 않는다 — 사용자의 실제 설정이다.
+    """
+    local = write_local(tmp_path, {"mine": A, "odd name": {"command": "x"}})
+    repo = write_repo(tmp_path, {"mine": A, "claude.ai Slack": GARBAGE, "theirs": B})
+    out = collect_mcp.collect(repo, str(tmp_path / "staging"), claude_json_path=local,
+                              base_dir=write_base_blob(tmp_path, base))
+    assert out["unrestorable"] == ["claude.ai Slack"]
+    assert list(out["unrestorable_reasons"]) == ["claude.ai Slack"]
+    if base is None:
+        assert out["repo_ahead"] == {"present": [], "absent": []}     # degrade — 여기엔 없다
+    else:
+        assert "claude.ai Slack" in out["repo_ahead"]["absent"]
+
+
+def test_plan_reasons_cover_exactly_the_unrestorable_bucket(tmp_path):
+    local = write_local(tmp_path, {})
+    repo = write_repo(tmp_path, {"claude.ai Notion": GARBAGE, "pw": {"command": "npx"}})
+    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local,
+                              base_dir=write_base_blob(tmp_path, None))
+    assert bucket(out, "unrestorable") == ["claude.ai Notion"]
+    assert set(bucket(out, "unrestorable_reasons")) == {"claude.ai Notion"}
+    assert out["configs"] == {"pw": {"command": "npx"}}
+
+
+def test_status_and_restore_give_the_same_reason_for_the_same_name(tmp_path):
+    """플러그인 쪽과 같은 규칙(test_plugin_scripts) — 두 스킬이 같은 키에 같은 사유를 말한다."""
+    local = write_local(tmp_path, {})
+    repo = write_repo(tmp_path, {"claude.ai Notion": GARBAGE})
+    path = os.path.join(repo, mc.BACKUP_RELPATH)
+    status = compare_mcp.compare(path, claude_json_path=local)
+    plan = plan_mcp.build_plan(path, claude_json_path=local, base_dir=write_base_blob(tmp_path, None))
+    assert status["unrestorable_reasons"] == bucket(plan, "unrestorable_reasons")
 
 
 def test_compare_preserves_command_with_spaces(tmp_path):
@@ -328,7 +382,7 @@ def test_plan_is_two_layered_like_the_plugin_plan(tmp_path):
     assert set(out) == {"status", "sections", "configs", "secret_keys"}
     assert set(out["sections"]) == set(mc.SECTIONS)
     assert set(bucket(out, "add")) == {"theirs"}
-    assert set(out["sections"][mc.SECTIONS[0]]) == set(mc.restore_plan({}, {}, None))
+    assert set(out["sections"][mc.SECTIONS[0]]) == set(mc.restore_plan({}, {}, None)) | {"unrestorable_reasons"}
     assert out["configs"] == {"theirs": B}
 
 

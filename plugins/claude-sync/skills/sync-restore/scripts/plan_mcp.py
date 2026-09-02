@@ -44,10 +44,15 @@ def build_plan(backup_path, claude_json_path=None, base_dir=ss.BASE_DIR):
     plan = mc.restore_plan(local, repo, base)
     masked = mc.redact(repo)
     names = sorted({n for bucket in NEEDS_CONFIG for n in plan[bucket]})
+    buckets = dict(plan)
+    # 사유는 버킷과 같은 층(섹션 안)에 둔다 — plan_plugins가 unrestorable_reasons를 섹션 안에
+    # 두는 것과 맞춘다. unrestorable_report가 목록을 다시 내지만 restore_plan의 버킷과 같은
+    # 집합이다(테스트가 건다) — 사유만 따로 만들면 갈릴 자리가 생긴다.
+    buckets.update(mc.unrestorable_report(plan["unrestorable"], masked))
     (section,) = mc.SECTIONS
     return {
         "status": "ok",
-        "sections": {section: dict(plan)},
+        "sections": {section: buckets},
         "configs": {n: masked[n] for n in names},
         "secret_keys": {
             n: mc.secret_keys(masked[n]) for n in names if mc.secret_keys(masked[n])

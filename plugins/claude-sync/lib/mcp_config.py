@@ -205,6 +205,9 @@ def diff(local, backed):
     코어의 held 키는 걸러낸다 — compare_mcp.py가 이 dict를 사용자 JSON에 통째로
     펼치므로, 걸러내지 않으면 없던 필드가 출력에 나타난다. MCP에는 보류가 없어
     항상 비어 있으니 정보도 없다.
+
+    `unrestorable`은 이 함수가 아니라 소비자가 unrestorable_report로 얹는다 — 복원
+    가능성은 diff의 축이 아니고, 훑는 집합도 only_repo가 아니라 route_new_keys다(spec 4.2).
     """
     out = ks.diff(local, backed, normalize=redact, hold=ks.no_hold)
     return {"only_local": out["only_local"],

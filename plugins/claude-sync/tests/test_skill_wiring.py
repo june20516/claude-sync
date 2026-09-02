@@ -2020,6 +2020,26 @@ def test_script_call_pattern_covers_every_root_variable():
         )
 
 
+def status_mcp_section():
+    """status 2단계의 **MCP 반쪽**. status_plugin_section의 짝이다."""
+    text = read_skill("sync-status")
+    start = text.index("MCP 서버 비교:")
+    return text[start:text.index("### 3. 결과 요약", start)]
+
+
+def test_status_and_restore_say_who_prunes_unrestorable_mcp_entries():
+    """spec 4.2 — status는 `unrestorable`에 "restore가 설치합니다"를 붙이지 않고, 둘 다
+    정리의 주체(`/sync-backup`)를 가리킨다. restore는 레포에 쓰지 않는다고 말한다."""
+    mcp = status_mcp_section()
+    assert "`unrestorable`" in mcp and "`unrestorable_reasons`" in mcp
+    assert "`/sync-backup`이 레포에서 정리할지 묻습니다" in mcp
+    assert "같은 집합" in mcp, "사유 맵의 키가 목록과 같다는 계약이 없다"
+    sub = subsection("sync-restore", "6-3.")
+    assert '`sections["%s"]["unrestorable_reasons"]`' % mc.SECTIONS[0] in sub
+    assert "`/sync-backup`이 6.5단계에서 제안한다" in sub
+    assert "restore는 레포에 쓰지 않는다" in sub
+
+
 def status_only_repo_guidance():
     """2단계 `only_repo` 불릿이 말하는 처방 문장.
 
