@@ -2098,6 +2098,29 @@ def test_backup_report_table_covers_every_held_kind():
 BASE_DIR_ANCHOR = ".sync-state/base"
 
 
+def test_backup_step4_never_calls_a_baseless_reject_remote_ahead():
+    """①(spec 3.1) — `reject`의 두 갈래에 다른 문장을 쓰고, `no_base`에는 방향을 단정하지 않는다.
+
+    실측(2026-09-01): 첫 실기기 백업의 유일한 reject는 기준선이 없어서였고 로컬이 앞서
+    있었다. "리모트가 앞섰다 → restore 먼저"를 따라 「백업 채택」을 고르면 로컬 41줄이
+    사라진다 — 안내가 파괴적 선택을 가리키는 자리다.
+    """
+    sec = section("sync-backup", "4. 파일별 reconcile")
+    remote = sec.index("`reject.remote_ahead`")
+    no_base = sec.index("`reject.no_base`")
+    push = sec.index("`push` 파일만")
+    assert remote < no_base < push, "갈래 둘이 push 안내보다 앞에, remote_ahead가 먼저"
+    remote_branch, no_base_branch = sec[remote:no_base], sec[no_base:push]
+    assert "리모트가 앞선 변경이 있습니다" in remote_branch
+    assert "어느 쪽이 앞선 것인지 판단할 수 없습니다" in no_base_branch
+    assert "「백업 채택」은 그것을 버립니다" in no_base_branch, "파괴적 선택의 위험을 말하지 않는다"
+    # 인용문(사용자에게 나가는 문장) 안에는 방향을 단정하는 말이 없어야 한다.
+    quote = no_base_branch[no_base_branch.index("> "):]
+    assert "리모트가 앞선" not in quote, "no_base 인용문이 방향을 단정한다"
+    for branch in (remote_branch, no_base_branch):
+        assert "push하지 않는다" in branch
+
+
 def test_backup_checks_the_missing_base_before_it_collects():
     """4.6은 수집(5·6)보다 **앞**이어야 하고, 두 문서를 함께 봐야 한다.
 

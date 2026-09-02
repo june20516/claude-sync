@@ -32,6 +32,17 @@ def test_backup_new_local_push():
     assert rb.backup_action("L", None, None) == "push"
 
 
+def test_backup_reject_bucket_is_decided_by_base_presence_alone():
+    """spec 3.1 — backup_action의 세 반환값은 그대로고, reject의 갈래는 S 하나가 정한다.
+
+    S 없음·R 있음·L≠R은 여전히 reject다(push하지 않는다). 다른 것은 **사용자에게 할
+    말**이고, 그것을 정하는 사실은 기준선의 유무 하나다.
+    """
+    assert rb.backup_action("L", "R", None) == "reject"
+    assert rb.reject_bucket(None) == "no_base"
+    assert rb.reject_bucket("S") == "remote_ahead"
+
+
 def test_update_base_writes_local_content(tmp_path):
     """push 성공 후 base가 로컬 파일 내용으로 갱신되는지 확인."""
     source_root = str(tmp_path / "home" / ".claude")
@@ -372,6 +383,36 @@ def run_reconcile_backup(home, repo):
     return json.loads(proc.stdout)
 
 
+def every_rel(out):
+    """reconcile_backup 출력의 모든 relpath. `reject`는 두 갈래의 dict다(spec 3.1)."""
+    rels = list(out["push"]) + list(out["in_sync"])
+    for bucket in out["reject"].values():
+        rels += bucket
+    return rels
+
+
+def test_backup_reconcile_splits_reject_by_base_presence(tmp_path):
+    """①(spec 3.1) — 기준선이 없는 L≠R은 `reject.no_base`, 기준선 뒤로 레포가 바뀐 것은
+    `reject.remote_ahead`. 실측(2026-09-01)의 형태 그대로다 — 첫 백업의 유일한 reject는
+    기준선이 없어서였고 로컬이 앞서 있었다.
+
+    **대조군을 함께 둔다** — `in_sync` 하나가 없으면 "아무것도 push하지 않는다"로도 단정이
+    참이 된다.
+    """
+    home, repo = status_fixture(tmp_path)
+    (repo / "agents" / "keep.md").write_text("레포 판본")            # 로컬 "공개"와 다르다
+    (repo / "agents" / "internal-secret.md").write_text("사내 URL")  # 로컬과 같다 — 대조군
+    out = run_reconcile_backup(home, repo)
+    assert out["reject"] == {"remote_ahead": [], "no_base": ["agents/keep.md"]}
+    assert out["in_sync"] == ["agents/internal-secret.md"] and out["push"] == []
+
+    base = home / ".claude" / ".sync-state" / "base" / "agents"
+    base.mkdir(parents=True)
+    (base / "keep.md").write_text("옛 레포 판본")     # S ≠ R, S ≠ L → 리모트가 앞섰다
+    out = run_reconcile_backup(home, repo)
+    assert out["reject"] == {"remote_ahead": ["agents/keep.md"], "no_base": []}
+
+
 def test_backup_reconcile_does_not_promise_to_push_an_excluded_file(tmp_path):
     """두 스킬이 같은 제외 파일을 **같게** 설명해야 한다.
 
@@ -387,8 +428,7 @@ def test_backup_reconcile_does_not_promise_to_push_an_excluded_file(tmp_path):
     (home / ".claude" / ".syncignore").write_text("agents/internal-*.md\n")
     out = run_reconcile_backup(home, repo)
     assert out["push"] == ["agents/keep.md"]
-    assert all("internal-secret" not in rel
-               for bucket in out.values() for rel in bucket)
+    assert all("internal-secret" not in rel for rel in every_rel(out))
 
 
 def test_without_syncignore_the_backup_reconcile_pushes_both(tmp_path):
