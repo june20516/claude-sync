@@ -1,0 +1,26 @@
+[
+ {"id": "M1", "desc": "축1 훅 호출 계약 — mapfile로 되돌린다(이식성 회귀 그 자체)",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "BASE_RELS=()\nwhile IFS= read -r rel; do\n  [ -n \"$rel\" ] && BASE_RELS+=(\"$rel\")\ndone < <(python3 -c \"",
+  "new": "mapfile -t BASE_RELS < <(python3 -c \""},
+
+ {"id": "M2", "desc": "축5 입력 축 — 대상에서 in_sync를 뺀다(실행 결과가 1개가 된다)",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "for r in data.get('push', []) + data.get('in_sync', []):",
+  "new": "for r in data.get('push', []):"},
+
+ {"id": "M3", "desc": "축2 축분리 — reject의 갈래를 대상에 넣는다(실행 결과가 5개가 된다)",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "for r in data.get('push', []) + data.get('in_sync', []):",
+  "new": "for r in data.get('push', []) + data.get('in_sync', []) + data['reject']['no_base'] + data['reject']['remote_ahead']:"},
+
+ {"id": "M4", "desc": "축3 {} vs None — 빈 줄 가드를 없앤다(빈 항목이 배열에 실린다)",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "  [ -n \"$rel\" ] && BASE_RELS+=(\"$rel\")",
+  "new": "  BASE_RELS+=(\"$rel\")"},
+
+ {"id": "M5", "desc": "축4 I/O 층 — 프로세스 치환을 파이프로 바꾼다(bash에서 서브셸이라 배열이 사라진다)",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "BASE_RELS=()\nwhile IFS= read -r rel; do\n  [ -n \"$rel\" ] && BASE_RELS+=(\"$rel\")\ndone < <(python3 -c \"\nimport json\ndata = json.load(open('/tmp/claude-sync-reconcile.json'))\nfor r in data.get('push', []) + data.get('in_sync', []):\n    print(r)\n\")",
+  "new": "BASE_RELS=()\npython3 -c \"\nimport json\ndata = json.load(open('/tmp/claude-sync-reconcile.json'))\nfor r in data.get('push', []) + data.get('in_sync', []):\n    print(r)\n\" | while IFS= read -r rel; do\n  [ -n \"$rel\" ] && BASE_RELS+=(\"$rel\")\ndone"}
+]

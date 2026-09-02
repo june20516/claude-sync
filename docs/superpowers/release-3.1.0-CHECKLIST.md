@@ -122,7 +122,14 @@ python3 -c "import json;print(json.load(open('${TMPDIR:-/tmp}/claude-sync-repo/s
 ### 3-3. `/sync-backup` 한 번 더 — 고정점
 
 `unrestorable`·`repo_ahead`·`deleted`가 전부 비어 있고, 10단계가 "변경사항이 없습니다"
-경로로 가며, 파일 기준선 8개가 그대로여야 합니다(③의 고정점, ②의 두 번째 경로).
+경로로 가야 합니다(③의 고정점).
+
+> **"파일 기준선 8개 불변"은 ②를 재지 못합니다.** 그 8개는 1회차에서 이미 만들어졌으므로
+> `update_base.py`가 불리든 안 불리든 파일이 그대로입니다 — 이 단계에서 그 단정은
+> **공허합니다**(2026-09-02 실측: `mapfile` 결함이 정확히 이 자리를 통과했다).
+> ②의 "변경사항이 없습니다" 경로를 실제로 재는 것은 테스트 쪽
+> `test_the_base_rels_block_runs_on_the_shells_users_actually_have`이고, 실기기에서
+> 새 기준선이 **생겨야 하는** 자리는 3-4 (c)입니다.
 
 ### 3-4. `/sync-restore`
 

@@ -31,6 +31,7 @@ test_every_skill_on_disk_is_covered_by_the_contract가 한쪽만 덮는다.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -1211,6 +1212,62 @@ def test_backup_base_gate_distinguishes_push_failure_from_staging_failure():
 FILE_BASE_CALL = 'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${BASE_RELS[@]}"'
 
 
+def base_rels_block():
+    """10단계에서 `BASE_RELS`를 채우는 부분만. **산문이 아니라 실행줄이다.**
+
+    블록 전체는 git·push를 부르므로 테스트에서 돌릴 수 없다. 배열을 채우는 앞부분만
+    잘라 실제 셸에 먹인다 — 여기가 이식성이 깨질 수 있는 유일한 자리다.
+    """
+    blocks = [b for b in bash_blocks(read_skill("sync-backup"))
+              if "BASE_RELS" in b and "git diff --cached --quiet" in b]
+    assert len(blocks) == 1, "10단계 블록이 하나가 아니다: %d개" % len(blocks)
+    block = blocks[0]
+    end = block.index("if git diff --cached --quiet")
+    # 그 이름이 처음 나오는 **줄의 머리**부터 자른다 — 이름 자리에서 자르면 명령어
+    # (`mapfile -t` 같은)가 잘려 나가 엉뚱한 이유로 죽는다.
+    hit = block.index("BASE_RELS")
+    return block[block.rfind("\n", 0, hit) + 1:end]
+
+
+# **bash와 zsh 둘이다 — POSIX sh는 대상이 아니다.** 이 블록은 예전부터 배열
+# (`BASE_RELS+=(…)`·`${#RELS[@]}`)을 쓰고, 진짜 POSIX sh(dash)에는 배열이 없다.
+# `sh`를 요구하면 지킬 수 없는 계약을 적는 것이 된다. 실제로 스킬을 실행하는 두 셸이
+# 이 둘이고, 앞 판이 깨진 것도 정확히 이 둘에서였다.
+@pytest.mark.parametrize("shell", ["bash", "zsh"])
+def test_the_base_rels_block_runs_on_the_shells_users_actually_have(tmp_path, shell):
+    """②(spec 3.2)의 목록이 **실제로 채워지는가** — 텍스트가 아니라 실행으로 잰다.
+
+    앞 판은 `mapfile -t BASE_RELS`였다. 그것은 bash 4+ 빌트인이라 macOS 기본 bash(3.2)와
+    zsh 어디에도 없다. 실기기에서 그 줄은 `command not found`로 죽고 배열이 빈 채 남아,
+    `${#BASE_RELS[@]}`가 0이 되어 **update_base.py가 아예 호출되지 않았다** — 오류도
+    보고도 없이 ②가 그대로 재발한다(실측 — 2026-09-02 스모크).
+
+    `test_backup_advances_file_bases_on_both_success_paths`는 그 블록의 **텍스트**만
+    grep했으므로 이 결함을 잡지 못했다. 4단계의 `.syncignore` 블록에는 실행해서 재는
+    가드가 이미 있었고(test_python_syncignore_matches_the_skill_bash), 10단계에는
+    없었다 — 그 층을 여기서 닫는다.
+    """
+    if shutil.which(shell) is None:
+        pytest.skip("%s 없음" % shell)
+    recon = tmp_path / "reconcile.json"
+    recon.write_text(json.dumps({
+        "push": ["agents/pushed.md"],
+        # 빈 문자열을 섞는다 — 손으로 고쳤거나 잘린 reconcile JSON에서 나올 수 있고,
+        # 걸러내지 않으면 update_base.py가 **빈 relpath**를 인자로 받는다.
+        "in_sync": ["CLAUDE.md", "", "agents/same.md"],
+        "reject": {"remote_ahead": ["agents/remote.md"], "no_base": ["agents/unknown.md"]},
+    }), encoding="utf-8")
+    script = base_rels_block().replace("/tmp/claude-sync-reconcile.json", str(recon))
+    script += '\nprintf "%s\\n" "${#BASE_RELS[@]}"\nprintf "%s\\n" "${BASE_RELS[@]}"\n'
+    proc = subprocess.run([shell, "-c", script], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    lines = [x for x in proc.stdout.splitlines() if x]
+    assert lines[0] == "3", "배열이 %s개다 — %r / stderr=%r" % (lines[0], lines[1:], proc.stderr)
+    assert lines[1:] == ["agents/pushed.md", "CLAUDE.md", "agents/same.md"], "빈 항목이 실렸다"
+    # reject의 어느 갈래도 들어오지 않는다 — 대조군이 픽스처에 있다.
+    assert not any("remote.md" in x or "unknown.md" in x for x in lines[1:])
+
+
 def test_backup_advances_file_bases_on_both_success_paths():
     """②(spec 3.2) — 파일 base 갱신이 "변경사항 없음" 경로와 푸시 성공 경로 **둘 다**에 있고,
     푸시 실패 경로에는 없다.
@@ -1227,7 +1284,9 @@ def test_backup_advances_file_bases_on_both_success_paths():
     fail = block.index("푸시에 실패했습니다")
     assert quiet < sites[0] < commit < sites[1] < fail
     # 대상은 push ∪ in_sync 이고 reject의 어느 갈래도 아니다.
-    src = block[block.index("mapfile -t BASE_RELS"):quiet]
+    # 앵커를 특정 명령(`mapfile` 같은)에 박지 않는다 — 그 명령을 바꾸는 것이 곧
+    # 이식성 수정이고, 그때 이 가드가 낡아 실패한다. 이름이 처음 나오는 자리에서 자른다.
+    src = block[block.index("BASE_RELS"):quiet]
     assert "data.get('push', []) + data.get('in_sync', [])" in src
     assert "reject" not in src, "방향을 모르는 파일의 base가 전진한다"
     assert "in_sync 파일의 base ← 로컬 내용" in section("sync-backup", "11. base(.sync-state) 갱신 규칙")

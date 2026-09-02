@@ -513,7 +513,14 @@ REPO_HAS_CONTENT=0
 # 로컬이 레포에 동의하지 않은 상태이고 no_base는 방향을 모르는 상태다.
 # in_sync는 로컬 == 레포이므로 base ← 로컬이 곧 base ← 레포다. 이것을 넣지 않으면 백업만
 # 하는 기기에는 파일 기준선이 영영 생기지 않는다(실측 — 2026-09-01: 파일 기준선 0개).
-mapfile -t BASE_RELS < <(python3 -c "
+# **mapfile을 쓰지 않는다** — bash 4+ 빌트인이라 macOS 기본 bash(3.2)에도 zsh에도 없다.
+# 없는 셸에서는 그 줄이 command not found로 죽고 배열이 빈 채 남아, 아래 게이트가 0으로
+# 읽혀 **update_base.py가 아예 호출되지 않는다** — 오류도 보고도 없이 파일 기준선이
+# 영영 안 생긴다(실측 — 2026-09-02 실기기 스모크). while read는 세 셸에서 모두 돈다.
+BASE_RELS=()
+while IFS= read -r rel; do
+  [ -n "$rel" ] && BASE_RELS+=("$rel")
+done < <(python3 -c "
 import json
 data = json.load(open('/tmp/claude-sync-reconcile.json'))
 for r in data.get('push', []) + data.get('in_sync', []):

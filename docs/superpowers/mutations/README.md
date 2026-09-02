@@ -52,6 +52,7 @@ python3 ~/.claude/suberpowers/tools/mutate.py \
 | `plan4-task-11.json` | 11 `broken_syntax` 진단 | 5 | **M4만 SURVIVED — 등가 변조** (아래) |
 | `plan4-task-12.json` | 12 `broken_syntax` 문구 여섯 줄 | 5 | 전부 CAUGHT |
 | `plan4-task-13.json` | 13 언어 스위치 | 5 | 전부 CAUGHT |
+| `plan4-task-15.json` | 3.1.1 `mapfile` 이식성 | 5 | 전부 CAUGHT |
 
 **`S5`는 등가 변조다(SURVIVED가 정상).** 완전성 단정의 기대 집합을 상수 대신 리터럴로
 바꾸는 변조인데, 오늘 그 리터럴이 상수와 같아서 통과/실패가 **완전히 동일**하다. 그 규칙
@@ -90,4 +91,15 @@ v1 배열 문서를 픽스처로 써서, 지운 것이 없는데 다시 쓰면 �
 
 **검증 시점:** 2026-09-02, 열세 명세 전부 재실행해 `APPLY_FAIL` 0건 · SURVIVED는 위 셋뿐.
 대조군은 **1265 passed**였다. 마지막 재실행 커밋: `ff83930`.
+
+## 3.1.1 — 스모크가 잡은 것 (2026-09-02)
+
+`plan4-task-15.json`은 plan ④의 task가 아니라 **실기기 스모크가 찾은 결함**의 명세다.
+10단계의 `mapfile`이 이 기기의 어느 셸에도 없어 base 갱신이 조용히 건너뛰어졌다.
+
+`M1`(mapfile로 되돌리기)이 CAUGHT인 것이 이 수정의 핵심이고, `M5`는 프로세스 치환을
+파이프로 바꾸면 **bash에서만** 죽고 zsh는 살아남는 것을 보인다 — 두 셸을 함께 재는 이유다.
+`M4`(빈 줄 가드 제거)는 처음 SURVIVED였고, 규칙대로 구현이 아니라 **테스트를 보강**했다:
+픽스처의 `in_sync`에 빈 문자열을 섞어, 걸러내지 않으면 `update_base.py`가 빈 relpath를
+인자로 받는 것을 잡는다.
 
