@@ -516,7 +516,8 @@ REPO_HAS_CONTENT=0
 # **mapfile을 쓰지 않는다** — bash 4+ 빌트인이라 macOS 기본 bash(3.2)에도 zsh에도 없다.
 # 없는 셸에서는 그 줄이 command not found로 죽고 배열이 빈 채 남아, 아래 게이트가 0으로
 # 읽혀 **update_base.py가 아예 호출되지 않는다** — 오류도 보고도 없이 파일 기준선이
-# 영영 안 생긴다(실측 — 2026-09-02 실기기 스모크). while read는 세 셸에서 모두 돈다.
+# 영영 안 생긴다(실측 — 2026-09-02 실기기 스모크). while read는 bash와 zsh 둘에서 돈다
+# (POSIX sh는 프로세스 치환이 없어 대상이 아니다 — 이 블록은 배열도 쓴다).
 BASE_RELS=()
 while IFS= read -r rel; do
   [ -n "$rel" ] && BASE_RELS+=("$rel")

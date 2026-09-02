@@ -1,0 +1,37 @@
+[
+ {
+  "id": "M1",
+  "desc": "축1 훅 호출 계약 — 손 복구 지시를 되살린다(⑤의 잔재 그 자체)",
+  "file": "plugins/claude-sync/lib/keyed_sync.py",
+  "old": "            \" 사라지므로 이 문서를 건너뛴다\" % path",
+  "new": "            \" 사라지므로 이 문서를 건너뛴다. 파일을 정상 JSON으로 고친 뒤 다시 실행한다\" % path"
+ },
+ {
+  "id": "M2",
+  "desc": "축2 축분리 — 사실까지 지운다(무슨 일이 있었는지 알 수 없게 된다)",
+  "file": "plugins/claude-sync/lib/keyed_sync.py",
+  "old": "            \"%s의 JSON 구문이 깨졌다 — '항목 0개'로 읽으면 다른 기기의 항목이\"\n            \" 사라지므로 이 문서를 건너뛴다\" % path",
+  "new": "            \"%s\" % path"
+ },
+ {
+  "id": "M3",
+  "desc": "축3 {} vs None — 다른 표현으로 손 복구를 지시한다(바늘 하나만 피한다)",
+  "file": "plugins/claude-sync/lib/keyed_sync.py",
+  "old": "            \" 사라지므로 이 문서를 건너뛴다\" % path",
+  "new": "            \" 사라지므로 이 문서를 건너뛴다. 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행한다\" % path"
+ },
+ {
+  "id": "M4",
+  "desc": "축4 I/O 층 — 10단계 주석을 다시 '세 셸'로 되돌린다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "while read는 bash와 zsh 둘에서 돈다\n# (POSIX sh는 프로세스 치환이 없어 대상이 아니다 — 이 블록은 배열도 쓴다).",
+  "new": "while read는 세 셸에서 모두 돈다."
+ },
+ {
+  "id": "M5",
+  "desc": "축5 입력 축 — 가드의 금칙어 목록에서 한 표현을 뺀다",
+  "file": "plugins/claude-sync/tests/test_keyed_sync.py",
+  "old": "    banned_phrasings = (\"고친 뒤 다시 실행\", \"정상 JSON으로 되돌린\")\n    assert len(banned_phrasings) == 2",
+  "new": "    banned_phrasings = (\"고친 뒤 다시 실행\",)\n    assert len(banned_phrasings) == 2"
+ }
+]

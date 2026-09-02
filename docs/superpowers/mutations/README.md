@@ -53,6 +53,7 @@ python3 ~/.claude/suberpowers/tools/mutate.py \
 | `plan4-task-12.json` | 12 `broken_syntax` 문구 여섯 줄 | 5 | 전부 CAUGHT |
 | `plan4-task-13.json` | 13 언어 스위치 | 5 | 전부 CAUGHT |
 | `plan4-task-15.json` | 3.1.1 `mapfile` 이식성 | 5 | 전부 CAUGHT |
+| `plan4-task-16.json` | 3.1.2 `reason`의 손 복구 지시 | 5 | 전부 CAUGHT |
 
 **`S5`는 등가 변조다(SURVIVED가 정상).** 완전성 단정의 기대 집합을 상수 대신 리터럴로
 바꾸는 변조인데, 오늘 그 리터럴이 상수와 같아서 통과/실패가 **완전히 동일**하다. 그 규칙
@@ -102,4 +103,18 @@ v1 배열 문서를 픽스처로 써서, 지운 것이 없는데 다시 쓰면 �
 `M4`(빈 줄 가드 제거)는 처음 SURVIVED였고, 규칙대로 구현이 아니라 **테스트를 보강**했다:
 픽스처의 `in_sync`에 빈 문자열을 섞어, 걸러내지 않으면 `update_base.py`가 빈 relpath를
 인자로 받는 것을 잡는다.
+
+## 3.1.2 — 주장이 측정과 묶이지 않은 자리 둘 (2026-09-02)
+
+`plan4-task-16.json`도 스모크가 찾은 것이다. 둘 다 **거짓 문장**이고 둘 다 같은 형태다 —
+그 주장을 재는 테스트가 없었다.
+
+- 코어(`lib/keyed_sync.py`)의 `broken_syntax` `reason`이 *"파일을 정상 JSON으로 고친 뒤
+  다시 실행한다"* 를 달고 있었다. spec 5.3이 SKILL.md 여섯 줄에서 걷어낸 그 문장인데,
+  세 SKILL.md가 `reason`을 그대로 보여주라고 지시하므로 사용자에게 그대로 도달했다.
+- 10단계 주석의 *"while read는 세 셸에서 모두 돈다"* — POSIX sh는 프로세스 치환이 없다.
+
+**보강한 자리 둘.** `M4`(주석을 "세 셸"로 되돌리기)와 `M5`(금칙어 목록 축소)가 처음
+SURVIVED였다. 규칙대로 구현이 아니라 테스트를 보강했다 — 주석이 주장하는 셸과 파라미터화가
+재는 셸을 대조하는 가드, 그리고 금칙어 목록의 개수 단정(`DOWNGRADE_BRANCHES`와 같은 처방).
 

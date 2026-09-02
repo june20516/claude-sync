@@ -208,10 +208,15 @@ def load_backup(path, recognize):
         return {}
     obj = decode(raw)
     if obj is BROKEN:
+        # **사실만 말하고 처방은 스킬에 맡긴다.** 복구는 /sync-backup 4.5단계가 git
+        # 이력에서 마지막 정상 판본을 찾아 되돌릴지 **묻는** 것인데, 코어는 어느 스킬이
+        # 도는지 모른다. 앞 판은 여기서 "파일을 정상 JSON으로 고친 뒤 다시 실행한다"고
+        # 지시했고, 세 SKILL.md가 reason을 그대로 보여주므로 spec 5.3이 산문 여섯 줄에서
+        # 걷어낸 그 문장이 스크립트 메시지를 통해 사용자에게 그대로 도달했다(실측 —
+        # 2026-09-02 실기기 스모크). 바로 아래 UnknownBackupSchema가 기준이다.
         raise BrokenBackupSyntax(
             "%s의 JSON 구문이 깨졌다 — '항목 0개'로 읽으면 다른 기기의 항목이"
-            " 사라지므로 이 문서를 건너뛴다. 파일을 정상 JSON으로 고친 뒤 다시 실행한다"
-            % path
+            " 사라지므로 이 문서를 건너뛴다" % path
         )
     recognized = recognize(obj)
     if recognized is None:
