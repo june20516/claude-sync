@@ -31,10 +31,11 @@
 덮어쓰일 수 있다는 것을 모른 채 `/sync-restore`를 돌린다.
 
 **왜 여기 있는가.** 4단계는 레포 작업 트리에서 `find … | rm -rf`로 파일을 지우는데,
-7단계의 generate_metadata.py는 `~/.claude`를 **직접 걷는다.** 필터가 없으면 사용자가
-제외한 파일의 **이름과 sha256이 푸시되는 `sync-metadata.json`에 남는다** — 걸렀다고
-믿은 채로 푸시하는 조용한 fail-open이다. 두 곳이 각자 매칭을 만들면 그 어긋남이
-다시 조용해지므로 규칙을 이 파일 하나에 둔다.
+`~/.claude`를 직접 걷는 스크립트 둘(check_status.py·reconcile_backup.py)은 그 삭제를
+보지 못하므로 제외 목록을 스스로 적용해야 한다. 두 곳이 각자 매칭을 만들면 그 어긋남이
+조용해지므로 규칙을 이 파일 하나에 둔다. 7단계의 generate_metadata.py는 **소비자가
+아니다** — 레포 작업 트리를 걷으므로 4단계의 삭제가 곧 표식의 제외다(spec 3.3. 앞 판은
+`~/.claude`를 걸어 이 필터에 기댔다).
 
 **bash 쪽은 이 함수를 부를 수 없다**(`find`다). 그래서 대응이 깨지는 것을 잡는 것은
 test_skill_wiring.py의 `test_python_syncignore_matches_the_skill_bash`다 — 같은 픽스처에

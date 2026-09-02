@@ -165,21 +165,23 @@ def test_backup_documents_marker_fields():
         assert "`%s`" % field in sec, field
 
 
-def test_backup_step7_says_the_marker_honours_syncignore():
-    """표식은 레포가 아니라 `~/.claude`를 걷는다 — 그 사실이 절 안에 적혀야 한다.
+def test_backup_step7_hashes_the_repo_tree_after_the_exclusions():
+    """표식은 레포 작업 트리를 걷는다(spec 3.3) — 그 사실과 순서가 절 안에 적혀야 한다.
 
-    필터 자체는 generate_metadata.py와 lib/syncignore.py가 갖고 있고 그쪽에는
-    테스트가 있다. 여기서 거는 것은 **산문이 그 사실을 말하는가**다. 스킬 산문은
-    모델이 읽고 실행하는 산출물이라, 이 문장이 사라지면 다음 사람이 "표식은 레포를
-    그대로 읽으니 필터가 필요 없다"고 되돌릴 수 있다.
+    앞 판은 `~/.claude`를 걸어 제외 파일을 필터로 걸렀다. 이제 근거는 구조다 — 4단계가
+    레포 트리에서 지운 뒤에 걷는다. 호출이 그 삭제 블록보다 앞으로 옮겨지면 지워지기 전
+    트리를 걷어 제외 파일의 이름·해시가 다시 표식에 실린다.
     """
+    text = read_skill("sync-backup")
     sec = section("sync-backup", "7. sync-metadata.json 생성")
-    assert ".syncignore" in sec
-    assert "syncignore.py" in sec, "매칭 규칙이 어디 한 벌로 있는지를 적지 않았다"
-    # 사용자가 이 사실을 찾는 곳은 실행 절차가 아니라 `## 보안` 절이다. 한 곳만 걸면
-    # 나머지가 조용히 사라진다 — 이 저장소가 반복해서 만난 형태다(변조 실측).
+    assert GENERATE_METADATA_CALL in sec, "7단계가 레포 트리를 둘째 인자로 넘기지 않는다"
+    assert "레포 작업 트리를 걷는다" in sec
+    assert "`~/.claude`를 직접 걷" not in sec, "옛 서술(로컬을 걷는다)이 남아 있다"
+    assert index_of(text, SYNCIGNORE_DELETE, "sync-backup") < index_of(
+        text, GENERATE_METADATA_CALL, "sync-backup"), "표식이 제외 삭제보다 앞에서 걷는다"
     security = security_section()
     assert "sync-metadata.json" in security, "보안 절이 표식 적용을 말하지 않는다"
+    assert "레포 작업 트리" in security
 
 
 def test_status_step2_says_the_report_honours_syncignore():
@@ -292,6 +294,10 @@ COMPAT_CALL = 'python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"'
 # 엉뚱한 줄을 보게 되고 아무도 그것을 알아채지 못한다.
 COLLECT_PLUGINS_CALL = 'python3 "$SYNC_SCRIPTS/collect_plugins.py" "$SYNC_REPO" "$BASE_STAGING"'
 COLLECT_MCP_CALL = 'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$BASE_STAGING"'
+GENERATE_METADATA_CALL = ('python3 "$SYNC_SCRIPTS/generate_metadata.py"'
+                          ' "$SYNC_REPO/sync-metadata.json" "$SYNC_REPO"')
+# 4단계의 제외 삭제 블록. 표식은 이 뒤에서 걷어야 한다(spec 3.3).
+SYNCIGNORE_DELETE = 'find "$SYNC_REPO" -path "$SYNC_REPO/.git" -prune -o -path "$SYNC_REPO/$pattern" -print'
 
 # 스킬별 배선. 세 스킬의 계약이 서로 다르므로(막는 대상도, 앞뒤 경계도) 표로 몬다.
 # 한 스킬씩 손으로 쓰면 새 스킬이나 새 단계가 생겼을 때 한 곳만 고치고 만다.
@@ -316,7 +322,7 @@ COMPAT_WIRING = {
             COLLECT_PLUGINS_CALL,
             'python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"',
             COLLECT_MCP_CALL,
-            'python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"',
+            GENERATE_METADATA_CALL,
             'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${BASE_RELS[@]}"',
             'python3 "$SYNC_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"',
         ),
@@ -1505,7 +1511,7 @@ def test_step4_deletes_what_another_machine_already_pushed(tmp_path):
 # --- 4단계 bash와 lib/syncignore.py가 같은 규칙인가 ---
 #
 # 제외 판정이 **두 곳**에 있다. 4단계는 레포 작업 트리를 `find … | rm -rf`로 지우고,
-# 7단계의 generate_metadata.py는 `~/.claude`를 직접 걷는다. bash는 파이썬 함수를 부를
+# check_status.py·reconcile_backup.py는 `~/.claude`를 직접 걷는다. bash는 파이썬 함수를 부를
 # 수 없으므로 규칙을 물리적으로 한 벌로 만들 수 없다 — 대신 **두 구현을 같은 픽스처에
 # 돌려 결과가 같은지** 여기서 잰다. 갈리면 제외한 파일의 이름과 sha256이 표식에만 남아
 # 푸시되는데, 레포 트리에서는 사라졌으므로 사용자가 눈으로 확인할 방법이 없다.

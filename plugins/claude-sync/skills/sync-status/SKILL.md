@@ -114,7 +114,7 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 아직 base가 없는 파일은 로컬과 레포가 다르면 `conflict`로 분류된다. 어느 쪽이 앞선 것인지 판단할 근거가 없기 때문이며, 이것도 분기가 아니라 같은 3-way 분류의 결과다.
 
-**`~/.claude/.syncignore`에 걸린 로컬 파일은 이 보고에 나오지 않는다.** 이 스크립트는 레포가 아니라 `~/.claude`를 직접 걷기 때문에 필터가 없으면 제외한 파일이 "backup 시 push"로 보고된다 — 백업은 그것을 실제로 push하지 않으므로 **보고만 어긋나는** 자리다. 매칭 규칙은 백업 4단계·`sync-metadata.json`과 같은 한 벌(`lib/syncignore.py`)이고, `.syncignore`가 무엇을 뜻하는지의 정본은 그 파일의 모듈 docstring이다 — **"올리지 않는다"(backup 방향 전용)**.
+**`~/.claude/.syncignore`에 걸린 로컬 파일은 이 보고에 나오지 않는다.** 이 스크립트는 레포가 아니라 `~/.claude`를 직접 걷기 때문에 필터가 없으면 제외한 파일이 "backup 시 push"로 보고된다 — 백업은 그것을 실제로 push하지 않으므로 **보고만 어긋나는** 자리다. 매칭 규칙은 백업 4단계·`reconcile_backup.py`와 같은 한 벌(`lib/syncignore.py`)이고 — 백업 7단계의 `sync-metadata.json`은 이 필터의 소비자가 아니다(4단계가 지운 레포 트리를 걷는다), `.syncignore`가 무엇을 뜻하는지의 정본은 그 파일의 모듈 docstring이다 — **"올리지 않는다"(backup 방향 전용)**.
 
 **레포에도 있는 제외 파일은 여전히 보고된다.** 다만 `local_ahead`("backup 시 push")가 아니라 **`⊘ .syncignore 제외인데 레포에 남아 있음 (backup 시 레포에서 삭제)`**로 따로 묶인다. 셋 중 참인 문구가 없어서다: push는 거짓이고(4단계가 지운다), 침묵도 거짓이며(레포에 있으니 restore가 건드린다), "restore 시 내려옴"도 거짓이다(`in_sync`는 skip, `local_ahead`는 keep). 스크립트는 그 묶음 아래에 두 줄을 덧붙인다 — 다음 백업이 레포 사본을 지우고 **다른 기기가 올려 둔 같은 경로 파일도 함께 사라진다**는 것, 그리고 restore는 `.syncignore`를 보지 않으므로 지워지기 전에 복원하면 그 파일도 평소의 3-way 판정을 받는다는 것.
 
