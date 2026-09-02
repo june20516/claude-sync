@@ -1,4 +1,5 @@
 import ast
+import inspect
 import json
 import os
 
@@ -577,6 +578,43 @@ def test_restore_plan_unrestorable_for_non_dict_config():
     """4장: config가 객체가 아닌 항목은 보존하되 복원은 하지 않는다."""
     plan = mc.restore_plan({}, {"broken": None}, None)
     assert plan["unrestorable"] == ["broken"]
+
+
+@pytest.mark.parametrize("name,cfg,ok", [
+    ("ok", {"command": "npx"}, True),
+    ("sse-one", {"type": "sse", "url": "https://x/sse"}, True),
+    ("claude.ai Notion", {"command": "npx"}, False),          # 이름 규칙 위반
+    ("legacy", {"url": "npx x", "type": "stdio"}, False),      # v1 승격
+    ("broken", None, False),                                   # 객체가 아님
+])
+def test_unrestorable_reason_is_none_exactly_when_restorable(name, cfg, ok):
+    """spec 4.1 — `unrestorable_reason(n, c) is None ⟺ restorable(n, c)`.
+
+    두 판정이 갈리면 양쪽 다 무증상이다 — 복원 가능한데 사유가 붙거나, 복원 불가인데
+    사유가 None이 되어 보고에서 빠진다. 정상 케이스 둘이 없으면 "항상 사유가 있다"로도
+    이 단정이 참이 된다(입력 축).
+    """
+    assert mc.restorable(name, cfg) is ok
+    reason = mc.unrestorable_reason(name, cfg)
+    assert (reason is None) is ok
+    if not ok:
+        assert isinstance(reason, str) and reason
+
+
+def test_restorable_is_derived_from_the_reason_function():
+    """동치를 테스트 픽스처에만 맡기지 않는다 — restorable이 사유 함수로 정의된다."""
+    assert "unrestorable_reason(" in inspect.getsource(mc.restorable)
+
+
+def test_unrestorable_report_pairs_every_name_with_a_reason():
+    """spec 4.2 — 목록과 사유 맵의 키가 같은 집합이고, 복원 가능한 이름은 둘 다에 없다."""
+    mapping = {"ok": {"command": "npx"}, "claude.ai Slack": {"url": "u", "type": "HTTP"},
+               "legacy": {"url": "x", "type": "stdio"}}
+    out = mc.unrestorable_report(["claude.ai Slack", "ok", "legacy"], mapping)
+    assert out["unrestorable"] == ["claude.ai Slack", "legacy"]           # 정렬
+    assert set(out["unrestorable_reasons"]) == set(out["unrestorable"])
+    assert "이름 규칙" in out["unrestorable_reasons"]["claude.ai Slack"]
+    assert "v1" in out["unrestorable_reasons"]["legacy"]
 
 
 def test_restore_plan_in_sync_when_local_secret_is_plaintext():
