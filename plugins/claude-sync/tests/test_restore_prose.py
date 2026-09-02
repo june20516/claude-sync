@@ -158,6 +158,21 @@ def clauses():
 
 
 @functools.lru_cache(maxsize=None)
+def clauses_mcp():
+    """6절의 `#### 6-N` 소절 본문 {절 번호: 본문}."""
+    text = read_skill()
+    sec = text[text.index(MCP_HEADING):text.index(MCP_END_HEADING)]
+    marks = list(CLAUSE_HEAD.finditer(sec))
+    assert marks, "6절에서 `#### 6-N` 소절을 하나도 찾지 못했다"
+    out = {}
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(sec)
+        out[m.group(1)] = sec[m.start():end]
+    assert all(name.startswith("6-") for name in out), sorted(out)
+    return out
+
+
+@functools.lru_cache(maxsize=None)
 def clause_commands():
     """절 → 그 절의 bash 블록이 내는 `claude plugin` 하위명령 집합.
 
@@ -740,6 +755,21 @@ def test_the_two_bucket_tables_are_not_copies_of_each_other():
     assert shared, "두 표가 공유하는 버킷이 없다 — 파생이 무너졌다"
     copied = sorted(b for b in shared if rows5[b] == rows6[b])
     assert not copied, copied
+
+
+def test_the_mcp_plan_prose_reads_buckets_from_the_section_layer():
+    """spec 7 — 6절이 버킷을 `sections["servers"]` 아래서, `configs`·`secret_keys`를 최상위에서
+    읽는다. 옛 경고 셋("최상위인 계획"·"층도 처방도 다르다")은 거짓이 됐으므로 없어야 하고,
+    `not in`만으로는 바늘이 틀려도 초록이라 정정 문안과 짝짓는다."""
+    (section,) = mc.SECTIONS
+    head = mcp_bucket_table()
+    assert 'sections["%s"]' % section in head
+    assert "`configs`·`secret_keys`는 **최상위**" in head
+    text = read_skill()
+    for stale in ("같은 이름들이 최상위인 계획", "층도 처방도 다르다"):
+        assert stale not in text, stale
+    assert "층은 같고 처방이 다르다" in plugin_bucket_table()
+    assert 'sections["%s"]["unrestorable"]' % section in clauses_mcp()["6-4"]
 
 
 def named_section_buckets(text):

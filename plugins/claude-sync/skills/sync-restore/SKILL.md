@@ -257,7 +257,7 @@ cat /tmp/claude-sync-plugins-plan.json
 
 **`status`가 `"ok"`인 섹션에 `degraded_reason`이 있으면 그 문장도 함께 알린다.** 그 섹션은 접히지 않았지만 판정의 입력 하나를 잃은 상태다 — 보류 파일을 읽지 못하면 `pluginConfigs`만 접히는데 `enabledPlugins`는 H3의 해제 기록(`release`)을 함께 잃어, **이미 "이 기기 값으로 통일"을 고른 항목이 그 실행에서 다시 보류된다.** `reason`과 다른 키인 것은 그래서다 — 이것을 skip으로 렌더링하면 정상 처리된 섹션이 건너뛴 것으로 보고된다. 보류 파일을 고치고 다시 실행하도록 안내한다.
 
-**섹션 버킷의 처방 — 열한 개 전부** (9.3.8). 아래 이름은 `sections[<섹션>]` 안의 버킷이고 **최상위 키가 아니다.** 세 섹션이 각각 자기 몫을 낸다. 처리하는 절이 있는 행은 그 절 번호를 가리키고, 없는 행은 처방을 여기서 준다. 바로 뒤 6절의 MCP 표와 이름이 겹치지만 층도 처방도 다르다 — 그 표를 이 절에 옮겨 쓰지 않는다.
+**섹션 버킷의 처방 — 열한 개 전부** (9.3.8). 아래 이름은 `sections[<섹션>]` 안의 버킷이고 **최상위 키가 아니다.** 세 섹션이 각각 자기 몫을 낸다. 처리하는 절이 있는 행은 그 절 번호를 가리키고, 없는 행은 처방을 여기서 준다. 바로 뒤 6절의 MCP 표와 **층은 같고 처방이 다르다** — 그 표를 이 절에 옮겨 쓰지 않는다.
 
 | 버킷 | 처방 |
 |---|---|
@@ -358,7 +358,7 @@ claude plugin enable <id> --scope user
 
 #### 5-5. 세 선택지 — 케이스 4·5·8·9
 
-**이 표의 버킷은 `sections[<섹션>]` 안에 있다.** 계획 JSON은 두 층이고 이 절이 그 둘을 함께 부른다 — 버킷은 섹션별이고, `repo_values`·`local_values`·`install`·`config_keys`·`unrestorable_reasons`는 **최상위**다. 바로 뒤 6단계의 MCP 표는 같은 이름들이 최상위인 계획(`plan_mcp`)을 다루므로, 두 표가 나란히 있어도 층이 다르다. 최상위에서 `local_stale`을 찾으면 없고, 그러면 **케이스 4·5·8·9가 하나도 보고되지 않는다** — 넷 다 안정 상태라 사용자가 고를 기회 자체가 사라지고 다음 실행도 같다.
+**이 표의 버킷은 `sections[<섹션>]` 안에 있다.** 계획 JSON은 두 층이고 이 절이 그 둘을 함께 부른다 — 버킷은 섹션별이고, `repo_values`·`local_values`·`install`·`config_keys`·`unrestorable_reasons`는 **최상위**다. 바로 뒤 6단계의 MCP 계획(`plan_mcp`)도 같은 두 층이다 — 버킷은 `sections["servers"]` 안, `configs`·`secret_keys`는 최상위. 최상위에서 `local_stale`을 찾으면 없고, 그러면 **케이스 4·5·8·9가 하나도 보고되지 않는다** — 넷 다 안정 상태라 사용자가 고를 기회 자체가 사라지고 다음 실행도 같다.
 
 > **먼저 2.5단계가 낸 `files["plugins.json"]`의 `downgrade_suspected`를 본다. 참이면 `local_stale`(케이스 4·5)에 아래 표의 문구를 쓰지 않는다.**
 
@@ -453,9 +453,11 @@ python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json" > /tmp/cl
 cat /tmp/claude-sync-mcp-plan.json
 ```
 
+**계획 JSON은 두 층이다 — 5절의 플러그인 계획과 같은 구조다.** 버킷은 `sections["servers"]` 안에 있고(섹션이 플러그인은 셋, MCP는 하나 — 이름은 `mcp_config.SECTIONS`), 실행 재료인 `configs`·`secret_keys`는 **최상위**다. 최상위에서 `add`나 `local_stale`을 찾으면 없고, 그러면 아래 표의 어느 버킷도 처리되지 않는다.
+
 `status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원과 5절의 플러그인 단계는 그대로 진행한다). `reason_kind`가 `unknown_schema`이면 레포가 **이 기기보다 상위 버전으로 백업된 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다. `reason_kind`가 **`broken_syntax`**이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다 — 이 갈래도 **제안을 하나도 내지 않는다.** 못 읽은 문서를 "서버 0개"로 읽으면 이 기기의 서버가 전부 `local_stale`로 떨어져 거짓 근거의 제거 제안이 나가기 때문이다(실측). `"ok"`면 버킷별로 처리한다.
 
-| 버킷 | 처방 |
+| 버킷 (`sections["servers"]` 안) | 처방 |
 |---|---|
 | `add` | 그대로 등록한다 (6-1) |
 | `needs_secret` | 값을 물어 채운 뒤 등록한다. 건너뛰면 등록하지 않는다 (6-2) |
@@ -523,7 +525,7 @@ rm -f /tmp/claude-sync-mcp-one.json
 **"레포 값 채택" 5단계 — 순서를 바꾸면 안 된다.**
 
 ```
-1. 그 이름이 unrestorable 목록에 있으면 채택 선택지를 제시하지 않는다.
+1. 그 이름이 `sections["servers"]["unrestorable"]`에 있으면 채택 선택지를 제시하지 않는다.
 2. secret_keys에 있으면 **먼저** 값을 물어 넣을 JSON을 완성한다(6-2와 같은 흐름).
    건너뛰면 여기서 중단하고 "나중에"와 동일하게 처리한다(로컬 불변, base 불변).
 3. claude mcp remove <name> -s user

@@ -59,6 +59,12 @@ def staged_servers(staging):
     return mc.load_backup(os.path.join(staging, mc.BACKUP_RELPATH))
 
 
+def bucket(plan, name):
+    """계획의 버킷 — `sections[<섹션>]` 안이다(spec 7). 섹션 이름은 어댑터에서 뽑는다."""
+    (section,) = mc.SECTIONS
+    return plan["sections"][section][name]
+
+
 def test_collect_writes_repo_and_staging(tmp_path):
     """merge 결과는 레포로, next_base는 스테이징으로 — base 블롭은 건드리지 않는다."""
     local = write_local(tmp_path, {"x": A})
@@ -198,8 +204,8 @@ def test_restore_never_proposes_removing_on_a_broken_repo_document(tmp_path, rep
         plan = run()
         # 대조군 — 정상 문서에서는 **레포가 실제로 지운 dropped만** 제안이 된다.
         # base를 빼면 이 줄이 []를 받아 죽는다(입력 축 변조 — 합집합 degrade).
-        assert plan["local_stale"] == ["dropped"]
-        assert plan["add"] == ["theirs"]
+        assert bucket(plan, "local_stale") == ["dropped"]
+        assert bucket(plan, "add") == ["theirs"]
     else:
         with pytest.raises(mc.BrokenBackupSyntax):
             run()
@@ -309,6 +315,23 @@ def test_compare_cli_exits_zero_on_skip(tmp_path):
     assert json.loads(proc.stdout)["status"] == "skipped"
 
 
+def test_plan_is_two_layered_like_the_plugin_plan(tmp_path):
+    """spec 7 — 버킷은 `sections[<섹션>]` 안, 실행 재료(`configs`·`secret_keys`)는 최상위.
+
+    플러그인 계획과 같은 층 구조라야 sync-restore/SKILL.md가 두 표의 층 차이를 세 군데서
+    경고할 필요가 없다. 섹션 이름은 리터럴이 아니라 `mc.SECTIONS`에서 온다.
+    """
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo(tmp_path, {"mine": A, "theirs": B})
+    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
+                              claude_json_path=local, base_dir=write_base_blob(tmp_path, None))
+    assert set(out) == {"status", "sections", "configs", "secret_keys"}
+    assert set(out["sections"]) == set(mc.SECTIONS)
+    assert set(bucket(out, "add")) == {"theirs"}
+    assert set(out["sections"][mc.SECTIONS[0]]) == set(mc.restore_plan({}, {}, None))
+    assert out["configs"] == {"theirs": B}
+
+
 def test_plan_emits_buckets_and_configs(tmp_path):
     """SKILL.md가 레포 파일을 직접 파싱하지 않도록 등록용 config를 함께 낸다."""
     repo_cfg = {"type": "http", "url": "u", "headers": {"K": mc.SENTINEL}}
@@ -318,7 +341,7 @@ def test_plan_emits_buckets_and_configs(tmp_path):
                               claude_json_path=local,
                               base_dir=write_base_blob(tmp_path, None))
     assert out["status"] == "ok"
-    assert out["add"] == ["pw"] and out["needs_secret"] == ["c7"]
+    assert bucket(out, "add") == ["pw"] and bucket(out, "needs_secret") == ["c7"]
     assert out["configs"]["pw"] == {"command": "npx"}
     assert out["secret_keys"]["c7"] == [("headers", "K")]   # JSON으로 나가면 배열이 된다
 
@@ -340,7 +363,7 @@ def test_plan_omits_configs_for_unrestorable(tmp_path):
     out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
                               claude_json_path=local,
                               base_dir=write_base_blob(tmp_path, None))
-    assert out["unrestorable"] == ["claude.ai Notion"]
+    assert bucket(out, "unrestorable") == ["claude.ai Notion"]
     assert out["configs"] == {}
 
 
@@ -350,9 +373,9 @@ def test_plan_uses_base_to_split_cases_7_8_9(tmp_path):
     base_dir = write_base_blob(tmp_path, {"seven": ORIG, "eight": ORIG, "nine": ORIG})
     out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
                               claude_json_path=local, base_dir=base_dir)
-    assert out["local_ahead"] == ["seven"]
-    assert out["repo_ahead"] == ["eight"]
-    assert out["both_changed"] == ["nine"]
+    assert bucket(out, "local_ahead") == ["seven"]
+    assert bucket(out, "repo_ahead") == ["eight"]
+    assert bucket(out, "both_changed") == ["nine"]
 
 
 def test_plan_cli_exits_zero_on_skip(tmp_path):

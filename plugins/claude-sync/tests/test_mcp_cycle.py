@@ -72,7 +72,7 @@ class Device:
         backup_path = os.path.join(self.repo, mc.BACKUP_RELPATH)
         plan = json.loads(self._run(PLAN, "plan", backup_path))
         servers = self.local()
-        for name in list(plan["add"]) + list(adopt):     # add-json
+        for name in list(bucket(plan, "add")) + list(adopt):     # add-json
             servers[name] = plan["configs"][name]
         for name in remove:                              # mcp remove
             servers.pop(name, None)
@@ -88,6 +88,12 @@ class Device:
 
 def repo_servers(repo):
     return mc.load_backup(os.path.join(repo, mc.BACKUP_RELPATH))
+
+
+def bucket(plan, name):
+    """계획의 버킷 — `sections[<섹션>]` 안이다(spec 7). 섹션 이름은 어댑터에서 뽑는다."""
+    (section,) = mc.SECTIONS
+    return plan["sections"][section][name]
 
 
 def set_repo(repo, servers):
@@ -110,7 +116,7 @@ def test_case8_adopt_then_backup_converges_to_repo_value(tmp_path):
     set_repo(dev.repo, {"x": B})                  # 타 기기가 변경
     assert dev.backup()["repo_ahead"]["present"] == ["x"]
     plan = dev.restore(adopt=["x"])
-    assert plan["repo_ahead"] == ["x"]
+    assert bucket(plan, "repo_ahead") == ["x"]
     report = dev.backup()
     assert dev.local()["x"] == B
     assert repo_servers(dev.repo)["x"] == B
@@ -157,7 +163,7 @@ def test_case9_three_choices(tmp_path):
         return dev
 
     dev = setup("adopt")
-    assert dev.restore(adopt=["Z"])["both_changed"] == ["Z"]
+    assert bucket(dev.restore(adopt=["Z"]), "both_changed") == ["Z"]
     assert dev.backup()["conflicts"] == {"repo_kept": [], "repo_absent": []}
     assert repo_servers(dev.repo)["Z"] == B
 
@@ -178,7 +184,7 @@ def test_case7_restore_does_not_touch_local(tmp_path):
     dev.backup()
     dev.set_local({"x": A})                        # 아직 백업하지 않은 로컬 변경
     plan = dev.restore()
-    assert plan["local_ahead"] == ["x"]
+    assert bucket(plan, "local_ahead") == ["x"]
     assert dev.local()["x"] == A
 
 
@@ -189,7 +195,7 @@ def test_case4_keep_brings_server_back_and_stabilizes(tmp_path):
     set_repo(dev.repo, {"y": A})                   # 기기 A가 X를 지우고 백업한 결과
     assert dev.backup()["local_stale"] == ["X"]
     plan = dev.restore(keep_stale=["X"])
-    assert plan["local_stale"] == ["X"]
+    assert bucket(plan, "local_stale") == ["X"]
     assert "X" not in dev.base()
     dev.backup()
     assert sorted(repo_servers(dev.repo)) == ["X", "y"]
@@ -224,7 +230,8 @@ def test_two_cycles_reach_fixed_point(tmp_path):
         report = dev.backup()
         plan = dev.restore()                       # 무선택
         snapshots.append((repo_servers(dev.repo), dev.base(), report,
-                          {k: v for k, v in plan.items() if isinstance(v, list) and v}))
+                          {k: v for k, v in plan["sections"][mc.SECTIONS[0]].items()
+                           if isinstance(v, list) and v}))
     assert snapshots[1] == snapshots[2], "2주기와 3주기가 다르다 — 고정점이 아니다"
     assert snapshots[2][2]["local_stale"] == ["X"]
     assert snapshots[2][2]["repo_ahead"]["present"] == ["x"]
@@ -238,8 +245,8 @@ def test_v1_migration_restore_reports_unrestorable_without_failures(tmp_path):
     with open(os.path.join(dev.repo, mc.BACKUP_RELPATH), "w", encoding="utf-8") as f:
         json.dump(v1, f)
     plan = dev.restore()
-    assert sorted(plan["unrestorable"]) == ["claude.ai Notion", "context7"]
-    assert plan["add"] == [] and plan["needs_secret"] == []
+    assert sorted(bucket(plan, "unrestorable")) == ["claude.ai Notion", "context7"]
+    assert bucket(plan, "add") == [] and bucket(plan, "needs_secret") == []
     dev.backup()
     assert sorted(repo_servers(dev.repo)) == ["claude.ai Notion", "context7", "playwright"]
 

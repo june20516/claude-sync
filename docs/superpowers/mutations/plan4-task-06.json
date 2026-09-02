@@ -1,0 +1,26 @@
+[
+ {"id": "M1", "desc": "축1 훅 호출 계약 — 섹션 이름을 상수 대신 BACKLOG가 적은 틀린 리터럴로",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_mcp.py",
+  "old": "        \"sections\": {section: dict(plan)},",
+  "new": "        \"sections\": {\"mcpServers\": dict(plan)},"},
+
+ {"id": "M2", "desc": "축2 축분리 — 실행 재료(configs)를 판정 층 안으로 옮긴다",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_mcp.py",
+  "old": "        \"sections\": {section: dict(plan)},\n        \"configs\": {n: masked[n] for n in names},",
+  "new": "        \"sections\": {section: dict(plan, configs={n: masked[n] for n in names})},"},
+
+ {"id": "M3", "desc": "축3 {} vs None — 빈 버킷을 생략한다(키 집합이 줄어든다)",
+  "file": "plugins/claude-sync/skills/sync-restore/scripts/plan_mcp.py",
+  "old": "        \"sections\": {section: dict(plan)},",
+  "new": "        \"sections\": {section: {k: v for k, v in plan.items() if v}},"},
+
+ {"id": "M4", "desc": "축5 입력 축 — 층 테스트 픽스처에서 레포 전용 항목을 뺀다",
+  "file": "plugins/claude-sync/tests/test_mcp_scripts.py",
+  "old": "    repo = write_repo(tmp_path, {\"mine\": A, \"theirs\": B})\n    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),\n                              claude_json_path=local, base_dir=write_base_blob(tmp_path, None))\n    assert set(out) == {\"status\", \"sections\", \"configs\", \"secret_keys\"}",
+  "new": "    repo = write_repo(tmp_path, {\"mine\": A})\n    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),\n                              claude_json_path=local, base_dir=write_base_blob(tmp_path, None))\n    assert set(out) == {\"status\", \"sections\", \"configs\", \"secret_keys\"}"},
+
+ {"id": "M5", "desc": "축4 I/O 층 — 거짓이 된 옛 경고를 산문에 되살린다",
+  "file": "plugins/claude-sync/skills/sync-restore/SKILL.md",
+  "old": "바로 뒤 6단계의 MCP 계획(`plan_mcp`)도 같은 두 층이다 — 버킷은 `sections[\"servers\"]` 안, `configs`·`secret_keys`는 최상위.",
+  "new": "바로 뒤 6단계의 MCP 표는 같은 이름들이 최상위인 계획(`plan_mcp`)을 다루므로, 두 표가 나란히 있어도 층이 다르다."}
+]
