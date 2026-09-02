@@ -9,7 +9,7 @@
       "name": "claude-sync",
       "source": "./plugins/claude-sync",
       "description": "Claude 설정(agents, skills, CLAUDE.md, 플러그인, MCP 서버)을 Git 레포를 통해 기기 간 동기화하는 스킬 모음 (backup, restore, status)",
-      "version": "3.1.0",
+      "version": "3.1.1",
       "author": {
         "name": "june20516"
       },
