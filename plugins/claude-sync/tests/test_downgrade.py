@@ -241,6 +241,55 @@ def test_candidate_null_when_history_has_no_v2(tmp_path):
     assert mcp_of(out)["newer_schema_seen"] is False
 
 
+# --- 구문 손상 (spec 5.1) ---
+
+@pytest.mark.parametrize("relpath,commit,healthy", [
+    (mc.BACKUP_RELPATH, commit_mcp, v2({"a": {"command": "a"}})),
+    (pc.BACKUP_RELPATH, commit_plugins, p_v2()),
+], ids=["mcp", "plugins"])
+def test_broken_document_is_diagnosed_with_its_last_v2_commit(tmp_path, relpath, commit, healthy):
+    """spec 5.1 — 구문 손상은 base 없이도 사실이고, 후보는 마지막 v2 커밋이며, 두 갈래는 배타다."""
+    repo = make_repo(tmp_path)
+    commit(repo, healthy, "backup: v2")
+    commit(repo, healthy[:len(healthy) // 2], "backup: 잘린 쓰기")      # 정상 문서를 잘라 만든다
+    out = dd.detect(str(repo), base_dir=base_dir_with(tmp_path))
+    entry = out["files"][relpath]
+    assert entry["status"] == "ok"
+    assert entry["broken_syntax"] is True
+    assert entry["downgrade_suspected"] is False
+    assert entry["repo_shape"] == compat.SHAPE_BROKEN
+    assert entry["candidate"]["subject"] == "backup: v2"
+    other = next(r for r in dd.RELPATHS if r != relpath)
+    assert out["files"][other]["broken_syntax"] is False           # 다른 문서는 무관하다
+
+
+def test_working_tree_only_corruption_points_at_head(tmp_path):
+    """커밋되지 않은 손상 — HEAD가 정상이면 HEAD가 후보다."""
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v2({"a": {"command": "a"}}), "backup: v2")
+    (repo / mc.BACKUP_RELPATH).write_text("{", encoding="utf-8")
+    entry = mcp_of(dd.detect(str(repo), base_dir=base_dir_with(tmp_path)))
+    assert entry["broken_syntax"] is True
+    assert entry["candidate"]["subject"] == "backup: v2"
+
+
+def test_broken_document_without_any_v2_in_history_has_no_candidate(tmp_path):
+    """"판정할 수 없었다"를 "사고가 없다"로 접지 않는다 — 후보가 없어도 손상은 참이다."""
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v1(["a"]), "backup: 2.x")
+    commit_mcp(repo, "[{", "backup: 잘림")
+    entry = mcp_of(dd.detect(str(repo), base_dir=base_dir_with(tmp_path)))
+    assert entry["broken_syntax"] is True and entry["candidate"] is None
+    assert entry["newer_schema_seen"] is False
+
+
+def test_a_healthy_document_reports_broken_syntax_false(tmp_path):
+    repo = make_repo(tmp_path)
+    commit_mcp(repo, v2({"a": {"command": "a"}}), "backup")
+    entry = mcp_of(dd.detect(str(repo), base_dir=base_dir_with(tmp_path)))
+    assert entry["broken_syntax"] is False and entry["candidate"] is None
+
+
 def test_skips_commits_where_file_absent(tmp_path):
     """파일이 없던 커밋에서 git show가 실패해도 탐색이 멈추면 안 된다."""
     repo = make_repo(tmp_path)
@@ -604,8 +653,8 @@ def test_corrupt_repo_is_skipped_not_reported_as_no_candidate(tmp_path):
     assert entry["status"] == "skipped"
     assert entry["reason"]
     # 키 모양이 정상 경로와 같아야 한다 — 없으면 None(falsy)으로 '사고 없음'처럼 읽힌다
-    for key in ("downgrade_suspected", "repo_shape", "base_shape", "candidate",
-                "newer_schema_seen"):
+    for key in ("downgrade_suspected", "broken_syntax", "repo_shape", "base_shape",
+                "candidate", "newer_schema_seen"):
         assert key in entry
 
 

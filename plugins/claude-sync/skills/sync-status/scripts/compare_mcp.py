@@ -3,8 +3,9 @@
 
 사용: compare_mcp.py <레포의 mcp-servers.json 경로>
 
-정규식도 `claude mcp list` 파이프도 쓰지 않는다. 판정은 mcp_config.diff 하나만
-쓴다 — status와 backup이 서로 다른 파서를 갖는 것이 Bug #2의 원인이었다.
+정규식도 `claude mcp list` 파이프도 쓰지 않는다. 판정은 mcp_config의 diff와
+unrestorable_report 둘을 쓴다 — status와 backup이 서로 다른 파서를 갖는 것이 Bug #2의
+원인이었고, 복원 불가 사유도 같은 이유로 세 스킬이 같은 함수에서 받는다(spec 4.2).
 base는 읽지도 갱신하지도 않는다(읽기 전용 스킬).
 """
 import json
@@ -19,7 +20,8 @@ import mcp_config as mc  # noqa: E402
 
 
 def compare(backup_path, claude_json_path=None):
-    """{"status": "ok", "only_local": [...], "only_repo": [...], "changed": [...]}
+    """{"status": "ok", "only_local": [...], "only_repo": [...], "changed": [...],
+        "unrestorable": [...], "unrestorable_reasons": {이름: 사유}}
 
     diff가 양쪽에 redact를 적용하므로 로컬 평문과 레포 마스킹이 in_sync로 수렴한다.
     """
@@ -27,6 +29,10 @@ def compare(backup_path, claude_json_path=None):
     repo = mc.load_backup(backup_path)
     out = {"status": "ok"}
     out.update(mc.diff(local, repo))
+    # **restore가 새 항목으로 훑는 집합**에서 뽑는다(spec 4.2) — MCP에는 보류가 없어
+    # only_repo와 같지만 플러그인 쪽(compare_plugins의 route_new_for)과 같은 함수를 부른다.
+    # 어느 기기도 복원할 수 없는 항목에 "restore가 설치합니다"라고 말하지 않기 위한 축이다.
+    out.update(mc.unrestorable_report(mc.route_new_keys(local, repo), repo))
     return out
 
 

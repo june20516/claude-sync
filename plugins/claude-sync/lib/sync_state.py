@@ -75,6 +75,11 @@ def classify(local_hash, repo_hash, seen_hash, local_exists, repo_exists):
 
     반환: in_sync | repo_only | local_only | local_ahead | fast_forward | conflict
     seen_hash는 base가 없으면 None.
+
+    기준선 없는 L≠R도 conflict다 — 방향을 모르니 restore가 선택을 받아야 한다는 점에서
+    판정으로는 옳다. 그러나 "양쪽 변경"이라는 **머리말**은 그 파일에 거짓이므로 보고
+    시점 분할은 check_status.py가 한다(spec 3.4). 여기에 값을 더하지 않는 이유는
+    restore_action의 완전성 단정과 소비자 둘이 이 반환값 집합에 걸려 있어서다.
     """
     if not repo_exists:
         return "local_only"
@@ -163,6 +168,8 @@ def iter_synced_relpaths(root):
       파일에 침묵해, 사용자가 한 세션에서 모순된 말을 듣는다.
     - reconcile_restore.py는 **걸지 않는다(결정).** 복원 방향에서 존중하면 다른 기기가
       올린 같은 경로 파일을 영영 받지 못한다.
+    - generate_metadata.py는 **레포 작업 트리**를 걷는다 — 제외는 4단계가 그 트리에서
+      이미 적용했으므로 걸지 않는다(spec 3.3).
     """
     for name in SYNCED_DIRS:
         d = os.path.join(root, name)

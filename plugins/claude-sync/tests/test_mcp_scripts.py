@@ -19,6 +19,7 @@ import mcp_config as mc  # noqa: E402
 import collect_mcp  # noqa: E402
 import compare_mcp  # noqa: E402
 import plan_mcp  # noqa: E402
+import prune_mcp  # noqa: E402
 
 A = {"command": "a"}
 B = {"command": "b"}
@@ -57,6 +58,12 @@ def repo_servers(repo):
 
 def staged_servers(staging):
     return mc.load_backup(os.path.join(staging, mc.BACKUP_RELPATH))
+
+
+def bucket(plan, name):
+    """계획의 버킷 — `sections[<섹션>]` 안이다(spec 7). 섹션 이름은 어댑터에서 뽑는다."""
+    (section,) = mc.SECTIONS
+    return plan["sections"][section][name]
 
 
 def test_collect_writes_repo_and_staging(tmp_path):
@@ -198,8 +205,8 @@ def test_restore_never_proposes_removing_on_a_broken_repo_document(tmp_path, rep
         plan = run()
         # 대조군 — 정상 문서에서는 **레포가 실제로 지운 dropped만** 제안이 된다.
         # base를 빼면 이 줄이 []를 받아 죽는다(입력 축 변조 — 합집합 degrade).
-        assert plan["local_stale"] == ["dropped"]
-        assert plan["add"] == ["theirs"]
+        assert bucket(plan, "local_stale") == ["dropped"]
+        assert bucket(plan, "add") == ["theirs"]
     else:
         with pytest.raises(mc.BrokenBackupSyntax):
             run()
@@ -263,7 +270,8 @@ def test_compare_converges_when_local_secret_is_plaintext(tmp_path):
     local = write_local(tmp_path, {"c7": dict(repo_cfg, headers={"K": "sk-real"})})
     repo = write_repo(tmp_path, {"c7": repo_cfg})
     out = compare_mcp.compare(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local)
-    assert out == {"status": "ok", "only_local": [], "only_repo": [], "changed": []}
+    assert out == {"status": "ok", "only_local": [], "only_repo": [], "changed": [],
+                   "unrestorable": [], "unrestorable_reasons": {}}
 
 
 def test_compare_reports_three_buckets(tmp_path):
@@ -273,6 +281,59 @@ def test_compare_reports_three_buckets(tmp_path):
     assert out["only_local"] == ["mine"]
     assert out["only_repo"] == ["theirs"]
     assert out["changed"] == ["both"]
+
+
+GARBAGE = {"url": "https://mcp.example/mcp", "type": "HTTP"}    # 2.x가 긁어 넣은 형태
+
+
+def test_compare_reports_unrestorable_with_reasons(tmp_path):
+    """spec 4.2 — status가 `only_repo` 중 어느 기기도 복원할 수 없는 것을 가른다."""
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo(tmp_path, {"claude.ai Slack": GARBAGE, "theirs": B})
+    out = compare_mcp.compare(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local)
+    assert out["only_repo"] == ["claude.ai Slack", "theirs"]
+    assert out["unrestorable"] == ["claude.ai Slack"]
+    assert set(out["unrestorable_reasons"]) == {"claude.ai Slack"}
+    assert "이름 규칙" in out["unrestorable_reasons"]["claude.ai Slack"]
+
+
+@pytest.mark.parametrize("base", [None, {"mine": A}], ids=["no_base", "with_base"])
+def test_collect_lists_unrestorable_repo_only_entries_with_or_without_base(tmp_path, base):
+    """spec 4.2 — backup은 **병합 결과**에서 뽑는다. 기준선이 없으면 레포 전용 항목이
+    `repo_ahead`에 실리지 않으므로(합집합 degrade) 거기서 뽑으면 놓친다.
+
+    로컬에 있는 이름은 이름이 이상해도 오지 않는다 — 사용자의 실제 설정이다.
+    """
+    local = write_local(tmp_path, {"mine": A, "odd name": {"command": "x"}})
+    repo = write_repo(tmp_path, {"mine": A, "claude.ai Slack": GARBAGE, "theirs": B})
+    out = collect_mcp.collect(repo, str(tmp_path / "staging"), claude_json_path=local,
+                              base_dir=write_base_blob(tmp_path, base))
+    assert out["unrestorable"] == ["claude.ai Slack"]
+    assert list(out["unrestorable_reasons"]) == ["claude.ai Slack"]
+    if base is None:
+        assert out["repo_ahead"] == {"present": [], "absent": []}     # degrade — 여기엔 없다
+    else:
+        assert "claude.ai Slack" in out["repo_ahead"]["absent"]
+
+
+def test_plan_reasons_cover_exactly_the_unrestorable_bucket(tmp_path):
+    local = write_local(tmp_path, {})
+    repo = write_repo(tmp_path, {"claude.ai Notion": GARBAGE, "pw": {"command": "npx"}})
+    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH), claude_json_path=local,
+                              base_dir=write_base_blob(tmp_path, None))
+    assert bucket(out, "unrestorable") == ["claude.ai Notion"]
+    assert set(bucket(out, "unrestorable_reasons")) == {"claude.ai Notion"}
+    assert out["configs"] == {"pw": {"command": "npx"}}
+
+
+def test_status_and_restore_give_the_same_reason_for_the_same_name(tmp_path):
+    """플러그인 쪽과 같은 규칙(test_plugin_scripts) — 두 스킬이 같은 키에 같은 사유를 말한다."""
+    local = write_local(tmp_path, {})
+    repo = write_repo(tmp_path, {"claude.ai Notion": GARBAGE})
+    path = os.path.join(repo, mc.BACKUP_RELPATH)
+    status = compare_mcp.compare(path, claude_json_path=local)
+    plan = plan_mcp.build_plan(path, claude_json_path=local, base_dir=write_base_blob(tmp_path, None))
+    assert status["unrestorable_reasons"] == bucket(plan, "unrestorable_reasons")
 
 
 def test_compare_preserves_command_with_spaces(tmp_path):
@@ -309,6 +370,23 @@ def test_compare_cli_exits_zero_on_skip(tmp_path):
     assert json.loads(proc.stdout)["status"] == "skipped"
 
 
+def test_plan_is_two_layered_like_the_plugin_plan(tmp_path):
+    """spec 7 — 버킷은 `sections[<섹션>]` 안, 실행 재료(`configs`·`secret_keys`)는 최상위.
+
+    플러그인 계획과 같은 층 구조라야 sync-restore/SKILL.md가 두 표의 층 차이를 세 군데서
+    경고할 필요가 없다. 섹션 이름은 리터럴이 아니라 `mc.SECTIONS`에서 온다.
+    """
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo(tmp_path, {"mine": A, "theirs": B})
+    out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
+                              claude_json_path=local, base_dir=write_base_blob(tmp_path, None))
+    assert set(out) == {"status", "sections", "configs", "secret_keys"}
+    assert set(out["sections"]) == set(mc.SECTIONS)
+    assert set(bucket(out, "add")) == {"theirs"}
+    assert set(out["sections"][mc.SECTIONS[0]]) == set(mc.restore_plan({}, {}, None)) | {"unrestorable_reasons"}
+    assert out["configs"] == {"theirs": B}
+
+
 def test_plan_emits_buckets_and_configs(tmp_path):
     """SKILL.md가 레포 파일을 직접 파싱하지 않도록 등록용 config를 함께 낸다."""
     repo_cfg = {"type": "http", "url": "u", "headers": {"K": mc.SENTINEL}}
@@ -318,7 +396,7 @@ def test_plan_emits_buckets_and_configs(tmp_path):
                               claude_json_path=local,
                               base_dir=write_base_blob(tmp_path, None))
     assert out["status"] == "ok"
-    assert out["add"] == ["pw"] and out["needs_secret"] == ["c7"]
+    assert bucket(out, "add") == ["pw"] and bucket(out, "needs_secret") == ["c7"]
     assert out["configs"]["pw"] == {"command": "npx"}
     assert out["secret_keys"]["c7"] == [("headers", "K")]   # JSON으로 나가면 배열이 된다
 
@@ -340,7 +418,7 @@ def test_plan_omits_configs_for_unrestorable(tmp_path):
     out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
                               claude_json_path=local,
                               base_dir=write_base_blob(tmp_path, None))
-    assert out["unrestorable"] == ["claude.ai Notion"]
+    assert bucket(out, "unrestorable") == ["claude.ai Notion"]
     assert out["configs"] == {}
 
 
@@ -350,9 +428,9 @@ def test_plan_uses_base_to_split_cases_7_8_9(tmp_path):
     base_dir = write_base_blob(tmp_path, {"seven": ORIG, "eight": ORIG, "nine": ORIG})
     out = plan_mcp.build_plan(os.path.join(repo, mc.BACKUP_RELPATH),
                               claude_json_path=local, base_dir=base_dir)
-    assert out["local_ahead"] == ["seven"]
-    assert out["repo_ahead"] == ["eight"]
-    assert out["both_changed"] == ["nine"]
+    assert bucket(out, "local_ahead") == ["seven"]
+    assert bucket(out, "repo_ahead") == ["eight"]
+    assert bucket(out, "both_changed") == ["nine"]
 
 
 def test_plan_cli_exits_zero_on_skip(tmp_path):
@@ -667,3 +745,73 @@ def test_collect_names_the_staging_failure_reason_apart_from_skipped(tmp_path, m
     assert out["base_staging"] == "failed"
     assert "reason" not in out
     assert "다음 백업이 복구한다" in out["base_staging_reason"]
+
+
+# --------------------------------------------------------- prune_mcp (spec 4.3)
+
+def test_prune_removes_only_the_named_unrestorable_repo_only_entries(tmp_path):
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo(tmp_path, {"mine": A, "claude.ai Slack": GARBAGE, "claude.ai Gmail": GARBAGE})
+    out = prune_mcp.prune(repo, ["claude.ai Slack"], claude_json_path=local)
+    assert out == {"status": "ok", "pruned": ["claude.ai Slack"], "not_found": [], "refused": {}}
+    assert repo_servers(repo) == {"mine": A, "claude.ai Gmail": GARBAGE}
+
+
+def test_prune_refuses_local_and_restorable_names_instead_of_deleting_them(tmp_path):
+    """잘못 배선된 이름을 조용히 지우지 않는다 — 거부는 예외가 아니라 출력이다."""
+    local = write_local(tmp_path, {"mine": A, "odd name": {"command": "x"}})
+    repo = write_repo(tmp_path, {"mine": A, "odd name": {"command": "x"},
+                                 "theirs": B, "claude.ai Slack": GARBAGE})
+    before = open(os.path.join(repo, mc.BACKUP_RELPATH), encoding="utf-8").read()
+    out = prune_mcp.prune(repo, ["odd name", "theirs", "ghost"], claude_json_path=local)
+    assert out["pruned"] == [] and out["not_found"] == ["ghost"]
+    assert set(out["refused"]) == {"odd name", "theirs"}
+    assert "로컬" in out["refused"]["odd name"] and "복원 가능" in out["refused"]["theirs"]
+    assert open(os.path.join(repo, mc.BACKUP_RELPATH), encoding="utf-8").read() == before
+
+
+def test_prune_does_not_rewrite_the_repo_document_when_it_prunes_nothing(tmp_path):
+    """지운 것이 없으면 레포 파일을 **열지도 않는다**(spec 4.3의 `if pruned:` 가드).
+
+    바이트 동일만으로는 부족하다 — 같은 v2 문서를 다시 써도 바이트가 같아 그 가드가
+    재지지 않는다(변조 실측: SURVIVED). 갈리는 자리는 **v1 배열 문서**다. 아무것도
+    지우지 않았는데 dump_backup을 부르면 그 문서가 v2로 승격되어 커밋에 실리고,
+    다운그레이드 진단(detect_downgrade)이 보는 레포 형태가 이 실행 때문에 바뀐다.
+    """
+    text = json.dumps([{"name": "theirs", "command": "b"}])
+    repo = write_repo_raw(tmp_path, text)
+    out = prune_mcp.prune(repo, ["ghost"], claude_json_path=write_local(tmp_path, {}))
+    assert out["pruned"] == [] and out["not_found"] == ["ghost"]
+    assert open(os.path.join(repo, mc.BACKUP_RELPATH), encoding="utf-8").read() == text
+
+
+def test_prune_touches_neither_base_nor_staging(tmp_path):
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo(tmp_path, {"mine": A, "claude.ai Slack": GARBAGE})
+    base_dir = write_base_blob(tmp_path, {"mine": A})
+    before = open(os.path.join(base_dir, mc.BACKUP_RELPATH), "rb").read()
+    prune_mcp.prune(repo, ["claude.ai Slack"], claude_json_path=local)
+    assert open(os.path.join(base_dir, mc.BACKUP_RELPATH), "rb").read() == before
+    assert not os.path.exists(str(tmp_path / "staging"))
+
+
+def test_prune_is_a_document_level_skip_on_a_broken_repo_document(tmp_path):
+    repo = write_broken_repo(tmp_path, {"mine": A, "claude.ai Slack": GARBAGE})
+    path = os.path.join(repo, mc.BACKUP_RELPATH)
+    before = open(path, encoding="utf-8").read()
+    with pytest.raises(mc.BrokenBackupSyntax):
+        prune_mcp.prune(repo, ["claude.ai Slack"], claude_json_path=write_local(tmp_path, {}))
+    assert open(path, encoding="utf-8").read() == before
+
+
+def test_prune_cli_exits_zero_and_reports_skipped_on_a_broken_document(tmp_path):
+    repo = write_broken_repo(tmp_path, {"mine": A})
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    script = os.path.join(SCRIPTS_DIR, "sync-backup", "scripts", "prune_mcp.py")
+    proc = subprocess.run([sys.executable, script, repo, "claude.ai Slack"],
+                          capture_output=True, text=True, env=dict(os.environ, HOME=str(home)))
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "skipped" and out["reason_kind"] == "broken_syntax"

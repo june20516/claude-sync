@@ -69,6 +69,11 @@ def collect(repo_path, staging_dir, claude_json_path=None, base_dir=ss.BASE_DIR)
         "deleted": result["deleted"],
         "local_stale": result["local_stale"],
         "repo_ahead": report.split_repo_ahead(result["repo_ahead"], local),
+        # **병합 결과에서 뽑는다 — repo_ahead가 아니다**(spec 4.2). 기준선이 없으면 레포
+        # 전용 항목이 repo_ahead에 실리지 않으므로(합집합 degrade) 거기서 뽑으면 놓친다.
+        # "로컬에 없다"(이 기기 것이 아니다) ∩ "복원 불가"(어느 기기도 재현할 수 없다)가
+        # 6.5단계의 정리 후보다. 순수 계산이라 쓰기 뒤에 있어도 된다.
+        **mc.unrestorable_report([n for n in servers if n not in local], servers),
     }
     try:
         os.replace(tmp, staged)

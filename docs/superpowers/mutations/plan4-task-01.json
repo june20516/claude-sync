@@ -1,0 +1,26 @@
+[
+ {"id": "M1", "desc": "축2 축분리 — reject의 두 갈래를 맞바꾼다",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/reconcile_backup.py",
+  "old": "    return \"no_base\" if seen_hash is None else \"remote_ahead\"",
+  "new": "    return \"remote_ahead\" if seen_hash is None else \"no_base\""},
+
+ {"id": "M2", "desc": "축1 훅 호출 계약 — main이 갈래 함수를 부르지 않고 한 갈래로 몰아넣는다",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/reconcile_backup.py",
+  "old": "            out[\"reject\"][reject_bucket(S)].append(rel)",
+  "new": "            out[\"reject\"][\"remote_ahead\"].append(rel)"},
+
+ {"id": "M3", "desc": "축3 {} vs None — 기준선 없음을 push로 접는다",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/reconcile_backup.py",
+  "old": "    if repo_hash == seen_hash:\n        return \"push\"  # 로컬만 변경(local ahead)",
+  "new": "    if repo_hash == seen_hash or seen_hash is None:\n        return \"push\"  # 로컬만 변경(local ahead)"},
+
+ {"id": "M4", "desc": "축5 입력 축 — 픽스처에서 in_sync 대조군을 뺀다(대조군 단정이 죽는지)",
+  "file": "plugins/claude-sync/tests/test_reconcile.py",
+  "old": "    (repo / \"agents\" / \"internal-secret.md\").write_text(\"사내 URL\")  # 로컬과 같다 — 대조군",
+  "new": "    pass  # 대조군 제거"},
+
+ {"id": "M5", "desc": "축4 I/O 층 — no_base 인용문에 방향을 단정하는 문장을 되살린다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "  > \"이 파일은 비교 기준선이 없어 어느 쪽이 앞선 것인지 판단할 수 없습니다.",
+  "new": "  > \"리모트가 앞선 변경이 있습니다. 이 파일은 비교 기준선이 없어 어느 쪽이 앞선 것인지 판단할 수 없습니다."}
+]

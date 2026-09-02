@@ -165,21 +165,23 @@ def test_backup_documents_marker_fields():
         assert "`%s`" % field in sec, field
 
 
-def test_backup_step7_says_the_marker_honours_syncignore():
-    """표식은 레포가 아니라 `~/.claude`를 걷는다 — 그 사실이 절 안에 적혀야 한다.
+def test_backup_step7_hashes_the_repo_tree_after_the_exclusions():
+    """표식은 레포 작업 트리를 걷는다(spec 3.3) — 그 사실과 순서가 절 안에 적혀야 한다.
 
-    필터 자체는 generate_metadata.py와 lib/syncignore.py가 갖고 있고 그쪽에는
-    테스트가 있다. 여기서 거는 것은 **산문이 그 사실을 말하는가**다. 스킬 산문은
-    모델이 읽고 실행하는 산출물이라, 이 문장이 사라지면 다음 사람이 "표식은 레포를
-    그대로 읽으니 필터가 필요 없다"고 되돌릴 수 있다.
+    앞 판은 `~/.claude`를 걸어 제외 파일을 필터로 걸렀다. 이제 근거는 구조다 — 4단계가
+    레포 트리에서 지운 뒤에 걷는다. 호출이 그 삭제 블록보다 앞으로 옮겨지면 지워지기 전
+    트리를 걷어 제외 파일의 이름·해시가 다시 표식에 실린다.
     """
+    text = read_skill("sync-backup")
     sec = section("sync-backup", "7. sync-metadata.json 생성")
-    assert ".syncignore" in sec
-    assert "syncignore.py" in sec, "매칭 규칙이 어디 한 벌로 있는지를 적지 않았다"
-    # 사용자가 이 사실을 찾는 곳은 실행 절차가 아니라 `## 보안` 절이다. 한 곳만 걸면
-    # 나머지가 조용히 사라진다 — 이 저장소가 반복해서 만난 형태다(변조 실측).
+    assert GENERATE_METADATA_CALL in sec, "7단계가 레포 트리를 둘째 인자로 넘기지 않는다"
+    assert "레포 작업 트리를 걷는다" in sec
+    assert "`~/.claude`를 직접 걷" not in sec, "옛 서술(로컬을 걷는다)이 남아 있다"
+    assert index_of(text, SYNCIGNORE_DELETE, "sync-backup") < index_of(
+        text, GENERATE_METADATA_CALL, "sync-backup"), "표식이 제외 삭제보다 앞에서 걷는다"
     security = security_section()
     assert "sync-metadata.json" in security, "보안 절이 표식 적용을 말하지 않는다"
+    assert "레포 작업 트리" in security
 
 
 def test_status_step2_says_the_report_honours_syncignore():
@@ -292,6 +294,11 @@ COMPAT_CALL = 'python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"'
 # 엉뚱한 줄을 보게 되고 아무도 그것을 알아채지 못한다.
 COLLECT_PLUGINS_CALL = 'python3 "$SYNC_SCRIPTS/collect_plugins.py" "$SYNC_REPO" "$BASE_STAGING"'
 COLLECT_MCP_CALL = 'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$BASE_STAGING"'
+PRUNE_CALL = 'python3 "$SYNC_SCRIPTS/prune_mcp.py" "$SYNC_REPO"'
+GENERATE_METADATA_CALL = ('python3 "$SYNC_SCRIPTS/generate_metadata.py"'
+                          ' "$SYNC_REPO/sync-metadata.json" "$SYNC_REPO"')
+# 4단계의 제외 삭제 블록. 표식은 이 뒤에서 걷어야 한다(spec 3.3).
+SYNCIGNORE_DELETE = 'find "$SYNC_REPO" -path "$SYNC_REPO/.git" -prune -o -path "$SYNC_REPO/$pattern" -print'
 
 # 스킬별 배선. 세 스킬의 계약이 서로 다르므로(막는 대상도, 앞뒤 경계도) 표로 몬다.
 # 한 스킬씩 손으로 쓰면 새 스킬이나 새 단계가 생겼을 때 한 곳만 고치고 만다.
@@ -316,8 +323,9 @@ COMPAT_WIRING = {
             COLLECT_PLUGINS_CALL,
             'python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"',
             COLLECT_MCP_CALL,
-            'python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"',
-            'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${PUSHED_RELS[@]}"',
+            PRUNE_CALL,
+            GENERATE_METADATA_CALL,
+            'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${BASE_RELS[@]}"',
             'python3 "$SYNC_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"',
         ),
     },
@@ -429,7 +437,7 @@ DOWNGRADE_CALLERS = SKILLS
 # 탐지 호출이 있어야 할 절. 파일 어딘가면 되는 검사는 호출이 엉뚱한 단계로 옮겨져도
 # 통과한다 — 실측으로, 호출을 MCP 계획 바로 앞으로 옮겼을 때 스위트 전체가 통과했다.
 DOWNGRADE_SECTION = {
-    "sync-backup": "4.5 다운그레이드 사고 탐지",
+    "sync-backup": "4.5 레포 문서 진단",
     "sync-status": "1.5 호환성 검사",
     "sync-restore": RESTORE_CHECK_SECTION,
 }
@@ -484,7 +492,7 @@ def test_downgrade_detection_precedes_what_it_informs(skill):
 # 탐지 **결과를 렌더링하는** 절. 호출 절과 같지 않다 — status와 restore는 compat.py의
 # 산문(`blocked`·`message`와 그 reason 값들)과 한 절을 쓰므로, 그 안의 하위 절만 잘라야
 # 아래 어휘 대조가 남의 키를 이 스크립트의 것으로 세지 않는다.
-DOWNGRADE_RESULT_SUBSECTION = "다운그레이드 탐지 결과"
+DOWNGRADE_RESULT_SUBSECTION = "레포 문서 진단 결과"
 DOWNGRADE_PROSE = {
     "sync-backup": lambda: section("sync-backup", DOWNGRADE_SECTION["sync-backup"]),
     "sync-status": lambda: subsection("sync-status", DOWNGRADE_RESULT_SUBSECTION),
@@ -688,6 +696,8 @@ DOWNGRADE_BRANCHES = (
     ("`downgrade_suspected`가 `true`면",
      "백업 레포의 `<relpath>`가 옛 형식으로 되돌아가 있습니다",
      "사용자에게 실제로 보일 경고. 지워지면 사고가 통째로 조용해진다"),
+    ("`broken_syntax`가 참이면", "JSON으로 읽히지 않",
+     "구문 손상은 base 없이도 사실이다. 지워지면 5·6단계의 건너뜀에 이유가 없어진다(spec 5.1)"),
     ("`newer_schema_seen`이 `true`면", "알아보지 못하는 백업",
      "'후보 없음'과 '알아보지 못해 건너뜀'은 다른 말이다"),
     ("`candidate`가 있으면", "`entries`",
@@ -728,6 +738,27 @@ def test_downgrade_prose_keeps_every_branch(skill, marker, needle, why):
     )
 
 
+def test_backup_broken_branch_offers_repair_only_when_there_is_a_candidate():
+    """spec 5.2 — 후보가 있으면 「복구한다」를 주고, 없으면 손으로 되돌리는 안내가 **거기에만** 남는다."""
+    sec = DOWNGRADE_PROSE["sync-backup"]()
+    branch = branch_slice(sec, "`broken_syntax`가 참이면")
+    assert "**복구한다**" in branch and 'show "<sha>:<relpath>"' in branch
+    assert "복구하지 않고 계속한다" in branch and "**중단한다.**" in branch
+    assert "후보를 못 찾은 경우에만 남는 마지막 수단이다" in branch
+    assert "그냥 지우라고 안내하지 않는다" in branch
+
+
+@pytest.mark.parametrize("skill,pointer", [
+    ("sync-restore", "**복구는 `/sync-backup`에서 합니다**"),
+    ("sync-status", "**`/sync-backup`이 복구를 제안합니다**"),
+])
+def test_read_only_skills_point_the_broken_branch_at_backup(skill, pointer):
+    """0장의 결정 — restore·status는 진단하고 backup을 가리킨다. 레포를 고치지 않는다."""
+    branch = branch_slice(DOWNGRADE_PROSE[skill](), "`broken_syntax`가 참이면")
+    assert pointer in branch
+    assert 'show "<sha>' not in branch, "%s가 레포를 되돌린다" % skill
+
+
 def test_the_downgrade_branch_table_did_not_shrink():
     """표가 스스로 줄면 그 갈래가 아무 소리 없이 검사에서 빠진다.
 
@@ -738,7 +769,7 @@ def test_the_downgrade_branch_table_did_not_shrink():
     `assert DOWNGRADE_BRANCHES`가 수집 단계에서 잡는다. 빈 표는 위 파라미터화를 FAIL이
     아니라 skip으로 만들기 때문이다(실측). 이 단정이 잡는 것은 **행이 하나씩 빠지는 쪽**이다.
     """
-    assert len(DOWNGRADE_BRANCHES) == 6, DOWNGRADE_BRANCHES
+    assert len(DOWNGRADE_BRANCHES) == 7, DOWNGRADE_BRANCHES
     assert len(set(DOWNGRADE_BRANCH_MARKERS)) == len(DOWNGRADE_BRANCHES), "표식이 겹친다"
 
 
@@ -944,7 +975,7 @@ def test_restore_reports_downgrade_and_points_at_the_writable_path():
     여기서 "복구했다"고 말하거나 복구를 실행하는 시늉을 하면, 사용자는 레포가
     나은 줄 알고 떠난다.
     """
-    sub = subsection("sync-restore", "다운그레이드 탐지 결과")
+    sub = subsection("sync-restore", DOWNGRADE_RESULT_SUBSECTION)
     assert "downgrade_suspected" in sub
     assert "push하지 않으므로" in sub
     assert "/sync-backup" in sub
@@ -1177,6 +1208,31 @@ def test_backup_base_gate_distinguishes_push_failure_from_staging_failure():
     assert "REPO_HAS_CONTENT=0" in sec and "이미 존재한다" in sec
 
 
+FILE_BASE_CALL = 'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${BASE_RELS[@]}"'
+
+
+def test_backup_advances_file_bases_on_both_success_paths():
+    """②(spec 3.2) — 파일 base 갱신이 "변경사항 없음" 경로와 푸시 성공 경로 **둘 다**에 있고,
+    푸시 실패 경로에는 없다.
+
+    실측(2026-09-01): push가 비고 in_sync만 8개인 백업은 정확히 첫 경로로 빠졌고, 거기에
+    갱신이 없어 파일 기준선이 하나도 생기지 않았다. 그래서 ①이 백업만 하는 기기에서
+    **계속** 재발한다.
+    """
+    block = section("sync-backup", "10. 커밋 & 푸시")
+    sites = [m.start() for m in re.finditer(re.escape(FILE_BASE_CALL), block)]
+    assert len(sites) == 2, "파일 base 갱신 호출이 %d번이다 — 두 경로에 하나씩이어야 한다" % len(sites)
+    quiet = block.index("if git diff --cached --quiet; then")
+    commit = block.index("elif git commit")
+    fail = block.index("푸시에 실패했습니다")
+    assert quiet < sites[0] < commit < sites[1] < fail
+    # 대상은 push ∪ in_sync 이고 reject의 어느 갈래도 아니다.
+    src = block[block.index("mapfile -t BASE_RELS"):quiet]
+    assert "data.get('push', []) + data.get('in_sync', [])" in src
+    assert "reject" not in src, "방향을 모르는 파일의 base가 전진한다"
+    assert "in_sync 파일의 base ← 로컬 내용" in section("sync-backup", "11. base(.sync-state) 갱신 규칙")
+
+
 # 두 수집 단계(backup)와 두 apply-base(restore)가 **한 스킬 안에서** 같은 디렉토리를
 # 쓴다. 각 단계가 제 앞에서 비우면 앞 단계의 산출물이 지워지고 그 파일의 base가 영영
 # 전진하지 않는다. **스킬 사이로는 공유하지 않는다** — 아래 테스트가 그것을 건다.
@@ -1240,6 +1296,48 @@ def test_backup_base_gate_covers_both_relpaths():
     # spec 7.4가 막으려던 상태가 된다 — 파일 존재만으로는 그것을 막지 못한다.
     assert '[ "$REPO_HAS_CONTENT" = "1" ]' in block
     assert '[ -f "$MCP_STAGING/mcp-servers.json" ]' not in read_skill("sync-backup")
+
+
+def test_backup_prunes_between_mcp_collection_and_the_marker():
+    """spec 4.4 — 6.5단계는 6단계(정리 후보를 내는 곳) 뒤, 7단계(표식) 앞이다. 10단계의
+    커밋이 그 삭제를 함께 올린다."""
+    text = read_skill("sync-backup")
+    for anchor in ("### 6. mcp-servers.json", "### 6.5 복원 불가 항목 정리", "### 7. sync-metadata.json"):
+        assert anchor in text, anchor
+    assert (text.index("### 6. mcp-servers.json") < text.index("### 6.5 복원 불가 항목 정리")
+            < text.index("### 7. sync-metadata.json"))
+    assert (index_of(text, COLLECT_MCP_CALL, "sync-backup") < index_of(text, PRUNE_CALL, "sync-backup")
+            < index_of(text, GENERATE_METADATA_CALL, "sync-backup"))
+
+
+def test_backup_prune_step_asks_once_with_both_notices_and_suppresses_on_downgrade():
+    """spec 4.4·4.5 — 목록 전체에 한 번 묻고, 고지 둘(판정이 버전에 묶여 있다 / 다른 기기가
+    실제로 쓰면 묻는다)을 담고, 다운그레이드가 의심되면 정리 선택지를 주지 않는다."""
+    sec = section("sync-backup", "6.5 복원 불가 항목 정리")
+    assert "`unrestorable`" in sec and "`unrestorable_reasons`" in sec
+    assert "레포에서 정리한다" in sec and "이번엔 넘어간다" in sec
+    assert "목록 전체에 한 번 묻는다" in sec
+    assert "이 버전이 아는 형식" in sec, "판정이 버전에 묶여 있음을 고지하지 않는다"
+    assert "묻고" in sec and "조용히 사라지지 않습니다" in sec
+    assert '`files["%s"]`' % mc.BACKUP_RELPATH in sec and "`downgrade_suspected`" in sec
+    assert "정리 선택지를 주지 않는다" in sec
+    assert "`pruned`" in sec and "`refused`" in sec
+    assert "기억하지 않는다" in sec
+    # 4.6과 같은 자리의 실수를 막는다 — 그 문서 하나만 본다.
+    assert '`files["%s"]`' % pc.BACKUP_RELPATH not in sec, "plugins.json 판정으로 억제한다"
+
+
+def test_backup_mcp_table_excepts_unrestorable_from_the_install_promise():
+    """spec 4.2 — `repo_ahead.absent`의 "restore가 설치합니다"를 복원 불가 이름에는 쓰지 않는다."""
+    sec = section("sync-backup", "6. mcp-servers.json 생성")
+    assert "`unrestorable`에 있는 이름에는 쓰지 않는다" in sec
+    assert "6.5단계" in sec
+
+
+def test_backup_report_lists_what_was_pruned():
+    sec = section("sync-backup", "12. 결과 보고")
+    assert "`pruned`" in sec and "`refused`" in sec
+
 
 
 def test_restore_clears_the_shared_staging_before_both_apply_base_calls():
@@ -1480,7 +1578,7 @@ def test_step4_deletes_what_another_machine_already_pushed(tmp_path):
 # --- 4단계 bash와 lib/syncignore.py가 같은 규칙인가 ---
 #
 # 제외 판정이 **두 곳**에 있다. 4단계는 레포 작업 트리를 `find … | rm -rf`로 지우고,
-# 7단계의 generate_metadata.py는 `~/.claude`를 직접 걷는다. bash는 파이썬 함수를 부를
+# check_status.py·reconcile_backup.py는 `~/.claude`를 직접 걷는다. bash는 파이썬 함수를 부를
 # 수 없으므로 규칙을 물리적으로 한 벌로 만들 수 없다 — 대신 **두 구현을 같은 픽스처에
 # 돌려 결과가 같은지** 여기서 잰다. 갈리면 제외한 파일의 이름과 sha256이 표식에만 남아
 # 푸시되는데, 레포 트리에서는 사라졌으므로 사용자가 눈으로 확인할 방법이 없다.
@@ -1628,6 +1726,19 @@ def test_status_step2_does_not_promise_a_metadata_branch():
     # 옛 거짓이 되살아나는 것을 막는다. 바늘의 값은 위 docstring이 축자로 인용한다.
     assert "단순 diff" not in sec
 
+
+
+def test_status_names_the_no_base_bucket_with_the_scripts_own_heading():
+    """spec 3.4 — 2단계가 `no_base` 묶음의 머리말을 스크립트에서 뽑은 그대로 싣고, 3단계의
+    어휘에도 그 갈래가 있다. 머리말을 손으로 적지 않는다 — excluded_in_repo와 같은 처방."""
+    with open(os.path.join(SKILLS_DIR, "sync-status", "scripts", "check_status.py"),
+              encoding="utf-8") as f:
+        label = re.search(r'\("no_base", "(.+?)"\)', f.read())
+    assert label, "check_status.py에서 no_base 머리말을 뽑지 못했다"
+    step2 = section("sync-status", "2. 로컬과 레포의 차이 분석")
+    assert label.group(1) in step2, "2단계가 그 묶음의 머리말을 그대로 싣지 않는다"
+    assert "`no_base`" in step2 and "양쪽 변경\"이 아니다" in step2
+    assert "- **no_base**" in section("sync-status", "3. 결과 요약")
 
 def test_extract_plugins_is_gone_everywhere():
     """12장 — 스킬이 새 스크립트를 부르게 된 뒤에 지운다. 그 전에 지우면 백업이 깨진다."""
@@ -1944,6 +2055,42 @@ def test_no_skill_branches_on_the_reason_sentence():
     assert offenders == [], offenders
 
 
+# `reason_kind`가 broken_syntax인 분기 **줄**. 세 스킬에 여섯 줄이다(backup 5·6, restore 5·6,
+# status 2단계의 플러그인·MCP). 손으로 세지 않고 정규식으로 뽑되 개수를 함께 건다.
+BROKEN_BRANCH = re.compile(r"`reason_kind`가 \*{0,2}`broken_syntax`\*{0,2}이면")
+REPAIR_POINTER = {
+    "sync-backup": "4.5단계에서 「복구한다」",
+    "sync-restore": "**복구는 `/sync-backup`이**",
+    "sync-status": "`/sync-backup`이 복구를 제안합니다",
+}
+MANUAL_REPAIR = "정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다"
+
+
+def test_every_broken_syntax_branch_points_at_the_plugin_repair():
+    """spec 5.3 — 여섯 줄 전부가 플러그인의 복구 경로를 가리키고, "손으로 되돌려라"는 backup의
+    후보 없음 갈래에만 남는다. restore·status는 그 문장을 아예 쓰지 않는다(0장의 결정).
+
+    앞 판의 여섯 줄은 똑같이 "그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다"였다
+    — 행위자가 사용자이고, 그 상태에서는 세 스킬이 전부 그 문서를 건너뛰어 탈출구가 없었다.
+    """
+    found = 0
+    for skill in SKILLS:
+        for line in read_skill(skill).splitlines():
+            if not BROKEN_BRANCH.search(line):
+                continue
+            found += 1
+            plain = line.replace("**", "")
+            assert REPAIR_POINTER[skill].replace("**", "") in plain, (skill, line[:90])
+            if skill == "sync-backup":
+                assert MANUAL_REPAIR in plain and plain.index("후보가 없었던 경우") < plain.index(MANUAL_REPAIR), (
+                    "backup의 손 복구 안내는 후보 없음 갈래 뒤에만 온다")
+            else:
+                assert MANUAL_REPAIR not in plain, "%s가 레포 수리를 사용자에게 떠넘긴다" % skill
+            assert "그냥 지우라고 안내하지 않는다" in plain, "삭제 금지 경고가 사라졌다"
+    assert found == 6, found
+
+
+
 def test_the_script_contract_table_did_not_shrink():
     """위 표는 **손으로 고른 목록**이라 대조할 외부 진실 원천이 없다.
 
@@ -1974,6 +2121,26 @@ def test_script_call_pattern_covers_every_root_variable():
             "SCRIPT_CALL이 $%s를 덮지 않는다 — 그 변수로 부르는 줄이 완전성 검사에서 빠진다"
             % name
         )
+
+
+def status_mcp_section():
+    """status 2단계의 **MCP 반쪽**. status_plugin_section의 짝이다."""
+    text = read_skill("sync-status")
+    start = text.index("MCP 서버 비교:")
+    return text[start:text.index("### 3. 결과 요약", start)]
+
+
+def test_status_and_restore_say_who_prunes_unrestorable_mcp_entries():
+    """spec 4.2 — status는 `unrestorable`에 "restore가 설치합니다"를 붙이지 않고, 둘 다
+    정리의 주체(`/sync-backup`)를 가리킨다. restore는 레포에 쓰지 않는다고 말한다."""
+    mcp = status_mcp_section()
+    assert "`unrestorable`" in mcp and "`unrestorable_reasons`" in mcp
+    assert "`/sync-backup`이 레포에서 정리할지 묻습니다" in mcp
+    assert "같은 집합" in mcp, "사유 맵의 키가 목록과 같다는 계약이 없다"
+    sub = subsection("sync-restore", "6-3.")
+    assert '`sections["%s"]["unrestorable_reasons"]`' % mc.SECTIONS[0] in sub
+    assert "`/sync-backup`이 6.5단계에서 제안한다" in sub
+    assert "restore는 레포에 쓰지 않는다" in sub
 
 
 def status_only_repo_guidance():
@@ -2098,6 +2265,29 @@ def test_backup_report_table_covers_every_held_kind():
 BASE_DIR_ANCHOR = ".sync-state/base"
 
 
+def test_backup_step4_never_calls_a_baseless_reject_remote_ahead():
+    """①(spec 3.1) — `reject`의 두 갈래에 다른 문장을 쓰고, `no_base`에는 방향을 단정하지 않는다.
+
+    실측(2026-09-01): 첫 실기기 백업의 유일한 reject는 기준선이 없어서였고 로컬이 앞서
+    있었다. "리모트가 앞섰다 → restore 먼저"를 따라 「백업 채택」을 고르면 로컬 41줄이
+    사라진다 — 안내가 파괴적 선택을 가리키는 자리다.
+    """
+    sec = section("sync-backup", "4. 파일별 reconcile")
+    remote = sec.index("`reject.remote_ahead`")
+    no_base = sec.index("`reject.no_base`")
+    push = sec.index("`push` 파일만")
+    assert remote < no_base < push, "갈래 둘이 push 안내보다 앞에, remote_ahead가 먼저"
+    remote_branch, no_base_branch = sec[remote:no_base], sec[no_base:push]
+    assert "리모트가 앞선 변경이 있습니다" in remote_branch
+    assert "어느 쪽이 앞선 것인지 판단할 수 없습니다" in no_base_branch
+    assert "「백업 채택」은 그것을 버립니다" in no_base_branch, "파괴적 선택의 위험을 말하지 않는다"
+    # 인용문(사용자에게 나가는 문장) 안에는 방향을 단정하는 말이 없어야 한다.
+    quote = no_base_branch[no_base_branch.index("> "):]
+    assert "리모트가 앞선" not in quote, "no_base 인용문이 방향을 단정한다"
+    for branch in (remote_branch, no_base_branch):
+        assert "push하지 않는다" in branch
+
+
 def test_backup_checks_the_missing_base_before_it_collects():
     """4.6은 수집(5·6)보다 **앞**이어야 하고, 두 문서를 함께 봐야 한다.
 
@@ -2173,3 +2363,40 @@ def test_restore_does_not_ask_for_hold_kinds_the_plan_never_emits():
     assert "/sync-status" in sub, (
         "사유를 실제로 내는 명령을 가리켜야 한다 — 그러지 않으면 사용자가 갈 곳이 없다"
     )
+
+
+# ── 언어 스위치 (spec 6) ─────────────────────────────────────────────────
+LANGUAGE_RULE = "**`language`가 있으면 사용자에게 보이는 모든 문장을 그 언어로 낸다.**"
+NO_TRANSLATE = re.compile(r"\*\*번역하지 않는 것\*\*: (.+?)\. ")
+FIRST_RUN_LANGUAGE = "사용자가 대화에 쓰는 언어로 한다"
+STEP1 = {"sync-backup": "1. 설정 확인", "sync-restore": "1. 설정 확인",
+         "sync-status": "1. 설정 확인 및 레포 준비"}
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_step1_carries_the_language_rule_and_asks_on_first_run(skill):
+    """규칙이 세 스킬에 같은 문장으로 있고, 첫 실행의 질문은 대화 언어로 한다."""
+    sec = section(skill, STEP1[skill])
+    assert LANGUAGE_RULE in sec, skill
+    assert FIRST_RUN_LANGUAGE in sec, skill
+    assert "부재가 곧 한국어" in sec, skill
+
+
+def test_the_do_not_translate_list_is_the_same_in_every_skill():
+    """번역하지 않는 것의 목록이 갈리면 한 스킬만 명령이나 키 이름을 번역한다."""
+    found = {skill: NO_TRANSLATE.search(section(skill, STEP1[skill])) for skill in SKILLS}
+    assert all(found.values()), [s for s, m in found.items() if not m]
+    values = {m.group(1) for m in found.values()}
+    assert len(values) == 1, values
+    only = values.pop()
+    for token in ("명령", "JSON 키", "파일 경로", "이름", "판정 값"):
+        assert token in only, token
+
+
+def test_backup_verbatim_contract_allows_language_only():
+    """2.5단계의 드리프트 방지 계약이 살아 있고(명령을 직접 타자하지 않는다), 언어만 바꾼다."""
+    sec = section("sync-backup", "2.5 호환성 검사")
+    assert "`message`의 내용을 그대로 보여준다" in sec
+    assert "언어만" in sec and "명령을 직접 타자하지 않는다" in sec
+    assert "**`message` 필드를 그대로 보여준다. 명령을 직접 타자하지 않는다**" not in sec
+

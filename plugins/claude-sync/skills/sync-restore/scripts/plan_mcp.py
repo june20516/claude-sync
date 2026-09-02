@@ -3,7 +3,7 @@
 
 사용:
   plan_mcp.py plan <레포의 mcp-servers.json 경로>
-    복원 계획 JSON을 stdout에 낸다 (버킷 9개 + configs + secret_keys).
+    복원 계획 JSON을 stdout에 낸다 (`sections[<섹션>]`의 버킷 9개 + 최상위 configs·secret_keys).
 
   plan_mcp.py apply-base <레포의 mcp-servers.json 경로> <스테이징 디렉토리> <선택 결과 JSON 경로>
     복원 후 로컬을 다시 읽어 next_base를 계산하고, 선택 override 두 개를 적용해
@@ -30,20 +30,34 @@ NEEDS_CONFIG = ("add", "needs_secret", "repo_ahead", "both_changed")
 
 
 def build_plan(backup_path, claude_json_path=None, base_dir=ss.BASE_DIR):
-    """restore_plan 결과에 등록용 레포 config(마스킹됨)를 덧붙여 반환한다."""
+    """restore_plan 결과를 `sections` 층으로 감싸고 등록용 레포 config(마스킹됨)를 덧붙인다.
+
+    **두 층이다 — plan_plugins와 같은 구조**(spec 7). 버킷은 `sections[<섹션>]` 안(판정),
+    `configs`·`secret_keys`는 최상위(실행 재료). 섹션 이름은 `mc.SECTIONS`에서 뽑고
+    언패킹으로 "섹션이 하나"라는 전제를 함께 건다 — detect_downgrade._mcp_buckets와 같다.
+    앞 판은 버킷을 최상위에 두어 sync-restore/SKILL.md가 두 표의 층 차이를 세 군데서
+    경고해야 했다. 휘발성 JSON이라 마이그레이션은 없다.
+    """
     local = mc.read_local_servers(claude_json_path)
     repo = mc.load_backup(backup_path)
     base = mc.parse_base(ss.read_base(mc.BACKUP_RELPATH, base_dir=base_dir))
     plan = mc.restore_plan(local, repo, base)
     masked = mc.redact(repo)
     names = sorted({n for bucket in NEEDS_CONFIG for n in plan[bucket]})
-    out = {"status": "ok"}
-    out.update(plan)
-    out["configs"] = {n: masked[n] for n in names}
-    out["secret_keys"] = {
-        n: mc.secret_keys(masked[n]) for n in names if mc.secret_keys(masked[n])
+    buckets = dict(plan)
+    # 사유는 버킷과 같은 층(섹션 안)에 둔다 — plan_plugins가 unrestorable_reasons를 섹션 안에
+    # 두는 것과 맞춘다. unrestorable_report가 목록을 다시 내지만 restore_plan의 버킷과 같은
+    # 집합이다(테스트가 건다) — 사유만 따로 만들면 갈릴 자리가 생긴다.
+    buckets.update(mc.unrestorable_report(plan["unrestorable"], masked))
+    (section,) = mc.SECTIONS
+    return {
+        "status": "ok",
+        "sections": {section: buckets},
+        "configs": {n: masked[n] for n in names},
+        "secret_keys": {
+            n: mc.secret_keys(masked[n]) for n in names if mc.secret_keys(masked[n])
+        },
     }
-    return out
 
 
 def apply_base(backup_path, staging_dir, choices, claude_json_path=None, base_dir=ss.BASE_DIR):

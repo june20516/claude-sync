@@ -20,6 +20,7 @@ SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ski
 SKIPPED_USERS = (
     "sync-backup/scripts/collect_mcp.py",
     "sync-backup/scripts/collect_plugins.py",
+    "sync-backup/scripts/prune_mcp.py",
     "sync-restore/scripts/plan_mcp.py",
     "sync-restore/scripts/plan_plugins.py",
     "sync-status/scripts/compare_mcp.py",

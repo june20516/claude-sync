@@ -5,6 +5,7 @@
 import json
 import os
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
@@ -14,17 +15,17 @@ sys.path.insert(
 
 import pytest  # noqa: E402
 
-from marks import requires_permission_bits  # noqa: E402
 
 import compat  # noqa: E402
 import mcp_config as mc  # noqa: E402
 import plugin_config as pc  # noqa: E402
 import generate_metadata as gm  # noqa: E402
+import sync_state as ss  # noqa: E402
 
 
-def fake_claude_dir(tmp_path):
-    """agents/skills/CLAUDE.md를 가진 ~/.claude 역할 디렉토리."""
-    d = tmp_path / "claude"
+def fake_tree(tmp_path, name="claude"):
+    """agents/skills/CLAUDE.md를 가진 트리. 레포 작업 트리 역할(spec 3.3) — `~/.claude`가 아니다."""
+    d = tmp_path / name
     (d / "agents").mkdir(parents=True)
     (d / "skills" / "demo").mkdir(parents=True)
     (d / "agents" / "a.md").write_text("a", encoding="utf-8")
@@ -47,7 +48,7 @@ def write_plugin_json(tmp_path, obj=None, *, missing=False):
 
 def test_metadata_has_all_three_markers(tmp_path):
     meta = gm.build_metadata(
-        fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
+        fake_tree(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
     )
     assert meta["written_by_version"] == "3.0.0"
     assert meta["min_reader_version"] == compat.MIN_READER_VERSION
@@ -63,7 +64,7 @@ def test_min_reader_is_constant_not_plugin_version(tmp_path):
     3.0.1을 내는 순간 3.0.0 기기가 전부 막힌다.
     """
     meta = gm.build_metadata(
-        fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.9.9"})
+        fake_tree(tmp_path), write_plugin_json(tmp_path, {"version": "3.9.9"})
     )
     assert meta["written_by_version"] == "3.9.9"
     assert meta["min_reader_version"] == "3.0.0"
@@ -90,7 +91,7 @@ def test_min_reader_minor_and_patch_are_zero():
 def test_written_by_omitted_when_plugin_json_unreadable(tmp_path):
     """자기 버전을 몰라도 min_reader는 정상 기록된다 — 상수를 쓰는 두 번째 이유."""
     meta = gm.build_metadata(
-        fake_claude_dir(tmp_path), write_plugin_json(tmp_path, missing=True)
+        fake_tree(tmp_path), write_plugin_json(tmp_path, missing=True)
     )
     assert "written_by_version" not in meta
     assert meta["min_reader_version"] == compat.MIN_READER_VERSION
@@ -107,7 +108,7 @@ def test_schema_map_carries_both_backup_documents(tmp_path):
     이 단정이 초록이고, 그때 표식은 실제와 다른 버전을 말하게 된다.
     """
     meta = gm.build_metadata(
-        fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
+        fake_tree(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
     )
     assert meta["schema"][pc.BACKUP_RELPATH] == pc.SCHEMA_VERSION
 
@@ -120,7 +121,7 @@ def test_schema_map_covers_exactly_the_two_backup_documents(tmp_path):
     두 모듈에서 뽑는 것은 `test_compat.py`의 같은 자리와 **같은 규율**이다.
     """
     meta = gm.build_metadata(
-        fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
+        fake_tree(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"})
     )
     assert set(meta["schema"]) == {mc.BACKUP_RELPATH, pc.BACKUP_RELPATH}
 
@@ -147,7 +148,7 @@ def test_the_metadata_example_matches_what_the_script_writes(tmp_path):
     줄면 예시가 낡는다. `schema`·`min_reader_version`은 상수에서 뽑아 대조한다.
     """
     real = gm.build_metadata(
-        fake_claude_dir(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"}))
+        fake_tree(tmp_path), write_plugin_json(tmp_path, {"version": "3.0.0"}))
     example = metadata_example()
     assert set(example) == set(real), (sorted(example), sorted(real))
     assert example["schema"] == real["schema"]
@@ -237,7 +238,7 @@ def test_write_metadata_routes_through_the_atomic_writer(tmp_path, monkeypatch):
 
 def test_metadata_is_byte_stable_across_runs(tmp_path):
     """표식 파일이 소음이 되면 안 된다 — 같은 입력이면 같은 바이트여야 한다."""
-    claude_dir = fake_claude_dir(tmp_path)
+    claude_dir = fake_tree(tmp_path)
     plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
     out1, out2 = str(tmp_path / "m1.json"), str(tmp_path / "m2.json")
     gm.write_metadata(out1, gm.build_metadata(claude_dir, plugin_json))
@@ -248,7 +249,7 @@ def test_metadata_is_byte_stable_across_runs(tmp_path):
 
 def test_metadata_bytes_are_independent_of_key_order(tmp_path):
     """sort_keys가 없으면 여기서 죽는다 — 같은 런의 두 호출로는 os.walk 순서 차이를 못 만든다."""
-    claude_dir = fake_claude_dir(tmp_path)
+    claude_dir = fake_tree(tmp_path)
     meta = gm.build_metadata(claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
     reversed_meta = {k: meta[k] for k in reversed(list(meta))}
     reversed_meta["files"] = {k: meta["files"][k] for k in reversed(list(meta["files"]))}
@@ -261,7 +262,7 @@ def test_metadata_bytes_are_independent_of_key_order(tmp_path):
 
 def test_dangling_symlink_is_skipped_not_fatal(tmp_path):
     """표식 생성이 통째로 죽으면 표식 없는 백업이 푸시된다. 파일 하나가 빠지는 게 싸다."""
-    d = fake_claude_dir(tmp_path)
+    d = fake_tree(tmp_path)
     os.symlink(os.path.join(d, "nowhere.md"), os.path.join(d, "agents", "dangling.md"))
     meta = gm.build_metadata(d, write_plugin_json(tmp_path, {"version": "3.0.0"}))
     assert "agents/dangling.md" not in meta["files"]
@@ -269,145 +270,66 @@ def test_dangling_symlink_is_skipped_not_fatal(tmp_path):
     assert meta["min_reader_version"] == compat.MIN_READER_VERSION
 
 
-# --- `.syncignore`: 제외한 파일이 표식에 남는가 ---
+
+# --- 표식은 레포 작업 트리를 걷는다 (spec 3.3) ---
 #
-# **표식은 레포가 아니라 `~/.claude`를 직접 걷는다.** 4단계의 `find | rm -rf`는 레포
-# 작업 트리만 손대므로, 필터가 없으면 사용자가 제외한 파일의 **이름과 sha256이 푸시되는
-# `sync-metadata.json`에 그대로 남는다** — README가 "민감 파일을 `.syncignore`로 걸러내고
-# 백업하라"고 말하는 바로 그 자리의 조용한 fail-open이다.
-# 매칭 규칙이 4단계의 `find -path`와 같은지는 test_skill_wiring.py의
-# test_python_syncignore_matches_the_skill_bash가 두 구현을 함께 돌려 잰다.
+# 앞 판은 `~/.claude`를 걸어 **이 기기의 로컬**을 적었다. 그래서 표식이 레포에 없는 내용
+# (reject 파일의 로컬 해시)을 레포 것이라 말하고, 다른 기기가 올린 파일은 통째로 빠뜨렸다
+# (실측 — 2026-09-01). 7단계 시점의 레포 트리가 정의상 "이 백업이 담는 내용"이다 — 4단계가
+# push 복사와 `.syncignore` 삭제를 마쳤으므로 제외 파일은 트리에 없고 표식에도 없다.
+# 제외의 근거가 필터에서 **구조**로 옮겨 갔다.
 
-def write_syncignore(claude_dir, text):
-    with open(os.path.join(claude_dir, ".syncignore"), "w", encoding="utf-8") as f:
-        f.write(text)
+def test_files_map_is_exactly_the_synced_files_of_the_tree(tmp_path):
+    """양방향 완전성 — reject 해시·타 기기 파일 누락·제외 파일 유출 셋을 한 단정으로 덮는다.
 
-
-def secret_agent(claude_dir, rel="agents/internal-secret.md"):
-    """제외 대상 파일 하나를 만들고 (상대경로, 내용의 sha256)을 돌려준다."""
-    path = os.path.join(claude_dir, rel)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("사내 URL과 내부 규칙")
-    return rel, gm.file_sha256(path)
-
-
-def test_syncignore_keeps_the_name_and_the_hash_out_of_metadata(tmp_path):
-    """이름도 해시도 남으면 안 된다.
-
-    **키만 확인하면 부족하다** — 해시는 그 자체로 내용의 지문이라, 값만 남아도
-    같은 파일을 가진 사람이 대조할 수 있다. 직렬화한 바이트 전체에서 찾는다.
-    남겨 두는 대조 파일이 없으면 "전부 뺀다"로도 단정이 참이 된다.
+    ⊆만 걸면 파일을 하나씩 잃어도 초록이고, ⊇만 걸면 트리 밖의 것을 실어도 초록이다.
+    걷는 집합의 정의는 sync_state.iter_synced_relpaths 하나다 — 세 소비자와 같다.
     """
-    claude_dir = fake_claude_dir(tmp_path)
-    rel, digest = secret_agent(claude_dir)
-    write_syncignore(claude_dir, "agents/internal-*.md\n")
-    meta = gm.build_metadata(
-        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
-    assert rel not in meta["files"]
-    assert digest not in json.dumps(meta), "제외한 파일의 sha256이 표식에 남았다"
-    assert "agents/a.md" in meta["files"], "패턴에 없는 파일까지 뺐다"
+    tree = fake_tree(tmp_path)
+    meta = gm.build_metadata(tree, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    assert set(meta["files"]) == set(ss.iter_synced_relpaths(tree))
+    for rel, digest in meta["files"].items():
+        assert digest == gm.file_sha256(os.path.join(tree, rel)), rel
 
 
-def test_without_syncignore_the_same_file_is_recorded(tmp_path):
-    """대조군 — 위 단정이 "표식이 원래 비어 있다"로 참이 되는 것을 막는다."""
-    claude_dir = fake_claude_dir(tmp_path)
-    rel, digest = secret_agent(claude_dir)
-    meta = gm.build_metadata(
-        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
-    assert meta["files"][rel] == digest
+def test_files_map_records_the_tree_not_some_other_directory(tmp_path):
+    """트리 인자가 실제로 쓰인다 — 같은 relpath에 다른 내용을 가진 둘째 트리가 아니다.
 
-
-def test_syncignore_directory_pattern_excludes_the_whole_subtree(tmp_path):
-    """디렉토리 패턴은 4단계에서 `rm -rf`로 통째로 지워진다.
-
-    파일 경로만 대조하면 `skills/demo`는 `skills/demo/SKILL.md`와 매치되지 않아,
-    디렉토리를 제외한 사용자만 표식으로 새어 나간다.
+    ④의 실측 형태 그대로다(레포의 code-reviewer.md ≠ 로컬의 code-reviewer.md).
     """
-    claude_dir = fake_claude_dir(tmp_path)
-    write_syncignore(claude_dir, "skills/demo\n")
-    meta = gm.build_metadata(
-        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
-    assert "skills/demo/SKILL.md" not in meta["files"]
-    assert "CLAUDE.md" in meta["files"]
+    repo = fake_tree(tmp_path, name="repo")
+    local = fake_tree(tmp_path, name="local")
+    with open(os.path.join(local, "agents", "a.md"), "w", encoding="utf-8") as f:
+        f.write("로컬이 앞선 판본")
+    meta = gm.build_metadata(repo, write_plugin_json(tmp_path, {"version": "3.0.0"}))
+    assert meta["files"]["agents/a.md"] == gm.file_sha256(os.path.join(repo, "agents", "a.md"))
+    assert meta["files"]["agents/a.md"] != gm.file_sha256(os.path.join(local, "agents", "a.md"))
 
 
-def test_syncignore_of_only_comments_and_blank_lines_excludes_nothing(tmp_path):
-    """주석·빈 줄을 패턴으로 읽으면 아무 관계 없는 파일이 조용히 빠진다."""
-    claude_dir = fake_claude_dir(tmp_path)
-    write_syncignore(claude_dir, "# agents\n\n   \n")
-    meta = gm.build_metadata(
-        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
-    assert len(meta["files"]) == 3
+def test_the_tree_root_is_required(tmp_path):
+    """기본값을 두면 갱신되지 않은 호출자가 조용히 옛 동작(로컬을 적는다)으로 돌아간다."""
+    with pytest.raises(TypeError):
+        gm.build_metadata(write_plugin_json(tmp_path, {"version": "3.0.0"}))
 
 
-def test_metadata_is_byte_stable_with_syncignore(tmp_path):
-    """필터를 거쳐도 정렬이 유지돼야 한다 — 표식 파일이 소음이 되면 안 된다."""
-    claude_dir = fake_claude_dir(tmp_path)
-    secret_agent(claude_dir)
-    write_syncignore(claude_dir, "agents/internal-*.md\n")
-    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
-    out1, out2 = str(tmp_path / "s1.json"), str(tmp_path / "s2.json")
-    gm.write_metadata(out1, gm.build_metadata(claude_dir, plugin_json))
-    gm.write_metadata(out2, gm.build_metadata(claude_dir, plugin_json))
-    with open(out1, "rb") as f1, open(out2, "rb") as f2:
-        assert f1.read() == f2.read()
+def test_generate_metadata_does_not_read_syncignore():
+    """제외의 근거는 필터가 아니라 구조다 — 4단계가 레포 트리에서 지웠다.
 
-
-def test_syncignore_with_a_utf8_bom_still_excludes(tmp_path):
-    """BOM이 붙어도 첫 패턴이 살아야 한다 — lib/의 바이너리 읽기 계약이 여기 걸린다.
-
-    텍스트 모드로 읽으면 BOM이 첫 패턴의 첫 글자로 남아 매치 0건이 되고, 사용자는
-    걸렀다고 믿은 파일을 그대로 푸시한다. Windows 계열 편집기가 실제로 BOM을 붙인다.
-    (4단계 bash의 `read -r`은 이 경우 아무것도 제외하지 못한다 — 갈리는 방향이
-    "파이썬이 더 많이 제외한다"이므로 누수가 아니다. lib/syncignore.py에 적혀 있다.)
+    다시 부르기 시작하면 여기가 빨개진다. 그때 고칠 것은 이 단정이 아니라
+    lib/syncignore.py 정본의 소비자 목록과 sync-backup/SKILL.md 7단계다.
     """
-    claude_dir = fake_claude_dir(tmp_path)
-    rel, _ = secret_agent(claude_dir)
-    with open(os.path.join(claude_dir, ".syncignore"), "wb") as f:
-        f.write(b"\xef\xbb\xbfagents/internal-*.md\n")
-    meta = gm.build_metadata(
-        claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
-    assert rel not in meta["files"]
-    assert "agents/a.md" in meta["files"]
+    src = open(gm.__file__, encoding="utf-8").read()
+    assert "import syncignore" not in src and "syncignore." not in src
 
 
-@requires_permission_bits
-def test_unreadable_syncignore_is_not_folded_into_no_patterns(tmp_path):
-    """`.syncignore`를 **못 읽는 것**과 **없는 것**은 다르다.
-
-    OSError를 삼켜 빈 목록으로 접으면 제외 목록이 통째로 사라진 채 표식이 써진다 —
-    사용자는 걸렀다고 믿고 이름과 해시를 푸시한다. 조용히 새는 것보다 시끄럽게
-    서는 것이 싸다. (파일 **부재**는 정상 경로이므로 위 테스트들이 그쪽을 받친다.)
-    """
-    claude_dir = fake_claude_dir(tmp_path)
-    secret_agent(claude_dir)
-    path = os.path.join(claude_dir, ".syncignore")
-    write_syncignore(claude_dir, "agents/internal-*.md\n")
-    os.chmod(path, 0)
-    try:
-        with pytest.raises(OSError):
-            gm.build_metadata(
-                claude_dir, write_plugin_json(tmp_path, {"version": "3.0.0"}))
-    finally:
-        os.chmod(path, 0o600)
-
-
-def test_the_excluded_count_is_reported(tmp_path, capsys):
-    """제외를 **조용히** 하면 안 된다 — 사용자는 표식이 전수 목록이라고 믿는다.
-
-    sync-backup/SKILL.md 7단계가 "제외된 개수는 stderr에 알린다"고 적는다. 그 문장을
-    코드에 묶는 것이 이 단정이다. 제외가 0건일 때는 아무 말도 하지 않는 것까지 함께
-    건다 — 매 백업마다 뜨는 줄은 소음이 되고, 소음은 읽히지 않는다.
-    """
-    claude_dir = fake_claude_dir(tmp_path)
-    secret_agent(claude_dir)
-    plugin_json = write_plugin_json(tmp_path, {"version": "3.0.0"})
-
-    gm.build_metadata(claude_dir, plugin_json)
-    assert ".syncignore" not in capsys.readouterr().err
-
-    write_syncignore(claude_dir, "agents/internal-*.md\n")
-    gm.build_metadata(claude_dir, plugin_json)
-    err = capsys.readouterr().err
-    assert ".syncignore" in err and "1개" in err, err
+def test_cli_takes_output_and_tree_and_refuses_anything_else(tmp_path):
+    """SKILL.md가 넘기는 인자 모양 그대로 — 트리를 빠뜨린 호출은 exit 1로 서야 한다."""
+    tree = fake_tree(tmp_path)
+    out = str(tmp_path / "m.json")
+    script = os.path.abspath(gm.__file__)
+    proc = subprocess.run([sys.executable, script, out, tree], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    with open(out, encoding="utf-8") as f:
+        assert set(json.load(f)["files"]) == set(ss.iter_synced_relpaths(tree))
+    proc = subprocess.run([sys.executable, script, out], capture_output=True, text=True)
+    assert proc.returncode == 1 and "레포 작업 트리" in proc.stderr
