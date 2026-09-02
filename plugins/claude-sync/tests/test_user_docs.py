@@ -510,6 +510,30 @@ def test_readme_does_not_call_syncignore_a_gitignore(name, stale, fixed):
     assert stale not in text, "%s: 옛 서술이 남아 있다 — %r" % (name, stale)
 
 
+# (문서, 옛 문구, 정정 문안). CORRECTIONS에 넣지 않는다 — 그 표의 개수는 2026-08-24 spec
+# 13장에서 뽑는데 이 정정의 원천은 2026-09-02 spec 3.5다. 개수는 아래에서 함께 건다.
+METADATA_WORDING = [
+    ("README.md",
+     "Each backup records a content-hash base snapshot for accurate 3-way conflict detection",
+     "It is a record, not an input"),
+    ("README.ko.md",
+     "백업마다 내용 해시 기반 base 스냅샷을 기록하여 정확한 3-way 충돌 판단에 활용",
+     "기록일 뿐 판정 입력이 아닙니다"),
+]
+
+
+@pytest.mark.parametrize("name,stale,fixed", METADATA_WORDING,
+                         ids=[n for n, _, _ in METADATA_WORDING])
+def test_readme_does_not_call_the_metadata_a_conflict_input(name, stale, fixed):
+    """spec 3.5 — `files` 맵을 읽는 프로덕션 코드가 없다(위 test_no_production_code_reads_
+    the_metadata_files_map). "3-way 충돌 감지에 활용"은 거짓이고, 그 거짓을 backup-readme는
+    이미 고쳤는데 README 두 벌만 남아 있었다."""
+    assert len(METADATA_WORDING) == 2
+    text = read_doc(name)
+    assert fixed in text, "%s: 정정 문안이 없다 — %r" % (name, fixed)
+    assert stale not in text, "%s: 옛 서술이 남아 있다 — %r" % (name, stale)
+
+
 # --- 스킬 표의 `/sync-restore` 행 ---
 
 # 표는 README의 **첫 화면**이다. 여기서 "충돌 시 중단"이라고 말하면 사용자는 "충돌이

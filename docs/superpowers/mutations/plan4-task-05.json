@@ -1,0 +1,16 @@
+[
+ {"id": "M1", "desc": "정정 문안을 무의미한 값으로(영어판)",
+  "file": "README.md",
+  "old": "It is a record, not an input",
+  "new": "It is used for conflict detection"},
+
+ {"id": "M2", "desc": "옛 거짓 문구를 되살린다(한국어판)",
+  "file": "README.ko.md",
+  "old": "- **메타데이터**: `sync-metadata.json`에 이 백업이 담은 파일별 내용 해시를 적습니다. 기록일 뿐 판정 입력이 아닙니다 — 충돌 판정은 이 파일이 아니라 기기마다 자기 `.sync-state/` base와 대조합니다",
+  "new": "- **메타데이터**: 백업마다 내용 해시 기반 base 스냅샷을 기록하여 정확한 3-way 충돌 판단에 활용"},
+
+ {"id": "M3", "desc": "한 문서만 되돌린다 — 파라미터화가 한쪽만 재는지",
+  "file": "README.md",
+  "old": "- **Metadata tracking**: `sync-metadata.json` lists a content hash of every file this backup contains. It is a record, not an input — conflict detection compares against each machine's own `.sync-state/` base, never against this file",
+  "new": "- **Metadata tracking**: Each backup records a content-hash base snapshot for accurate 3-way conflict detection"}
+]

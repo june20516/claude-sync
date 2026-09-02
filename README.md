@@ -119,7 +119,7 @@ Not synced:
 
 - **Conflict detection**: Files changed on both sides since the last known base are flagged as conflicts; local copies are never silently overwritten.
 - **Sensitive data protection**: The raw `settings.json` is never pushed — three fields are extracted and `pluginConfigs` values are masked as `<REDACTED>` (key names are kept so a restore knows what to ask for). MCP server configs are pushed with `headers`/`env` values masked the same way
-- **Metadata tracking**: Each backup records a content-hash base snapshot for accurate 3-way conflict detection
+- **Metadata tracking**: `sync-metadata.json` lists a content hash of every file this backup contains. It is a record, not an input — conflict detection compares against each machine's own `.sync-state/` base, never against this file
 
 ## Security
 
