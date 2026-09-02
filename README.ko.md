@@ -67,6 +67,17 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 /sync-status
 ```
 
+## 설정
+
+`~/.claude/sync-config.json`은 첫 실행 때 만들어지고 다음 키를 담습니다:
+
+| 키 | 필수 | 뜻 |
+|---|---|---|
+| `repo_url` | 예 | 백업 레포의 Git URL |
+| `git_user_name` / `git_user_email` | 아니오 | 백업 클론에 적용할 로컬 git 신원. 클론이 임시 디렉토리에 있어 `includeIf` 규칙이 적용되지 않을 수 있습니다 |
+| `pull_only` | 아니오 | `true`면 이 기기는 복원 전용입니다 — `/sync-backup`이 실행을 거부합니다 |
+| `language` | 아니오 | 스킬이 사용자에게 하는 모든 말의 언어, 예: `"en"`. 문장은 출력 시점에 번역되고 명령·JSON 키·경로·이름은 번역하지 않습니다. 없으면 한국어입니다 |
+
 ## v3.0.0으로 올릴 때 (먼저 읽으세요)
 
 v3.0.0은 `mcp-servers.json`과 `plugins.json`의 스키마를 바꾸며 **역호환되지 않습니다.**

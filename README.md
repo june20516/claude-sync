@@ -67,6 +67,17 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 /sync-status
 ```
 
+## Configuration
+
+`~/.claude/sync-config.json` is created on the first run and holds these keys:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `repo_url` | yes | Git URL of the backup repo |
+| `git_user_name` / `git_user_email` | no | Local git identity for the backup clone. The clone lives in a temp dir, so `includeIf` rules may not apply |
+| `pull_only` | no | `true` makes this machine restore-only — `/sync-backup` refuses to run |
+| `language` | no | Language for everything the skills say to you, e.g. `"en"`. Prose is translated at output time; commands, JSON keys, paths and names are never translated. Absent means Korean |
+
 ## Upgrading to v3.0.0 (read this first)
 
 v3.0.0 changes the `mcp-servers.json` and `plugins.json` schemas and **is not backward compatible**.

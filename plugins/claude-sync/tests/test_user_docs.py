@@ -534,6 +534,35 @@ def test_readme_does_not_call_the_metadata_a_conflict_input(name, stale, fixed):
     assert stale not in text, "%s: 옛 서술이 남아 있다 — %r" % (name, stale)
 
 
+# --- 설정 키 (spec 6.4) ---
+
+CONFIG_KEYS = ("repo_url", "git_user_name", "git_user_email", "pull_only", "language")
+CONFIG_SECTION = {"README.md": "## Configuration", "README.ko.md": "## 설정"}
+
+
+def config_section(name):
+    text = read_doc(name)
+    i = text.index(CONFIG_SECTION[name])
+    return text[i:text.index("\n## ", i + 1)]
+
+
+@pytest.mark.parametrize("name", sorted(CONFIG_SECTION))
+def test_readme_documents_every_config_key(name):
+    """설정 절이 다섯 키를 전부 적는다 — `language`가 없으면 영어 사용자가 스위치를 모른다."""
+    sec = config_section(name)
+    for key in CONFIG_KEYS:
+        assert "`%s`" % key in sec, (name, key)
+    assert "한국어" in sec or "Korean" in sec, "부재의 뜻(한국어)을 적지 않았다"
+
+
+def test_the_config_key_list_is_what_the_skills_actually_read():
+    """목록이 낡지 않게 — 세 SKILL.md가 실제로 읽는 키와 대조한다."""
+    text = "".join(open(os.path.join(SKILLS_DIR, s, "SKILL.md"), encoding="utf-8").read()
+                   for s in ("sync-backup", "sync-restore", "sync-status"))
+    for key in CONFIG_KEYS:
+        assert ('"%s"' % key in text) or ("`%s`" % key in text), key
+
+
 # --- 스킬 표의 `/sync-restore` 행 ---
 
 # 표는 README의 **첫 화면**이다. 여기서 "충돌 시 중단"이라고 말하면 사용자는 "충돌이

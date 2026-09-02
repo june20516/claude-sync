@@ -2363,3 +2363,40 @@ def test_restore_does_not_ask_for_hold_kinds_the_plan_never_emits():
     assert "/sync-status" in sub, (
         "사유를 실제로 내는 명령을 가리켜야 한다 — 그러지 않으면 사용자가 갈 곳이 없다"
     )
+
+
+# ── 언어 스위치 (spec 6) ─────────────────────────────────────────────────
+LANGUAGE_RULE = "**`language`가 있으면 사용자에게 보이는 모든 문장을 그 언어로 낸다.**"
+NO_TRANSLATE = re.compile(r"\*\*번역하지 않는 것\*\*: (.+?)\. ")
+FIRST_RUN_LANGUAGE = "사용자가 대화에 쓰는 언어로 한다"
+STEP1 = {"sync-backup": "1. 설정 확인", "sync-restore": "1. 설정 확인",
+         "sync-status": "1. 설정 확인 및 레포 준비"}
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_step1_carries_the_language_rule_and_asks_on_first_run(skill):
+    """규칙이 세 스킬에 같은 문장으로 있고, 첫 실행의 질문은 대화 언어로 한다."""
+    sec = section(skill, STEP1[skill])
+    assert LANGUAGE_RULE in sec, skill
+    assert FIRST_RUN_LANGUAGE in sec, skill
+    assert "부재가 곧 한국어" in sec, skill
+
+
+def test_the_do_not_translate_list_is_the_same_in_every_skill():
+    """번역하지 않는 것의 목록이 갈리면 한 스킬만 명령이나 키 이름을 번역한다."""
+    found = {skill: NO_TRANSLATE.search(section(skill, STEP1[skill])) for skill in SKILLS}
+    assert all(found.values()), [s for s, m in found.items() if not m]
+    values = {m.group(1) for m in found.values()}
+    assert len(values) == 1, values
+    only = values.pop()
+    for token in ("명령", "JSON 키", "파일 경로", "이름", "판정 값"):
+        assert token in only, token
+
+
+def test_backup_verbatim_contract_allows_language_only():
+    """2.5단계의 드리프트 방지 계약이 살아 있고(명령을 직접 타자하지 않는다), 언어만 바꾼다."""
+    sec = section("sync-backup", "2.5 호환성 검사")
+    assert "`message`의 내용을 그대로 보여준다" in sec
+    assert "언어만" in sec and "명령을 직접 타자하지 않는다" in sec
+    assert "**`message` 필드를 그대로 보여준다. 명령을 직접 타자하지 않는다**" not in sec
+

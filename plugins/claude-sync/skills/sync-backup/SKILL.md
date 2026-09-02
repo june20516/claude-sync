@@ -16,11 +16,13 @@ Claude 설정 파일들을 Git 레포에 백업하는 스킬이다.
 {
   "repo_url": "git@github.com:user/claude-sync.git",
   "git_user_name": "Your Name",
-  "git_user_email": "you@example.com"
+  "git_user_email": "you@example.com",
+  "language": "en"
 }
 ```
 
 - 최초 실행 시 이 파일이 없으면 사용자에게 Git 레포 URL을 물어보고 저장한다.
+- `language`는 선택 사항이다. 있으면 사용자에게 보이는 문장을 그 언어로 낸다(1단계). 없으면 한국어다.
 - `git_user_name`과 `git_user_email`은 선택 사항이다. 설정하면 백업 레포에 로컬 git config로 적용된다. 설정하지 않으면 글로벌 git config를 그대로 사용한다. 임시 디렉토리에 클론하므로 `includeIf` 기반 설정이 적용되지 않을 수 있어 필요한 경우 여기에 명시한다.
 
 ## 동기화 대상
@@ -112,12 +114,15 @@ fi
 cat ~/.claude/sync-config.json
 ```
 
-파일이 없으면 사용자에게 Git 레포 URL을 물어본다. URL을 받으면:
+**`language`가 있으면 사용자에게 보이는 모든 문장을 그 언어로 낸다.** 이 문서의 인용문("> …")과 표의 안내 문구, 그리고 스크립트가 만든 문장(`message`·`reason`·`unrestorable_reasons`·`degraded_reason`·`base_staging_reason`)이 대상이다. **번역하지 않는 것**: 명령(`claude …`·`git …`), JSON 키와 버킷 이름, 파일 경로, 서버·플러그인·마켓플레이스 이름, 판정 값. 스크립트 문장은 **내용을 바꾸지 않고 언어만** 바꾼다. 키가 없으면 한국어다 — 부재가 곧 한국어이고, 같은 뜻의 표현을 둘 두지 않는다.
+
+파일이 없으면 사용자에게 Git 레포 URL과 **안내 언어**를 물어본다. **이 첫 질문은 사용자가 대화에 쓰는 언어로 한다** — 아직 설정이 없기 때문이다. 한국어를 골랐으면 `language` 키를 쓰지 않는다. 답을 받으면:
 
 ```bash
 cat > ~/.claude/sync-config.json << 'EOF'
 {
-  "repo_url": "<사용자가 입력한 URL>"
+  "repo_url": "<사용자가 입력한 URL>",
+  "language": "<선택한 언어 — 한국어면 이 줄을 뺀다>"
 }
 EOF
 ```
@@ -161,7 +166,7 @@ python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"
 
 출력 JSON의 `blocked`가 `true`면 **여기서 중단한다.** 파일 복사(4단계)도 `plugins.json`(5단계)도 MCP 수집(6단계)도 하지 않는다.
 
-**`message` 필드를 그대로 보여준다. 명령을 직접 타자하지 않는다** — 안내 문구는 `compat.py`가 만드는 것이 계약이고, SKILL.md가 따로 쓰면 드리프트한다.
+**`message`의 내용을 그대로 보여준다** — `language`가 있으면 문장만 그 언어로 옮기되 안의 명령은 그대로 둔다. **명령을 직접 타자하지 않는다** — 안내 문구는 `compat.py`가 만드는 것이 계약이고, SKILL.md가 따로 쓰면 드리프트한다. 언어만 바꾸는 것은 드리프트가 아니다.
 
 덧붙이는 한 문장은 **`blocked`가 아니라 `reason`으로 분기한다.** `blocked`는 "차단"이라는 뜻일 뿐 "업그레이드하면 풀린다"는 뜻이 아니다.
 

@@ -1,0 +1,26 @@
+[
+ {"id": "M1", "desc": "축2 축분리 — 한 스킬(status)에서 언어 규칙 문단을 지운다",
+  "file": "plugins/claude-sync/skills/sync-status/SKILL.md",
+  "old": "**`language`가 있으면 사용자에게 보이는 모든 문장을 그 언어로 낸다.** 이 문서의 인용문(\"> …\")과 표의 안내 문구, 그리고 스크립트가 만든 문장(`message`·`reason`·`unrestorable_reasons`·`degraded_reason`·`base_staging_reason`)이 대상이다. **번역하지 않는 것**: 명령(`claude …`·`git …`), JSON 키와 버킷 이름, 파일 경로, 서버·플러그인·마켓플레이스 이름, 판정 값. 스크립트 문장은 **내용을 바꾸지 않고 언어만** 바꾼다. 키가 없으면 한국어다 — 부재가 곧 한국어이고, 같은 뜻의 표현을 둘 두지 않는다.\n\n",
+  "new": ""},
+
+ {"id": "M2", "desc": "축5 입력 축 — 한 스킬의 \"번역하지 않는 것\" 목록에서 명령을 뺀다(목록이 갈린다)",
+  "file": "plugins/claude-sync/skills/sync-restore/SKILL.md",
+  "old": "**번역하지 않는 것**: 명령(`claude …`·`git …`), JSON 키와 버킷 이름, 파일 경로, 서버·플러그인·마켓플레이스 이름, 판정 값.",
+  "new": "**번역하지 않는 것**: JSON 키와 버킷 이름, 파일 경로, 서버·플러그인·마켓플레이스 이름, 판정 값."},
+
+ {"id": "M3", "desc": "축1 훅 호출 계약 — 2.5단계의 옛 \"그대로\" 문장을 되살린다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "**`message`의 내용을 그대로 보여준다** — `language`가 있으면 문장만 그 언어로 옮기되 안의 명령은 그대로 둔다. **명령을 직접 타자하지 않는다** — 안내 문구는 `compat.py`가 만드는 것이 계약이고, SKILL.md가 따로 쓰면 드리프트한다. 언어만 바꾸는 것은 드리프트가 아니다.",
+  "new": "**`message` 필드를 그대로 보여준다. 명령을 직접 타자하지 않는다** — 안내 문구는 `compat.py`가 만드는 것이 계약이고, SKILL.md가 따로 쓰면 드리프트한다."},
+
+ {"id": "M4", "desc": "축4 I/O 층 — README.ko의 language 행을 지운다",
+  "file": "README.ko.md",
+  "old": "| `language` | 아니오 | 스킬이 사용자에게 하는 모든 말의 언어, 예: `\"en\"`. 문장은 출력 시점에 번역되고 명령·JSON 키·경로·이름은 번역하지 않습니다. 없으면 한국어입니다 |\n",
+  "new": ""},
+
+ {"id": "M5", "desc": "축3 {} vs None — CONFIG_KEYS에 SKILL.md가 읽지 않는 키를 더한다",
+  "file": "plugins/claude-sync/tests/test_user_docs.py",
+  "old": "CONFIG_KEYS = (\"repo_url\", \"git_user_name\", \"git_user_email\", \"pull_only\", \"language\")",
+  "new": "CONFIG_KEYS = (\"repo_url\", \"git_user_name\", \"git_user_email\", \"pull_only\", \"language\", \"verbosity\")"}
+]

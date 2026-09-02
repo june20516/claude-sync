@@ -12,7 +12,16 @@ backup이나 restore 전에 "지금 상태가 어떤지" 확인하고 싶을 때
 
 ## 설정 파일
 
-동기화 설정은 `~/.claude/sync-config.json`에 저장된다. 파일이 없으면 사용자에게 Git 레포 URL을 물어보고 저장한다 (이것만 유일하게 쓰기 동작이 발생할 수 있다).
+동기화 설정은 `~/.claude/sync-config.json`에 저장된다:
+
+```json
+{
+  "repo_url": "git@github.com:user/claude-sync.git",
+  "language": "en"
+}
+```
+
+파일이 없으면 사용자에게 Git 레포 URL과 안내 언어를 물어보고 저장한다 (이것만 유일하게 쓰기 동작이 발생할 수 있다). `language`는 선택 사항이다 — 있으면 사용자에게 보이는 문장을 그 언어로 낸다(1단계). 없으면 한국어다.
 
 ## 실행 절차
 
@@ -61,6 +70,10 @@ fi
 ```bash
 cat ~/.claude/sync-config.json
 ```
+
+**`language`가 있으면 사용자에게 보이는 모든 문장을 그 언어로 낸다.** 이 문서의 인용문("> …")과 표의 안내 문구, 그리고 스크립트가 만든 문장(`message`·`reason`·`unrestorable_reasons`·`degraded_reason`·`base_staging_reason`)이 대상이다. **번역하지 않는 것**: 명령(`claude …`·`git …`), JSON 키와 버킷 이름, 파일 경로, 서버·플러그인·마켓플레이스 이름, 판정 값. 스크립트 문장은 **내용을 바꾸지 않고 언어만** 바꾼다. 키가 없으면 한국어다 — 부재가 곧 한국어이고, 같은 뜻의 표현을 둘 두지 않는다.
+
+파일이 없으면 사용자에게 Git 레포 URL과 **안내 언어**를 물어본다. **이 첫 질문은 사용자가 대화에 쓰는 언어로 한다** — 아직 설정이 없기 때문이다. 한국어를 골랐으면 `language` 키를 쓰지 않는다. 답을 `~/.claude/sync-config.json`에 저장한다.
 
 레포를 최신 상태로 가져온다 (clone 또는 pull):
 
