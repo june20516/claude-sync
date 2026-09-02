@@ -19,6 +19,7 @@ import mcp_config as mc  # noqa: E402
 import collect_mcp  # noqa: E402
 import compare_mcp  # noqa: E402
 import plan_mcp  # noqa: E402
+import prune_mcp  # noqa: E402
 
 A = {"command": "a"}
 B = {"command": "b"}
@@ -744,3 +745,73 @@ def test_collect_names_the_staging_failure_reason_apart_from_skipped(tmp_path, m
     assert out["base_staging"] == "failed"
     assert "reason" not in out
     assert "다음 백업이 복구한다" in out["base_staging_reason"]
+
+
+# --------------------------------------------------------- prune_mcp (spec 4.3)
+
+def test_prune_removes_only_the_named_unrestorable_repo_only_entries(tmp_path):
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo(tmp_path, {"mine": A, "claude.ai Slack": GARBAGE, "claude.ai Gmail": GARBAGE})
+    out = prune_mcp.prune(repo, ["claude.ai Slack"], claude_json_path=local)
+    assert out == {"status": "ok", "pruned": ["claude.ai Slack"], "not_found": [], "refused": {}}
+    assert repo_servers(repo) == {"mine": A, "claude.ai Gmail": GARBAGE}
+
+
+def test_prune_refuses_local_and_restorable_names_instead_of_deleting_them(tmp_path):
+    """잘못 배선된 이름을 조용히 지우지 않는다 — 거부는 예외가 아니라 출력이다."""
+    local = write_local(tmp_path, {"mine": A, "odd name": {"command": "x"}})
+    repo = write_repo(tmp_path, {"mine": A, "odd name": {"command": "x"},
+                                 "theirs": B, "claude.ai Slack": GARBAGE})
+    before = open(os.path.join(repo, mc.BACKUP_RELPATH), encoding="utf-8").read()
+    out = prune_mcp.prune(repo, ["odd name", "theirs", "ghost"], claude_json_path=local)
+    assert out["pruned"] == [] and out["not_found"] == ["ghost"]
+    assert set(out["refused"]) == {"odd name", "theirs"}
+    assert "로컬" in out["refused"]["odd name"] and "복원 가능" in out["refused"]["theirs"]
+    assert open(os.path.join(repo, mc.BACKUP_RELPATH), encoding="utf-8").read() == before
+
+
+def test_prune_does_not_rewrite_the_repo_document_when_it_prunes_nothing(tmp_path):
+    """지운 것이 없으면 레포 파일을 **열지도 않는다**(spec 4.3의 `if pruned:` 가드).
+
+    바이트 동일만으로는 부족하다 — 같은 v2 문서를 다시 써도 바이트가 같아 그 가드가
+    재지지 않는다(변조 실측: SURVIVED). 갈리는 자리는 **v1 배열 문서**다. 아무것도
+    지우지 않았는데 dump_backup을 부르면 그 문서가 v2로 승격되어 커밋에 실리고,
+    다운그레이드 진단(detect_downgrade)이 보는 레포 형태가 이 실행 때문에 바뀐다.
+    """
+    text = json.dumps([{"name": "theirs", "command": "b"}])
+    repo = write_repo_raw(tmp_path, text)
+    out = prune_mcp.prune(repo, ["ghost"], claude_json_path=write_local(tmp_path, {}))
+    assert out["pruned"] == [] and out["not_found"] == ["ghost"]
+    assert open(os.path.join(repo, mc.BACKUP_RELPATH), encoding="utf-8").read() == text
+
+
+def test_prune_touches_neither_base_nor_staging(tmp_path):
+    local = write_local(tmp_path, {"mine": A})
+    repo = write_repo(tmp_path, {"mine": A, "claude.ai Slack": GARBAGE})
+    base_dir = write_base_blob(tmp_path, {"mine": A})
+    before = open(os.path.join(base_dir, mc.BACKUP_RELPATH), "rb").read()
+    prune_mcp.prune(repo, ["claude.ai Slack"], claude_json_path=local)
+    assert open(os.path.join(base_dir, mc.BACKUP_RELPATH), "rb").read() == before
+    assert not os.path.exists(str(tmp_path / "staging"))
+
+
+def test_prune_is_a_document_level_skip_on_a_broken_repo_document(tmp_path):
+    repo = write_broken_repo(tmp_path, {"mine": A, "claude.ai Slack": GARBAGE})
+    path = os.path.join(repo, mc.BACKUP_RELPATH)
+    before = open(path, encoding="utf-8").read()
+    with pytest.raises(mc.BrokenBackupSyntax):
+        prune_mcp.prune(repo, ["claude.ai Slack"], claude_json_path=write_local(tmp_path, {}))
+    assert open(path, encoding="utf-8").read() == before
+
+
+def test_prune_cli_exits_zero_and_reports_skipped_on_a_broken_document(tmp_path):
+    repo = write_broken_repo(tmp_path, {"mine": A})
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    script = os.path.join(SCRIPTS_DIR, "sync-backup", "scripts", "prune_mcp.py")
+    proc = subprocess.run([sys.executable, script, repo, "claude.ai Slack"],
+                          capture_output=True, text=True, env=dict(os.environ, HOME=str(home)))
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["status"] == "skipped" and out["reason_kind"] == "broken_syntax"

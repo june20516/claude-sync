@@ -222,7 +222,8 @@ def next_base(local, base, servers):
     다음 백업이 그 차이를 "로컬이 바뀌었다"로 오독해, 타 기기의 서버를 삭제하거나
     타 기기의 변경을 되돌린다. update_base.py가 파일 단위로 지키는 불변식과 같다.
     merge가 결과에 담아 반환하지만, restore도 같은 규칙으로 base를 갱신해야 하므로
-    공개 함수다.
+    공개 함수다. prune_mcp가 지운 이름은 로컬에 없어 이 규칙으로 base에서 저절로
+    빠진다 — 그래서 그 스크립트가 base를 건드리지 않아도 된다(spec 4.3).
 
     코어가 입력에 redact를 적용한다 — restore는 read_local_servers()의 원본(비밀 평문)을
     넘기게 되는데, 그 적용이 없으면 same(레포의 <REDACTED>, 로컬 평문)이 거짓이 되어

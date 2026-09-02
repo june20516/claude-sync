@@ -19,6 +19,7 @@ SKILLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills"
 COLLECT = os.path.abspath(os.path.join(SKILLS, "sync-backup", "scripts", "collect_mcp.py"))
 UPDATE_BASE = os.path.abspath(os.path.join(SKILLS, "sync-backup", "scripts", "update_base.py"))
 PLAN = os.path.abspath(os.path.join(SKILLS, "sync-restore", "scripts", "plan_mcp.py"))
+PRUNE = os.path.abspath(os.path.join(SKILLS, "sync-backup", "scripts", "prune_mcp.py"))
 
 A = {"command": "a"}
 B = {"command": "b"}
@@ -84,6 +85,10 @@ class Device:
         self._run(PLAN, "apply-base", backup_path, self.staging, choices_path)
         self._run(UPDATE_BASE, self.staging, mc.BACKUP_RELPATH)
         return plan
+
+    def prune(self, names):
+        """SKILL.md 6.5단계 「레포에서 정리한다」."""
+        return json.loads(self._run(PRUNE, self.repo, *names))
 
 
 def repo_servers(repo):
@@ -279,3 +284,46 @@ def test_skipped_backup_touches_neither_repo_nor_base(tmp_path):
     assert report["status"] == "skipped"
     assert repo_servers(dev.repo) == {"x": A}
     assert dev.base() == {"x": A}
+
+
+GARBAGE = {"url": "https://mcp.example/mcp", "type": "HTTP"}    # 2.x가 긁어 넣은 형태
+
+
+def test_pruned_garbage_does_not_come_back(tmp_path):
+    """spec 4.6 #1·#2 — 지운 뒤 두 번 더 백업해도 되살아나지 않고 보고가 비어 있다.
+
+    3회차와 2회차가 바이트 동일이어야 고정점이다. 기준선이 없는 첫 회차(합집합 degrade)에서도
+    목록이 나오는 것이 이 시나리오의 첫 단정이다.
+    """
+    dev = make_device(tmp_path, {"a": A}, repo_init={"a": A, "claude.ai G": GARBAGE})
+    assert dev.backup()["unrestorable"] == ["claude.ai G"]          # base 없음 — 그래도 실린다
+    assert dev.prune(["claude.ai G"])["pruned"] == ["claude.ai G"]
+    snapshots = []
+    for _ in range(2):
+        report = dev.backup()
+        assert report["unrestorable"] == [] and report["deleted"] == []
+        assert report["repo_ahead"] == {"present": [], "absent": []}
+        snapshots.append((repo_servers(dev.repo), dev.base()))
+    assert snapshots[0] == snapshots[1] == ({"a": A}, {"a": A})
+
+
+def test_a_device_that_really_has_the_server_is_asked_and_brings_it_back(tmp_path):
+    """spec 4.6 #3 — 다른 기기가 실제로 쓰는 서버를 정리했더라도 조용히 사라지지 않는다.
+
+    그 기기에서는 케이스 4(`local_stale`)로 **묻고**, 「유지」를 고르면 다음 백업이 진짜 값을
+    레포에 되돌리며, 되살아난 값은 복원 가능하다. 그 기기의 백업이 레포의 쓰레기 값을 만났을
+    때 `unrestorable`에 싣지 않는 것(로컬에 있다)도 여기서 함께 건다.
+    """
+    real = {"command": "g"}
+    dev = make_device(tmp_path, {"a": A, "g": real}, repo_init={"a": A, "g": real})
+    dev.backup()                                      # base {a, g(real)}
+    set_repo(dev.repo, {"a": A, "g": GARBAGE})        # 2.x가 덮어쓴 흔적
+    report = dev.backup()
+    assert report["repo_ahead"]["present"] == ["g"]   # 케이스 8 — 레포 값이 남는다
+    assert report["unrestorable"] == []               # 이 기기의 로컬에 있으므로 정리 후보가 아니다
+    set_repo(dev.repo, {"a": A})                      # 다른 기기가 6.5단계에서 정리했다
+    plan = dev.restore(keep_stale=["g"])
+    assert bucket(plan, "local_stale") == ["g"]       # 묻는 자리 — 조용한 삭제가 아니다
+    assert dev.local()["g"] == real
+    report = dev.backup()
+    assert repo_servers(dev.repo)["g"] == real and report["unrestorable"] == []
