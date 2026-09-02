@@ -67,6 +67,17 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 /sync-status
 ```
 
+## Configuration
+
+`~/.claude/sync-config.json` is created on the first run and holds these keys:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `repo_url` | yes | Git URL of the backup repo |
+| `git_user_name` / `git_user_email` | no | Local git identity for the backup clone. The clone lives in a temp dir, so `includeIf` rules may not apply |
+| `pull_only` | no | `true` makes this machine restore-only — `/sync-backup` refuses to run |
+| `language` | no | Language for everything the skills say to you, e.g. `"en"`. Prose is translated at output time; commands, JSON keys, paths and names are never translated. Absent means Korean |
+
 ## Upgrading to v3.0.0 (read this first)
 
 v3.0.0 changes the `mcp-servers.json` and `plugins.json` schemas and **is not backward compatible**.
@@ -119,7 +130,7 @@ Not synced:
 
 - **Conflict detection**: Files changed on both sides since the last known base are flagged as conflicts; local copies are never silently overwritten.
 - **Sensitive data protection**: The raw `settings.json` is never pushed — three fields are extracted and `pluginConfigs` values are masked as `<REDACTED>` (key names are kept so a restore knows what to ask for). MCP server configs are pushed with `headers`/`env` values masked the same way
-- **Metadata tracking**: Each backup records a content-hash base snapshot for accurate 3-way conflict detection
+- **Metadata tracking**: `sync-metadata.json` lists a content hash of every file this backup contains. It is a record, not an input — conflict detection compares against each machine's own `.sync-state/` base, never against this file
 
 ## Security
 

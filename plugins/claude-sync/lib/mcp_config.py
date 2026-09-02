@@ -7,7 +7,7 @@ backup/status/restore는 이 모듈만 통해 MCP를 다룬다(파서 드리프�
 
 키 단위 3-way 판정·인식은 값 무관 코어(keyed_sync)에 있다. 이 모듈은 MCP의 도메인
 지식만 얹는다 — 인식(_recognized_servers)·마스킹(redact)·보류 없음(no_hold)·
-복원 가능성(restorable)·비밀 키 목록(secret_keys).
+복원 가능성(restorable)·사유(unrestorable_reason)·비밀 키 목록(secret_keys).
 """
 import copy
 import json          # read_local_servers가 여전히 쓴다. 지우지 말 것
@@ -205,6 +205,9 @@ def diff(local, backed):
     코어의 held 키는 걸러낸다 — compare_mcp.py가 이 dict를 사용자 JSON에 통째로
     펼치므로, 걸러내지 않으면 없던 필드가 출력에 나타난다. MCP에는 보류가 없어
     항상 비어 있으니 정보도 없다.
+
+    `unrestorable`은 이 함수가 아니라 소비자가 unrestorable_report로 얹는다 — 복원
+    가능성은 diff의 축이 아니고, 훑는 집합도 only_repo가 아니라 route_new_keys다(spec 4.2).
     """
     out = ks.diff(local, backed, normalize=redact, hold=ks.no_hold)
     return {"only_local": out["only_local"],
@@ -219,7 +222,8 @@ def next_base(local, base, servers):
     다음 백업이 그 차이를 "로컬이 바뀌었다"로 오독해, 타 기기의 서버를 삭제하거나
     타 기기의 변경을 되돌린다. update_base.py가 파일 단위로 지키는 불변식과 같다.
     merge가 결과에 담아 반환하지만, restore도 같은 규칙으로 base를 갱신해야 하므로
-    공개 함수다.
+    공개 함수다. prune_mcp가 지운 이름은 로컬에 없어 이 규칙으로 base에서 저절로
+    빠진다 — 그래서 그 스크립트가 base를 건드리지 않아도 된다(spec 4.3).
 
     코어가 입력에 redact를 적용한다 — restore는 read_local_servers()의 원본(비밀 평문)을
     넘기게 되는데, 그 적용이 없으면 same(레포의 <REDACTED>, 로컬 평문)이 거짓이 되어
@@ -257,22 +261,58 @@ def merge(local, repo, base):
             "next_base": r["next_base"]}
 
 
-def restorable(name, cfg):
-    """claude mcp add-json으로 재현할 수 있는 항목인가.
+def unrestorable_reason(name, cfg):
+    """복원 불가의 **갈래**를 문장으로. 복원 가능하면 None.
 
-    둘 중 하나만 어겨도 거짓이다 —
-    (a) 이름이 CLI 규칙(영숫자·하이픈·언더스코어)을 어김,
-    (b) config에 command도 없고 url+type(http/sse)도 없음.
-    v1 배열에서 승격된 항목이 정확히 (b)의 형태다(10장). type은 소문자만 인정한다 —
+    `restorable`이 이 함수로 정의되므로(아래) 두 판정이 갈릴 자리가 없다 — plugin_config의
+    같은 이름 함수는 조건을 두 벌 두고 "같아야 한다"고 적었는데, 여기서는 구조가 그것을
+    대신한다. 사유는 status(compare_mcp)·backup(collect_mcp)·restore(plan_mcp) 셋이 같은
+    함수에서 받는다 — 한쪽이 문장을 따로 쓰면 그것이 결함 B(파서 두 벌)의 형태다.
+
+    두 갈래의 사용자 할 일은 같다(어느 기기도 재현할 수 없다 → 백업 6.5단계의 정리).
+    그래도 사유를 싣는 것은 플러그인 보고와 형태를 맞추고 "왜"를 보이기 위해서다.
+    v1 배열에서 승격된 항목이 정확히 둘째 갈래다(10장). type은 소문자만 인정한다 —
     v1이 저장하던 "HTTP"는 add-json 스키마와 맞지 않는다.
     """
     if not VALID_NAME.match(name):
-        return False
-    if not isinstance(cfg, dict):
-        return False
-    if isinstance(cfg.get("command"), str) and cfg["command"]:
-        return True
-    return isinstance(cfg.get("url"), str) and cfg.get("type") in ("http", "sse")
+        return ("이름 '%s'이(가) claude mcp add-json의 이름 규칙(영숫자·하이픈·언더스코어)에"
+                " 맞지 않는다 — 계정 커넥터(claude.ai *)를 2.x가 긁어 넣은 항목이 이 형태다"
+                % name)
+    if isinstance(cfg, dict):
+        if isinstance(cfg.get("command"), str) and cfg["command"]:
+            return None
+        if isinstance(cfg.get("url"), str) and cfg.get("type") in ("http", "sse"):
+            return None
+    return ("command도 url+type(http/sse)도 없어 등록 인자를 만들 수 없다"
+            " — 옛 v1 형식에서 승격된 항목이 이 형태다")
+
+
+def restorable(name, cfg):
+    """claude mcp add-json으로 재현할 수 있는 항목인가. 판정은 unrestorable_reason 하나가 한다."""
+    return unrestorable_reason(name, cfg) is None
+
+
+def route_new_keys(local, repo):
+    """restore가 "레포에만 있는 새 항목"으로 훑는 키 — plugin_config.route_new_for의 MCP 판.
+
+    복원 가능성을 restore 밖에서 묻는 소비자(compare_mcp)가 이것을 훑는다. 코어의
+    route_new_keys가 restore_plan과 같은 _route_new_names를 부르므로 정의상 같은 집합이다.
+    MCP에는 보류가 없어 diff의 only_repo와도 같지만, **같은 함수를 부른다** — 두 어댑터가
+    같은 자리에서 다른 집합을 보는 일을 만들지 않는다.
+    """
+    return ks.route_new_keys(local, repo, normalize=redact, hold=ks.no_hold)
+
+
+def unrestorable_report(names, mapping):
+    """names 중 복원 불가인 것과 그 사유 — 소비자 셋이 같은 한 벌을 쓴다(spec 4.2).
+
+    {"unrestorable": [정렬된 이름], "unrestorable_reasons": {이름: 사유}}. 두 필드를 한 곳에서
+    만든다 — 따로 만들면 갈리고, 갈려도 증상이 없다(사유 없는 항목이 조용히 생긴다).
+    mapping은 마스킹 여부와 무관하다 — 판정이 보는 것은 이름·command·url·type뿐이다.
+    """
+    bad = sorted(n for n in names if not restorable(n, mapping.get(n)))
+    return {"unrestorable": bad,
+            "unrestorable_reasons": {n: unrestorable_reason(n, mapping.get(n)) for n in bad}}
 
 
 def restore_plan(local, backed, base):

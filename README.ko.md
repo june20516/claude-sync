@@ -67,6 +67,17 @@ bash /tmp/claude-sync-repo/bootstrap.sh
 /sync-status
 ```
 
+## 설정
+
+`~/.claude/sync-config.json`은 첫 실행 때 만들어지고 다음 키를 담습니다:
+
+| 키 | 필수 | 뜻 |
+|---|---|---|
+| `repo_url` | 예 | 백업 레포의 Git URL |
+| `git_user_name` / `git_user_email` | 아니오 | 백업 클론에 적용할 로컬 git 신원. 클론이 임시 디렉토리에 있어 `includeIf` 규칙이 적용되지 않을 수 있습니다 |
+| `pull_only` | 아니오 | `true`면 이 기기는 복원 전용입니다 — `/sync-backup`이 실행을 거부합니다 |
+| `language` | 아니오 | 스킬이 사용자에게 하는 모든 말의 언어, 예: `"en"`. 문장은 출력 시점에 번역되고 명령·JSON 키·경로·이름은 번역하지 않습니다. 없으면 한국어입니다 |
+
 ## v3.0.0으로 올릴 때 (먼저 읽으세요)
 
 v3.0.0은 `mcp-servers.json`과 `plugins.json`의 스키마를 바꾸며 **역호환되지 않습니다.**
@@ -119,7 +130,7 @@ claude-sync는 **내용 해시(content-hash) 기반 git 3-way 방식**으로 동
 
 - **충돌 감지**: 마지막 공유 base 이후 양쪽에서 변경된 파일만 충돌로 표시하며, 로컬 파일은 절대 자동으로 덮어쓰지 않습니다.
 - **민감 정보 보호**: `settings.json` 원본은 레포에 올리지 않고 세 필드만 추출하며, `pluginConfigs`의 값은 `<REDACTED>`로 마스킹합니다(키 이름은 복원 시 무엇을 물어야 하는지 알기 위해 남깁니다). MCP 서버 설정도 `headers`/`env` 값을 같은 방식으로 마스킹해 올립니다
-- **메타데이터**: 백업마다 내용 해시 기반 base 스냅샷을 기록하여 정확한 3-way 충돌 판단에 활용
+- **메타데이터**: `sync-metadata.json`에 이 백업이 담은 파일별 내용 해시를 적습니다. 기록일 뿐 판정 입력이 아닙니다 — 충돌 판정은 이 파일이 아니라 기기마다 자기 `.sync-state/` base와 대조합니다
 
 ## 보안
 

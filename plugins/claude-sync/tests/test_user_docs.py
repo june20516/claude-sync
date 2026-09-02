@@ -30,6 +30,7 @@ bash를 **실행해서** 재고, `test_skill_wiring.py`는 세 SKILL.md의 **배
 - 새 한계의 **내용**은 같은 언어의 두 문서끼리, 백틱 토큰은 한↔영끼리 대조한다
 """
 import inspect
+import json
 import os
 import re
 
@@ -508,6 +509,59 @@ def test_readme_does_not_call_syncignore_a_gitignore(name, stale, fixed):
     text = read_doc(name)
     assert fixed in text, "%s: 정정 문안이 없다 — %r" % (name, fixed)
     assert stale not in text, "%s: 옛 서술이 남아 있다 — %r" % (name, stale)
+
+
+# (문서, 옛 문구, 정정 문안). CORRECTIONS에 넣지 않는다 — 그 표의 개수는 2026-08-24 spec
+# 13장에서 뽑는데 이 정정의 원천은 2026-09-02 spec 3.5다. 개수는 아래에서 함께 건다.
+METADATA_WORDING = [
+    ("README.md",
+     "Each backup records a content-hash base snapshot for accurate 3-way conflict detection",
+     "It is a record, not an input"),
+    ("README.ko.md",
+     "백업마다 내용 해시 기반 base 스냅샷을 기록하여 정확한 3-way 충돌 판단에 활용",
+     "기록일 뿐 판정 입력이 아닙니다"),
+]
+
+
+@pytest.mark.parametrize("name,stale,fixed", METADATA_WORDING,
+                         ids=[n for n, _, _ in METADATA_WORDING])
+def test_readme_does_not_call_the_metadata_a_conflict_input(name, stale, fixed):
+    """spec 3.5 — `files` 맵을 읽는 프로덕션 코드가 없다(위 test_no_production_code_reads_
+    the_metadata_files_map). "3-way 충돌 감지에 활용"은 거짓이고, 그 거짓을 backup-readme는
+    이미 고쳤는데 README 두 벌만 남아 있었다."""
+    assert len(METADATA_WORDING) == 2
+    text = read_doc(name)
+    assert fixed in text, "%s: 정정 문안이 없다 — %r" % (name, fixed)
+    assert stale not in text, "%s: 옛 서술이 남아 있다 — %r" % (name, stale)
+
+
+# --- 설정 키 (spec 6.4) ---
+
+CONFIG_KEYS = ("repo_url", "git_user_name", "git_user_email", "pull_only", "language")
+CONFIG_SECTION = {"README.md": "## Configuration", "README.ko.md": "## 설정"}
+
+
+def config_section(name):
+    text = read_doc(name)
+    i = text.index(CONFIG_SECTION[name])
+    return text[i:text.index("\n## ", i + 1)]
+
+
+@pytest.mark.parametrize("name", sorted(CONFIG_SECTION))
+def test_readme_documents_every_config_key(name):
+    """설정 절이 다섯 키를 전부 적는다 — `language`가 없으면 영어 사용자가 스위치를 모른다."""
+    sec = config_section(name)
+    for key in CONFIG_KEYS:
+        assert "`%s`" % key in sec, (name, key)
+    assert "한국어" in sec or "Korean" in sec, "부재의 뜻(한국어)을 적지 않았다"
+
+
+def test_the_config_key_list_is_what_the_skills_actually_read():
+    """목록이 낡지 않게 — 세 SKILL.md가 실제로 읽는 키와 대조한다."""
+    text = "".join(open(os.path.join(SKILLS_DIR, s, "SKILL.md"), encoding="utf-8").read()
+                   for s in ("sync-backup", "sync-restore", "sync-status"))
+    for key in CONFIG_KEYS:
+        assert ('"%s"' % key in text) or ("`%s`" % key in text), key
 
 
 # --- 스킬 표의 `/sync-restore` 행 ---
@@ -1049,3 +1103,27 @@ def test_each_document_section_cites_the_deploy_order_section_by_its_full_title(
     assert title in section_titled(name, relpath), (
         "%s: %s 절이 배포 순서 절을 제목 전체로 가리키지 않는다 — %r"
         % (name, relpath, title))
+
+
+# --- 릴리즈 노트 두 벌 (spec 8) ---
+
+RELEASE_NOTES = {
+    "ko": os.path.join(ROOT, "docs", "RELEASE-NOTES-3.1.0.md"),
+    "en": os.path.join(ROOT, "docs", "RELEASE-NOTES-3.1.0.en.md"),
+}
+
+
+def test_release_notes_come_in_two_languages_with_the_same_shape():
+    """한 언어만 갱신되는 회귀 — `##` 절의 개수와 순서가 같아야 한다(README 쌍과 같은 처방)."""
+    shapes = {}
+    for lang, path in RELEASE_NOTES.items():
+        with open(path, encoding="utf-8") as f:
+            shapes[lang] = [line for line in f.read().splitlines() if line.startswith("## ")]
+        assert len(shapes[lang]) >= 4, (lang, shapes[lang])
+    assert len(shapes["ko"]) == len(shapes["en"]), shapes
+    with open(os.path.join(ROOT, "plugins", "claude-sync", ".claude-plugin", "plugin.json"),
+              encoding="utf-8") as f:
+        version = json.load(f)["version"]
+    for lang, path in RELEASE_NOTES.items():
+        assert version in open(path, encoding="utf-8").read(), (lang, version)
+

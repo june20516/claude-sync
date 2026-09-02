@@ -12,7 +12,16 @@ backup이나 restore 전에 "지금 상태가 어떤지" 확인하고 싶을 때
 
 ## 설정 파일
 
-동기화 설정은 `~/.claude/sync-config.json`에 저장된다. 파일이 없으면 사용자에게 Git 레포 URL을 물어보고 저장한다 (이것만 유일하게 쓰기 동작이 발생할 수 있다).
+동기화 설정은 `~/.claude/sync-config.json`에 저장된다:
+
+```json
+{
+  "repo_url": "git@github.com:user/claude-sync.git",
+  "language": "en"
+}
+```
+
+파일이 없으면 사용자에게 Git 레포 URL과 안내 언어를 물어보고 저장한다 (이것만 유일하게 쓰기 동작이 발생할 수 있다). `language`는 선택 사항이다 — 있으면 사용자에게 보이는 문장을 그 언어로 낸다(1단계). 없으면 한국어다.
 
 ## 실행 절차
 
@@ -62,6 +71,10 @@ fi
 cat ~/.claude/sync-config.json
 ```
 
+**`language`가 있으면 사용자에게 보이는 모든 문장을 그 언어로 낸다.** 이 문서의 인용문("> …")과 표의 안내 문구, 그리고 스크립트가 만든 문장(`message`·`reason`·`unrestorable_reasons`·`degraded_reason`·`base_staging_reason`)이 대상이다. **번역하지 않는 것**: 명령(`claude …`·`git …`), JSON 키와 버킷 이름, 파일 경로, 서버·플러그인·마켓플레이스 이름, 판정 값. 스크립트 문장은 **내용을 바꾸지 않고 언어만** 바꾼다. 키가 없으면 한국어다 — 부재가 곧 한국어이고, 같은 뜻의 표현을 둘 두지 않는다.
+
+파일이 없으면 사용자에게 Git 레포 URL과 **안내 언어**를 물어본다. **이 첫 질문은 사용자가 대화에 쓰는 언어로 한다** — 아직 설정이 없기 때문이다. 한국어를 골랐으면 `language` 키를 쓰지 않는다. 답을 `~/.claude/sync-config.json`에 저장한다.
+
 레포를 최신 상태로 가져온다 (clone 또는 pull):
 
 ```bash
@@ -89,7 +102,7 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 **이 명령은 아무것도 막지 않는다.** 버전이 안 맞을 때 사용자가 가장 먼저 실행할 명령이 status이고, 그것마저 막으면 진단 수단이 사라진다. 읽기 전용이라 위험도 없다.
 
-#### 다운그레이드 탐지 결과
+#### 레포 문서 진단 결과 — 다운그레이드·구문 손상
 
 **출력은 파일별 맵이다.** 최상위에 있는 것은 `status`·`reason`·`files` 셋뿐이고 판정은 전부 `files[<relpath>]` 아래에 있다. `files`의 키(`mcp-servers.json`·`plugins.json`)를 **전부 돌면서** 보고한다. 첫 항목에서 멈추면 다른 문서의 사고가 보고에서 빠진다.
 
@@ -99,7 +112,13 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 - `status`가 `"skipped"`면 **그 문서에 대해** `reason`을 알린다 — "사고가 없다"가 아니라 "확인하지 못했다"이다. `repo_shape`·`base_shape`를 함께 보여준다. 그래도 분석은 계속한다.
 - `newer_schema_seen`이 `true`면 히스토리에 **이 버전이 알아보지 못하는 백업**이 있다는 뜻이다. 그 사실도 알린다.
-- `downgrade_suspected`가 `false`면 그 문서는 조용히 넘어간다.
+- `broken_syntax`가 참이면 **레포의 `<relpath>`가 JSON으로 읽히지 않는다.** 이 실행에서는 그 문서를 건너뛴다(5·6절의 `broken_syntax` 갈래) — 파일 동기화와 다른 문서는 그대로 진행한다. **막지 않는다 — 알리고 계속한다.** `downgrade_suspected`와 동시에 참일 수 없다.
+
+> "백업 레포의 `<relpath>`가 JSON으로 읽히지 않습니다. 이 실행에서는 그 문서를 건너뜁니다. **`/sync-backup`이 복구를 제안합니다** — 1.5단계가 아니라 그쪽 4.5단계가 마지막 정상 판본으로 되돌릴지 묻습니다. status는 복구하지 않습니다."
+
+`candidate`가 **있으면** 그 커밋의 `sha`·`date`·`subject`와 `entries`의 버킷별 항목 수를 참고용으로 보여준다("그 판본을 찾았습니다"). **없으면** "git 이력에 이 버전이 읽을 수 있는 정상 판본이 없습니다"까지 말한다. `newer_schema_seen`이 참이면 후보가 그보다 오래된 것임을 명시한다.
+
+`downgrade_suspected`가 `false`면 그 문서는 조용히 넘어간다.
 - `downgrade_suspected`가 `true`면 **그 문서 이름과 함께** 알린다:
 
   > "백업 레포의 `<relpath>`가 옛 형식으로 되돌아가 있습니다 — 낮은 버전 기기가 덮어쓴 것으로 보입니다. `/sync-backup`을 실행하면 복구 후보를 제시합니다."
@@ -112,9 +131,9 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 **여기서 `sync-metadata.json`은 읽지 않는다.** 그 파일을 보는 곳은 1.5단계의 호환성 검사 하나이고, 거기서 읽는 것은 `min_reader_version`·`written_by_version` 둘뿐이다 — `schema`와 `files` 맵을 읽는 곳은 프로덕션에 없다(실측). `check_status.py`에는 표식 유무로 갈리는 **분기가 없다** — 언제나 같은 base 해시 경로를 탄다.
 
-아직 base가 없는 파일은 로컬과 레포가 다르면 `conflict`로 분류된다. 어느 쪽이 앞선 것인지 판단할 근거가 없기 때문이며, 이것도 분기가 아니라 같은 3-way 분류의 결과다.
+아직 base가 없는 파일은 로컬과 레포가 다르면 **`no_base`**로 따로 묶인다 — 어느 쪽이 앞선 것인지 판단할 근거가 없기 때문이다. 3-way 분류로는 `conflict`와 같은 자리이지만 **"양쪽 변경"이 아니다** — 아무도 양쪽을 바꾸지 않았을 수 있다(실측 — 2026-09-01의 `agents/code-reviewer.md`는 로컬만 앞서 있었다). 스크립트가 찍는 머리말은 `⚠ 기준선 없음 — 어느 쪽이 앞선지 알 수 없음 (restore 시 선택 필요)`이다. 이것도 분기가 아니라 같은 3-way 분류의 결과를 기준선 유무로 가른 것이다.
 
-**`~/.claude/.syncignore`에 걸린 로컬 파일은 이 보고에 나오지 않는다.** 이 스크립트는 레포가 아니라 `~/.claude`를 직접 걷기 때문에 필터가 없으면 제외한 파일이 "backup 시 push"로 보고된다 — 백업은 그것을 실제로 push하지 않으므로 **보고만 어긋나는** 자리다. 매칭 규칙은 백업 4단계·`sync-metadata.json`과 같은 한 벌(`lib/syncignore.py`)이고, `.syncignore`가 무엇을 뜻하는지의 정본은 그 파일의 모듈 docstring이다 — **"올리지 않는다"(backup 방향 전용)**.
+**`~/.claude/.syncignore`에 걸린 로컬 파일은 이 보고에 나오지 않는다.** 이 스크립트는 레포가 아니라 `~/.claude`를 직접 걷기 때문에 필터가 없으면 제외한 파일이 "backup 시 push"로 보고된다 — 백업은 그것을 실제로 push하지 않으므로 **보고만 어긋나는** 자리다. 매칭 규칙은 백업 4단계·`reconcile_backup.py`와 같은 한 벌(`lib/syncignore.py`)이고 — 백업 7단계의 `sync-metadata.json`은 이 필터의 소비자가 아니다(4단계가 지운 레포 트리를 걷는다), `.syncignore`가 무엇을 뜻하는지의 정본은 그 파일의 모듈 docstring이다 — **"올리지 않는다"(backup 방향 전용)**.
 
 **레포에도 있는 제외 파일은 여전히 보고된다.** 다만 `local_ahead`("backup 시 push")가 아니라 **`⊘ .syncignore 제외인데 레포에 남아 있음 (backup 시 레포에서 삭제)`**로 따로 묶인다. 셋 중 참인 문구가 없어서다: push는 거짓이고(4단계가 지운다), 침묵도 거짓이며(레포에 있으니 restore가 건드린다), "restore 시 내려옴"도 거짓이다(`in_sync`는 skip, `local_ahead`는 keep). 스크립트는 그 묶음 아래에 두 줄을 덧붙인다 — 다음 백업이 레포 사본을 지우고 **다른 기기가 올려 둔 같은 경로 파일도 함께 사라진다**는 것, 그리고 restore는 `.syncignore`를 보지 않으므로 지워지기 전에 복원하면 그 파일도 평소의 3-way 판정을 받는다는 것.
 
@@ -136,7 +155,7 @@ fi
 
 출력 JSON의 `status`가 `"skipped"`면 `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 플러그인 비교만 생략한다 — 읽기 실패를 "0개"로 오인하지 않기 위해서다. 그렇게 오인하면 레포에만 있는 항목이 `only_repo`에서 통째로 사라지고 이 기기의 항목이 전부 `only_local`로 뒤집힌다(실측). **"동일합니다"로 보고하지 않는다.** `reason_kind`가 `unknown_schema`이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다.
 
-`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다(레포 git 이력에 정상 판본이 있으면 그것으로 복구한다). **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다. 이 상태에서는 `/sync-backup`도 같은 문서를 건너뛴다.
+`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 레포의 이 문서가 손상됐습니다(1.5단계 참조) — `/sync-backup`이 복구를 제안합니다. status는 복구하지 않는다. **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다. 이 상태에서는 `/sync-backup`도 같은 문서를 건너뛴다.
 
 **분기는 `reason_kind`로 한다 — `reason` 문장으로 하지 않는다.** 그 문장은 사람이 읽는 표시용이고, 문구를 다듬는 편집이 스킬의 경로를 **조용히** 바꾼다(예외도 빈 결과도 나지 않는다). 갈래는 `broken_syntax` · `unknown_schema` · `local_unreadable` · `io_error` · `contract_violation` 다섯이고, 표에 없는 값이면 처방을 지어내지 말고 `reason`만 보여준다.
 
@@ -166,7 +185,9 @@ if [ -f "$SYNC_REPO/mcp-servers.json" ]; then
 fi
 ```
 
-출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인하지 않기 위해서다. `reason_kind`가 `broken_syntax`이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다(플러그인 업데이트는 소용이 없다). `reason_kind`가 `unknown_schema`이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다. 세 목록이 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
+출력 JSON의 `status`가 `"skipped"`면 `~/.claude.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨진 것이다.** `reason`을 알리고 MCP 비교만 생략한다 — 읽기 실패를 "서버 0개"로 오인하지 않기 위해서다. `reason_kind`가 `broken_syntax`이면 레포 파일이 손상된 것이다(플러그인 업데이트는 소용이 없다) — 1.5단계 참조. `/sync-backup`이 복구를 제안합니다. **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 서버가 레포에서 사라진다. `reason_kind`가 `unknown_schema`이면 **이 기기의 플러그인이 낡은 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync`를 안내한다. 다섯 필드가 모두 비어 있으면 "MCP 서버: 동일"이라고 보고한다.
+
+`only_repo`의 항목 중 **`unrestorable`에 있는 것**에는 "restore가 설치합니다"라고 말하지 않는다 — 어느 기기도 복원할 수 없는 항목이다(이름이 CLI 규칙을 어겼거나 `command`도 `url`+`type`도 없다. 2.x가 `claude mcp list` 출력을 긁어 넣은 계정 커넥터와 v1 승격 항목이 그 형태다). 항목마다 `unrestorable_reasons`에 사유가 있다 — 그 문장을 그대로 보여주고 이렇게 말한다: "어느 기기도 복원할 수 없는 항목입니다. `/sync-backup`이 레포에서 정리할지 묻습니다." 이 맵의 키는 `unrestorable`과 **같은 집합**이다 — 사유 없는 항목은 결함이지 침묵할 자리가 아니다. "동일"의 판정은 다섯 필드가 전부 빈 것이다.
 
 ### 3. 결과 요약
 
@@ -180,6 +201,7 @@ fi
 - **repo_only**: 레포에만 있는 새 파일 → restore 시 추가
 - **local_ahead / local_only**: 로컬이 앞섬 → backup 시 push
 - **conflict**: 양쪽 모두 base 이후 변경 → restore 시 해소 필요
+- **no_base**: 기준선이 없어 방향을 알 수 없음 → restore 시 양쪽을 보고 선택. 「백업 채택」은 로컬 변경을 버린다
 
 **플러그인과 MCP 서버의 어휘는 파일과 다르다.** 위의 "local_ahead / local_only: 로컬이 앞섬 → backup 시 push"는 그 둘에 적용되지 않는다. **버킷별 문구는 2단계를 따른다 — 여기에 정의를 다시 적지 않는다.** 두 벌이 되면 요약을 만드는 이 자리의 옛 정의가 2단계의 지시를 덮어써, `unrestorable` 항목에 "restore가 설치합니다"라고 말하거나 보류 항목을 `only_local`·`changed`로 내보내게 된다 — 둘 다 spec 9.2가 금지한 문구다.
 

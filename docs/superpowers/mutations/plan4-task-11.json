@@ -1,0 +1,26 @@
+[
+ {"id": "M1", "desc": "축2 축분리 — 구문 손상 판정을 다른 형태 상수로 바꾼다",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/detect_downgrade.py",
+  "old": "    broken = repo_shape == compat.SHAPE_BROKEN",
+  "new": "    broken = repo_shape == compat.SHAPE_UNKNOWN"},
+
+ {"id": "M2", "desc": "축1 훅 호출 계약 — 구문 손상에는 후보를 찾지 않는다",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/detect_downgrade.py",
+  "old": "    if suspected or broken:\n        try:",
+  "new": "    if suspected:\n        try:"},
+
+ {"id": "M3", "desc": "축3 {} vs None — 정상 경로에서 키를 지운다(부재 = falsy = 사고 없음)",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/detect_downgrade.py",
+  "old": "        # 구문 손상. base 없이도 사실이므로 base_shape를 보지 않는다(spec 5.1).\n        \"broken_syntax\": broken,\n",
+  "new": ""},
+
+ {"id": "M4", "desc": "축5 입력 축 — 파라미터에서 plugins 케이스를 뺀다. **등가 변조**이므로 SURVIVED가 정상이고 리뷰가 잡는다",
+  "file": "plugins/claude-sync/tests/test_downgrade.py",
+  "old": "    (pc.BACKUP_RELPATH, commit_plugins, p_v2()),\n], ids=[\"mcp\", \"plugins\"])",
+  "new": "], ids=[\"mcp\"])"},
+
+ {"id": "M5", "desc": "축4 I/O 층 — backup 4.5의 broken_syntax 갈래에서 복구 명령을 지운다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "        ```bash\n        git -C \"$SYNC_REPO\" show \"<sha>:<relpath>\" > \"$SYNC_REPO/<relpath>\"\n        ```\n        **`<relpath>`는 지금 보고 있는 항목의 키다.** 한 문서 이름을 리터럴로 박으면 다른 문서의 복구가 엉뚱한 파일을 덮어쓴다.\n      - **복구하지 않고 계속한다** — 그 문서만 건너뛴다",
+  "new": "      - **복구하지 않고 계속한다** — 그 문서만 건너뛴다"}
+]

@@ -243,7 +243,7 @@ def _block_reason(meta, raw_min, my_version):
 # 백업 문서의 형태. 문자열 리터럴을 흩뿌리지 않는다 — 호출부 오타가 AttributeError로
 # 즉시 드러난다(불변식 6).
 SHAPE_ABSENT = "absent"
-SHAPE_BROKEN = "broken"
+SHAPE_BROKEN = "broken"   # detect_downgrade가 이 형태를 broken_syntax로 보고한다(spec 5.1)
 SHAPE_UNREADABLE = "unreadable"   # 파일/blob을 읽지 못했다 — absent가 아니다
 SHAPE_V1_ARRAY = "v1_array"       # mcp-servers.json의 옛 형식
 SHAPE_V1_OBJECT = "v1_object"     # plugins.json의 옛 형식 — v1_array와 **다른 상수다**

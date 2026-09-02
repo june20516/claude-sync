@@ -51,7 +51,8 @@ buckets = {
     "local_only": [],     # backup 시 push
     "local_ahead": [],    # backup 시 push
     "fast_forward": [],   # restore 시 업데이트
-    "conflict": [],       # 양쪽 변경
+    "conflict": [],       # 양쪽 변경 (기준선 있음)
+    "no_base": [],        # 기준선 없음 — 방향을 모른다 (spec 3.4)
     "excluded_in_repo": [],   # backup 시 레포에서 삭제
 }
 
@@ -96,6 +97,14 @@ for rel in rels:
             ss.restore_action(L, R, S, L is not None, R is not None)]
         continue
     cls = ss.classify(L, R, S, local_exists=L is not None, repo_exists=R is not None)
+    # **보고 시점 분할.** classify는 기준선 없는 L≠R을 conflict로 낸다 — 판정으로는 옳다
+    # (어느 쪽이 앞선지 모르니 restore가 선택을 받아야 한다). 그러나 "양쪽 변경"이라는
+    # 머리말은 그 파일에 대해 거짓이다 — 아무도 양쪽을 바꾸지 않았을 수 있다(spec 3.4.
+    # backup 4단계의 reject.no_base와 같은 사실, 같은 이름).
+    # classify 자체에 값을 더하지 않는다: restore_action의 완전성 단정과 소비자 둘이
+    # 걸려 있고, 보고 시점 분할이 같은 결과를 더 작게 낸다(spec 11장).
+    if cls == "conflict" and S is None:
+        cls = "no_base"
     buckets[cls].append(rel)
 
 print("=" * 60)
@@ -104,6 +113,7 @@ print("=" * 60)
 
 labels = [
     ("conflict", "⚠ 충돌 — 양쪽 변경 (restore 시 해소 필요)"),
+    ("no_base", "⚠ 기준선 없음 — 어느 쪽이 앞선지 알 수 없음 (restore 시 선택 필요)"),
     ("fast_forward", "↓ 업데이트 가능 — 레포가 앞섬 (restore 시 적용)"),
     ("repo_only", "+ 새 파일 — 레포에만 있음 (restore 시 추가)"),
     ("local_ahead", "↑ 로컬 앞섬 (backup 시 push)"),

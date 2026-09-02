@@ -35,11 +35,12 @@ restore는 `git pull`처럼 동작한다. **리모트에 자동 push하지 않�
 
 ```json
 {
-  "repo_url": "git@github.com:user/claude-settings.git"
+  "repo_url": "git@github.com:user/claude-settings.git",
+  "language": "en"
 }
 ```
 
-최초 실행 시 이 파일이 없으면 사용자에게 Git 레포 URL을 물어보고 저장한다.
+최초 실행 시 이 파일이 없으면 사용자에게 Git 레포 URL을 물어보고 저장한다. `language`는 선택 사항이다 — 있으면 사용자에게 보이는 문장을 그 언어로 낸다(1단계). 없으면 한국어다.
 
 ## 실행 절차
 
@@ -89,7 +90,9 @@ fi
 cat ~/.claude/sync-config.json
 ```
 
-파일이 없으면 사용자에게 Git 레포 URL을 물어본다. URL을 받으면 `~/.claude/sync-config.json`에 저장한다.
+**`language`가 있으면 사용자에게 보이는 모든 문장을 그 언어로 낸다.** 이 문서의 인용문("> …")과 표의 안내 문구, 그리고 스크립트가 만든 문장(`message`·`reason`·`unrestorable_reasons`·`degraded_reason`·`base_staging_reason`)이 대상이다. **번역하지 않는 것**: 명령(`claude …`·`git …`), JSON 키와 버킷 이름, 파일 경로, 서버·플러그인·마켓플레이스 이름, 판정 값. 스크립트 문장은 **내용을 바꾸지 않고 언어만** 바꾼다. 키가 없으면 한국어다 — 부재가 곧 한국어이고, 같은 뜻의 표현을 둘 두지 않는다.
+
+파일이 없으면 사용자에게 Git 레포 URL과 **안내 언어**를 물어본다. **이 첫 질문은 사용자가 대화에 쓰는 언어로 한다** — 아직 설정이 없기 때문이다. 한국어를 골랐으면 `language` 키를 쓰지 않는다. 답을 `~/.claude/sync-config.json`에 저장한다.
 
 ### 2. 레포에서 최신 상태 가져오기
 
@@ -143,7 +146,7 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 **restore를 막지 않는 이유**: 버전이 낮아 backup이 막힌 사용자가 업데이트 안내를 받을 수 있는 경로가 restore다. 여기까지 막으면 탈출구가 사라진다.
 
-#### 다운그레이드 탐지 결과
+#### 레포 문서 진단 결과 — 다운그레이드·구문 손상
 
 **출력은 파일별 맵이다.** 최상위에 있는 것은 `status`·`reason`·`files` 셋뿐이고 판정은 전부 `files[<relpath>]` 아래에 있다. `files`의 키는 `mcp-servers.json`과 `plugins.json`이다. **항목마다 한 번씩, 둘 다 본다** — 첫 항목에서 멈추면 다른 문서의 사고가 뒤 단계에서 거짓 문구로 그대로 나간다.
 
@@ -152,6 +155,12 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 `files`의 항목마다 — 그 항목의 키를 `<relpath>`라 하자:
 
 `status`가 `"skipped"`면 **그 문서에 대해 `reason`을 알리고** 계속한다 — "사고가 없다"가 아니라 "확인하지 못했다"이다. `repo_shape`·`base_shape`를 함께 보여준다.
+
+`broken_syntax`가 참이면 **레포의 `<relpath>`가 JSON으로 읽히지 않는다.** 이 실행에서는 그 문서를 건너뛴다(5·6절의 `broken_syntax` 갈래) — 파일 동기화와 다른 문서는 그대로 진행한다. **막지 않는다 — 알리고 계속한다.** `downgrade_suspected`와 동시에 참일 수 없다.
+
+> "백업 레포의 `<relpath>`가 JSON으로 읽히지 않습니다. 이 실행에서는 그 문서를 건너뜁니다. **복구는 `/sync-backup`에서 합니다** — 4.5단계가 마지막 정상 판본으로 되돌릴지 묻습니다. restore는 리모트에 push하지 않으므로 여기서 레포를 고칠 수 없습니다."
+
+`candidate`가 **있으면** 그 커밋의 `sha`·`date`·`subject`와 `entries`의 버킷별 항목 수를 참고용으로 보여준다("그 판본을 찾았습니다"). **없으면** "git 이력에 이 버전이 읽을 수 있는 정상 판본이 없습니다"까지 말한다. `newer_schema_seen`이 참이면 후보가 그보다 오래된 것임을 명시한다.
 
 `downgrade_suspected`가 `false`면 그 문서는 조용히 넘어간다.
 
@@ -249,7 +258,7 @@ cat /tmp/claude-sync-plugins-plan.json
 
 `status`가 `"skipped"`면 `reason`을 알리고 플러그인 단계 전체를 건너뛴다(파일 복원과 6절의 MCP 단계는 그대로 진행한다). 갈래는 셋이다 — `settings.json`을 읽지 못했거나, 레포 파일의 형식을 알아볼 수 없거나, **레포 파일의 JSON 구문이 깨졌다.** 어느 갈래든 **제안을 하나도 내지 않는다**: 못 읽은 문서를 "항목 0개"로 읽으면 이 기기의 플러그인이 전부 `local_stale`로 떨어져 **"전부 지웁시다"가 나가는데**, 그 근거("다른 기기가 삭제했다")는 거짓이다(실측). `reason_kind`가 `unknown_schema`이면 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다.
 
-`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 그 파일을 정상 JSON으로 되돌린 뒤 다시 실행하도록 안내한다(레포 git 이력에 정상 판본이 있으면 그것으로 복구한다). **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다.
+`reason_kind`가 **`broken_syntax`**이면 레포 파일 자체가 손상된 것이다 — **플러그인 업데이트는 소용이 없다.** 레포의 이 문서가 손상됐습니다(2.5단계 참조) — **복구는 `/sync-backup`이** 마지막 정상 판본으로 되돌릴지 묻는다. restore는 레포에 쓰지 않는다. **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 항목은 **이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다** — 지우면 그 항목이 레포에서 사라진다.
 
 **분기는 `reason_kind`로 한다 — `reason` 문장으로 하지 않는다.** 그 문장은 사람이 읽는 표시용이고, 문구를 다듬는 편집이 스킬의 경로를 **조용히** 바꾼다(예외도 빈 결과도 나지 않는다). 갈래는 `broken_syntax` · `unknown_schema` · `local_unreadable` · `io_error` · `contract_violation` 다섯이고, 표에 없는 값이면 처방을 지어내지 말고 `reason`만 보여준다.
 
@@ -257,7 +266,7 @@ cat /tmp/claude-sync-plugins-plan.json
 
 **`status`가 `"ok"`인 섹션에 `degraded_reason`이 있으면 그 문장도 함께 알린다.** 그 섹션은 접히지 않았지만 판정의 입력 하나를 잃은 상태다 — 보류 파일을 읽지 못하면 `pluginConfigs`만 접히는데 `enabledPlugins`는 H3의 해제 기록(`release`)을 함께 잃어, **이미 "이 기기 값으로 통일"을 고른 항목이 그 실행에서 다시 보류된다.** `reason`과 다른 키인 것은 그래서다 — 이것을 skip으로 렌더링하면 정상 처리된 섹션이 건너뛴 것으로 보고된다. 보류 파일을 고치고 다시 실행하도록 안내한다.
 
-**섹션 버킷의 처방 — 열한 개 전부** (9.3.8). 아래 이름은 `sections[<섹션>]` 안의 버킷이고 **최상위 키가 아니다.** 세 섹션이 각각 자기 몫을 낸다. 처리하는 절이 있는 행은 그 절 번호를 가리키고, 없는 행은 처방을 여기서 준다. 바로 뒤 6절의 MCP 표와 이름이 겹치지만 층도 처방도 다르다 — 그 표를 이 절에 옮겨 쓰지 않는다.
+**섹션 버킷의 처방 — 열한 개 전부** (9.3.8). 아래 이름은 `sections[<섹션>]` 안의 버킷이고 **최상위 키가 아니다.** 세 섹션이 각각 자기 몫을 낸다. 처리하는 절이 있는 행은 그 절 번호를 가리키고, 없는 행은 처방을 여기서 준다. 바로 뒤 6절의 MCP 표와 **층은 같고 처방이 다르다** — 그 표를 이 절에 옮겨 쓰지 않는다.
 
 | 버킷 | 처방 |
 |---|---|
@@ -358,7 +367,7 @@ claude plugin enable <id> --scope user
 
 #### 5-5. 세 선택지 — 케이스 4·5·8·9
 
-**이 표의 버킷은 `sections[<섹션>]` 안에 있다.** 계획 JSON은 두 층이고 이 절이 그 둘을 함께 부른다 — 버킷은 섹션별이고, `repo_values`·`local_values`·`install`·`config_keys`·`unrestorable_reasons`는 **최상위**다. 바로 뒤 6단계의 MCP 표는 같은 이름들이 최상위인 계획(`plan_mcp`)을 다루므로, 두 표가 나란히 있어도 층이 다르다. 최상위에서 `local_stale`을 찾으면 없고, 그러면 **케이스 4·5·8·9가 하나도 보고되지 않는다** — 넷 다 안정 상태라 사용자가 고를 기회 자체가 사라지고 다음 실행도 같다.
+**이 표의 버킷은 `sections[<섹션>]` 안에 있다.** 계획 JSON은 두 층이고 이 절이 그 둘을 함께 부른다 — 버킷은 섹션별이고, `repo_values`·`local_values`·`install`·`config_keys`·`unrestorable_reasons`는 **최상위**다. 바로 뒤 6단계의 MCP 계획(`plan_mcp`)도 같은 두 층이다 — 버킷은 `sections["servers"]` 안, `configs`·`secret_keys`는 최상위. 최상위에서 `local_stale`을 찾으면 없고, 그러면 **케이스 4·5·8·9가 하나도 보고되지 않는다** — 넷 다 안정 상태라 사용자가 고를 기회 자체가 사라지고 다음 실행도 같다.
 
 > **먼저 2.5단계가 낸 `files["plugins.json"]`의 `downgrade_suspected`를 본다. 참이면 `local_stale`(케이스 4·5)에 아래 표의 문구를 쓰지 않는다.**
 
@@ -453,9 +462,11 @@ python3 "$SYNC_SCRIPTS/plan_mcp.py" plan "$SYNC_REPO/mcp-servers.json" > /tmp/cl
 cat /tmp/claude-sync-mcp-plan.json
 ```
 
-`status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원과 5절의 플러그인 단계는 그대로 진행한다). `reason_kind`가 `unknown_schema`이면 레포가 **이 기기보다 상위 버전으로 백업된 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다. `reason_kind`가 **`broken_syntax`**이면 레포 파일이 손상된 것이므로 **정상 JSON으로 되돌린 뒤 다시 실행하도록** 안내한다 — 이 갈래도 **제안을 하나도 내지 않는다.** 못 읽은 문서를 "서버 0개"로 읽으면 이 기기의 서버가 전부 `local_stale`로 떨어져 거짓 근거의 제거 제안이 나가기 때문이다(실측). `"ok"`면 버킷별로 처리한다.
+**계획 JSON은 두 층이다 — 5절의 플러그인 계획과 같은 구조다.** 버킷은 `sections["servers"]` 안에 있고(섹션이 플러그인은 셋, MCP는 하나 — 이름은 `mcp_config.SECTIONS`), 실행 재료인 `configs`·`secret_keys`는 **최상위**다. 최상위에서 `add`나 `local_stale`을 찾으면 없고, 그러면 아래 표의 어느 버킷도 처리되지 않는다.
 
-| 버킷 | 처방 |
+`status`가 `"skipped"`면 `reason`을 알리고 MCP 단계 전체를 건너뛴다(파일 복원과 5절의 플러그인 단계는 그대로 진행한다). `reason_kind`가 `unknown_schema`이면 레포가 **이 기기보다 상위 버전으로 백업된 것**이므로 `claude plugin marketplace update claude-sync && claude plugin update claude-sync` 후 다시 시도하도록 안내한다. `reason_kind`가 **`broken_syntax`**이면 레포의 이 문서가 손상됐습니다(2.5단계 참조) — **복구는 `/sync-backup`이** 마지막 정상 판본으로 되돌릴지 묻는다. restore는 레포에 쓰지 않는다. 이 갈래도 **제안을 하나도 내지 않는다.** **그냥 지우라고 안내하지 않는다** — 그 문서에만 있던 다른 기기의 서버는 이 기기의 로컬에 없어서 다음 백업이 되밀 수 없다 — 지우면 그 서버가 레포에서 사라진다. 못 읽은 문서를 "서버 0개"로 읽으면 이 기기의 서버가 전부 `local_stale`로 떨어져 거짓 근거의 제거 제안이 나가기 때문이다(실측). `"ok"`면 버킷별로 처리한다.
+
+| 버킷 (`sections["servers"]` 안) | 처방 |
 |---|---|
 | `add` | 그대로 등록한다 (6-1) |
 | `needs_secret` | 값을 물어 채운 뒤 등록한다. 건너뛰면 등록하지 않는다 (6-2) |
@@ -505,7 +516,7 @@ rm -f /tmp/claude-sync-mcp-one.json
 
 #### 6-3. `unrestorable` — 시도하지 않고 한 번만 안내
 
-이름이 CLI 규칙(영숫자·하이픈·언더스코어)을 어겼거나, config에 `command`도 `url`+`type`(http/sse)도 없는 항목이다. 옛 v1 형식에서 승격된 항목이 정확히 이 형태다. 목록을 한 번만 보여주고 "이 항목들은 옛 형식이거나 이름 규칙에 맞지 않아 복원할 수 없습니다"라고 안내한다. **실패 건수로 세지 않는다.**
+이름이 CLI 규칙(영숫자·하이픈·언더스코어)을 어겼거나, config에 `command`도 `url`+`type`(http/sse)도 없는 항목이다. 옛 v1 형식에서 승격된 항목이 정확히 이 형태다. 목록을 한 번만 보여주고 "이 항목들은 옛 형식이거나 이름 규칙에 맞지 않아 복원할 수 없습니다"라고 안내한다. **실패 건수로 세지 않는다.** 사유는 `sections["servers"]["unrestorable_reasons"]`에 있다 — 항목마다 그 문장을 그대로 보여준다. **레포에서 정리하려면 `/sync-backup`이 6.5단계에서 제안한다** — restore는 레포에 쓰지 않는다.
 
 #### 6-4. `repo_ahead`(케이스 8) · `both_changed`(케이스 9) — 세 선택지
 
@@ -523,7 +534,7 @@ rm -f /tmp/claude-sync-mcp-one.json
 **"레포 값 채택" 5단계 — 순서를 바꾸면 안 된다.**
 
 ```
-1. 그 이름이 unrestorable 목록에 있으면 채택 선택지를 제시하지 않는다.
+1. 그 이름이 `sections["servers"]["unrestorable"]`에 있으면 채택 선택지를 제시하지 않는다.
 2. secret_keys에 있으면 **먼저** 값을 물어 넣을 JSON을 완성한다(6-2와 같은 흐름).
    건너뛰면 여기서 중단하고 "나중에"와 동일하게 처리한다(로컬 불변, base 불변).
 3. claude mcp remove <name> -s user

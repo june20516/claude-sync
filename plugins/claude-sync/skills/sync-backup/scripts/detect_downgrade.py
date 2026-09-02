@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""다운그레이드 사고를 탐지하고 마지막 정상(v2) 백업 커밋을 찾는다 (읽기 전용).
+"""레포 백업 문서 진단 — 다운그레이드 사고와 구문 손상 (읽기 전용).
+
+마지막 정상(v2) 백업 커밋을 찾아 복구 후보로 제시한다.
 
 사용: detect_downgrade.py <레포 경로>
 
@@ -9,6 +11,12 @@
 **둘 각각**에 돌리고, 결과는 `{"files": {relpath: {...}}}` 맵으로 낸다.
 
 git 히스토리를 훑어 그 문서가 마지막으로 v2였던 커밋을 후보로 제시한다.
+
+**구문 손상도 같은 루프에서 진단한다**(spec 5.1). `repo_shape == broken`이면 `broken_syntax`가
+참이고, 그때도 마지막 v2 커밋을 후보로 낸다 — 깨진 문서에 필요한 것이 정확히 그것이다.
+두 갈래는 배타다: SHAPE_BROKEN은 어느 문서의 옛 형식과도 다르므로 downgrade_suspected가
+거짓이다. 구문 손상은 base 없이도 사실이다. 스크립트 이름은 바꾸지 않는다 — 가드 수십 개가
+이름을 부른다(spec 11장).
 
 **자동으로 복구하지 않는다** — 옛 기기가 의도적으로 지운 항목까지 되살리기 때문이다.
 탐지 실패가 백업을 막아서도 안 된다. 부가 기능이므로 status=skipped로 물러난다.
@@ -209,8 +217,8 @@ def detect(repo_path, base_dir=ss.BASE_DIR):
 
 
 def detect_file(repo_path, relpath, base_dir):
-    """문서 하나의 판정. {"status", "reason", "downgrade_suspected", "repo_shape",
-    "base_shape", "candidate", "newer_schema_seen"}
+    """문서 하나의 판정. {"status", "reason", "downgrade_suspected", "broken_syntax",
+    "repo_shape", "base_shape", "candidate", "newer_schema_seen"}
 
     repo_shape·base_shape를 항상 싣는다 — 탐지하지 못한 경우에도 왜 못 했는지가 호출부에
     드러나야 한다(불변식 6). SKILL.md가 "탐지할 수 없었다"와 "사고가 없다"를 구별해
@@ -219,10 +227,13 @@ def detect_file(repo_path, relpath, base_dir):
     repo_shape = _shape_of_file(os.path.join(repo_path, relpath), relpath)
     base_shape = _base_shape(relpath, base_dir)
     suspected = compat.downgrade_suspected(repo_shape, base_shape, relpath)
+    broken = repo_shape == compat.SHAPE_BROKEN
     out = {
         "status": "ok",
         "reason": None,
         "downgrade_suspected": suspected,
+        # 구문 손상. base 없이도 사실이므로 base_shape를 보지 않는다(spec 5.1).
+        "broken_syntax": broken,
         "repo_shape": repo_shape,
         "base_shape": base_shape,
         "candidate": None,
@@ -230,7 +241,7 @@ def detect_file(repo_path, relpath, base_dir):
         # "후보 없음"과 "알아보지 못해 건너뜀"은 다른 말이다.
         "newer_schema_seen": False,
     }
-    if suspected:
+    if suspected or broken:
         try:
             out["candidate"], out["newer_schema_seen"] = find_last_v2_commit(
                 repo_path, relpath)
@@ -242,11 +253,12 @@ def detect_file(repo_path, relpath, base_dir):
             # skipped로 접으면 코드 결함이 "그 파일만 환경 문제였다"로 묻히므로,
             # main()의 마지막 방어선이 받아 **전체를** skipped로 알린다(키 모양은 유지).
             # 이 선택은 test_a_judgment_error_is_not_folded_into_one_file이 잠근다.
-            return _skipped_file(str(e), suspected, repo_shape, base_shape)
+            return _skipped_file(str(e), suspected, repo_shape, base_shape, broken)
     return out
 
 
-def _skipped_file(reason, suspected=False, repo_shape=None, base_shape=None):
+def _skipped_file(reason, suspected=False, repo_shape=None, base_shape=None,
+                  broken=False):
     """문서 하나의 탐지를 못 한 경우. **키 모양을 detect_file의 정상 경로와 같게 둔다.**
 
     소비하는 쪽이 entry.get("downgrade_suspected")를 볼 때 키가 없으면 None(falsy)이 되어
@@ -256,6 +268,7 @@ def _skipped_file(reason, suspected=False, repo_shape=None, base_shape=None):
         "status": "skipped",
         "reason": reason,
         "downgrade_suspected": suspected,
+        "broken_syntax": broken,
         "repo_shape": repo_shape,
         "base_shape": base_shape,
         "candidate": None,

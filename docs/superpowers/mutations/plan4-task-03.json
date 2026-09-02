@@ -1,0 +1,26 @@
+[
+ {"id": "M1", "desc": "축1 훅 호출 계약 — 트리 인자를 무시하고 다시 로컬을 걷는다",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/generate_metadata.py",
+  "old": "    for rel in sorted(ss.iter_synced_relpaths(tree_root)):",
+  "new": "    for rel in sorted(ss.iter_synced_relpaths(os.path.expanduser(\"~/.claude\"))):"},
+
+ {"id": "M2", "desc": "축2 축분리 — 걷는 집합에서 한 종류를 빼 표식이 트리보다 작아진다",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/generate_metadata.py",
+  "old": "        files[rel] = digest",
+  "new": "        if rel != \"CLAUDE.md\":\n            files[rel] = digest"},
+
+ {"id": "M3", "desc": "축3 {} vs None — 읽을 수 없는 파일을 건너뛰지 않고 None 해시로 싣는다",
+  "file": "plugins/claude-sync/skills/sync-backup/scripts/generate_metadata.py",
+  "old": "            print(\"건너뜀(읽을 수 없음): %s\" % rel, file=sys.stderr)\n            continue",
+  "new": "            files[rel] = None\n            continue"},
+
+ {"id": "M4", "desc": "축5 입력 축 — 둘째 트리의 덮어쓰기를 빼 등가 검사로 만든다",
+  "file": "plugins/claude-sync/tests/test_metadata.py",
+  "old": "        f.write(\"로컬이 앞선 판본\")",
+  "new": "        f.write(\"a\")"},
+
+ {"id": "M5", "desc": "축4 I/O 층 — 표식을 4단계의 제외 삭제보다 앞에서 걷는다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "    find \"$SYNC_REPO\" -path \"$SYNC_REPO/.git\" -prune -o -path \"$SYNC_REPO/$pattern\" -print",
+  "new": "    python3 \"$SYNC_SCRIPTS/generate_metadata.py\" \"$SYNC_REPO/sync-metadata.json\" \"$SYNC_REPO\"\n    find \"$SYNC_REPO\" -path \"$SYNC_REPO/.git\" -prune -o -path \"$SYNC_REPO/$pattern\" -print"}
+]

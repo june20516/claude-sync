@@ -1,0 +1,26 @@
+[
+ {"id": "M1", "desc": "축2 축분리 — v1 승격 항목(type stdio)을 복원 가능으로 읽는다",
+  "file": "plugins/claude-sync/lib/mcp_config.py",
+  "old": "        if isinstance(cfg.get(\"url\"), str) and cfg.get(\"type\") in (\"http\", \"sse\"):\n            return None",
+  "new": "        if isinstance(cfg.get(\"url\"), str) and cfg.get(\"type\") in (\"http\", \"sse\", \"stdio\"):\n            return None"},
+
+ {"id": "M2", "desc": "축1 훅 호출 계약 — restorable을 옛 독립 구현으로 되돌린다(두 판정이 갈릴 자리가 생긴다)",
+  "file": "plugins/claude-sync/lib/mcp_config.py",
+  "old": "    \"\"\"claude mcp add-json으로 재현할 수 있는 항목인가. 판정은 unrestorable_reason 하나가 한다.\"\"\"\n    return unrestorable_reason(name, cfg) is None",
+  "new": "    \"\"\"claude mcp add-json으로 재현할 수 있는 항목인가.\"\"\"\n    if not VALID_NAME.match(name):\n        return False\n    if not isinstance(cfg, dict):\n        return False\n    if isinstance(cfg.get(\"command\"), str) and cfg[\"command\"]:\n        return True\n    return isinstance(cfg.get(\"url\"), str) and cfg.get(\"type\") in (\"http\", \"sse\")"},
+
+ {"id": "M3", "desc": "축3 {} vs None — dict 가드를 없앤다(None config가 AttributeError)",
+  "file": "plugins/claude-sync/lib/mcp_config.py",
+  "old": "    if isinstance(cfg, dict):\n        if isinstance(cfg.get(\"command\"), str) and cfg[\"command\"]:\n            return None",
+  "new": "    if True:\n        if isinstance(cfg.get(\"command\"), str) and cfg[\"command\"]:\n            return None"},
+
+ {"id": "M4", "desc": "축5 입력 축 — 동치 픽스처에서 정상 케이스 둘을 뺀다. **등가 변조**(\"항상 사유가 있다\"로도 초록)이므로 SURVIVED가 정상이고 리뷰가 잡는다",
+  "file": "plugins/claude-sync/tests/test_mcp_config.py",
+  "old": "    (\"ok\", {\"command\": \"npx\"}, True),\n    (\"sse-one\", {\"type\": \"sse\", \"url\": \"https://x/sse\"}, True),\n",
+  "new": ""},
+
+ {"id": "M5", "desc": "축4 I/O 층 — 목록과 사유 맵을 따로 만든다(정렬 소실 + 사유가 names 전체)",
+  "file": "plugins/claude-sync/lib/mcp_config.py",
+  "old": "    bad = sorted(n for n in names if not restorable(n, mapping.get(n)))\n    return {\"unrestorable\": bad,\n            \"unrestorable_reasons\": {n: unrestorable_reason(n, mapping.get(n)) for n in bad}}",
+  "new": "    bad = [n for n in names if not restorable(n, mapping.get(n))]\n    return {\"unrestorable\": bad,\n            \"unrestorable_reasons\": {n: unrestorable_reason(n, mapping.get(n)) for n in names}}"}
+]

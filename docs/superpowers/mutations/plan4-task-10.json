@@ -1,0 +1,37 @@
+[
+ {
+  "id": "M1",
+  "desc": "축2 축분리 — 표식 생성을 6.5단계 안, prune 호출 앞으로 끌어온다(정리 전 트리를 걷는다)",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "python3 \"$SYNC_SCRIPTS/prune_mcp.py\" \"$SYNC_REPO\" \"<이름>\" \"<이름>\" ...\n  ```\n",
+  "new": "python3 \"$SYNC_SCRIPTS/generate_metadata.py\" \"$SYNC_REPO/sync-metadata.json\" \"$SYNC_REPO\"\n  python3 \"$SYNC_SCRIPTS/prune_mcp.py\" \"$SYNC_REPO\" \"<이름>\" \"<이름>\" ...\n  ```\n"
+ },
+ {
+  "id": "M2",
+  "desc": "축5 입력 축 — 억제 판정을 다른 문서(plugins.json)로 바꾼다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "먼저 4.5단계가 낸 `files[\"mcp-servers.json\"]`의 `downgrade_suspected`를 본다.",
+  "new": "먼저 4.5단계가 낸 `files[\"plugins.json\"]`의 `downgrade_suspected`를 본다."
+ },
+ {
+  "id": "M3",
+  "desc": "축4 I/O 층 — 고지 인용문 둘째(다른 기기가 되돌린다)를 지운다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": ">\n> \"다른 기기가 이 서버를 실제로 쓰고 있다면, 그 기기의 다음 `/sync-restore`가 「다른 기기가 삭제했습니다」로 **묻고**, 「유지」를 고르면 그 기기의 진짜 설정으로 레포에 되돌아옵니다. 조용히 사라지지 않습니다.\"\n",
+  "new": ""
+ },
+ {
+  "id": "M4",
+  "desc": "축3 {} vs None — 다운그레이드 의심에도 정리 선택지를 그대로 준다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "목록과 사유는 보여주되 **정리 선택지를 주지 않는다**",
+  "new": "목록과 사유를 보여주고 **정리 선택지를 그대로 준다**"
+ },
+ {
+  "id": "M5",
+  "desc": "축1 훅 호출 계약 — prune 호출줄이 레포가 아니라 로컬을 가리킨다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "  python3 \"$SYNC_SCRIPTS/prune_mcp.py\" \"$SYNC_REPO\" \"<이름>\" \"<이름>\" ...",
+  "new": "  python3 \"$SYNC_SCRIPTS/prune_mcp.py\" \"$HOME/.claude\" \"<이름>\" \"<이름>\" ..."
+ }
+]

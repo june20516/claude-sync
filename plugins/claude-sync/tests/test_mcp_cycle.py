@@ -19,6 +19,7 @@ SKILLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills"
 COLLECT = os.path.abspath(os.path.join(SKILLS, "sync-backup", "scripts", "collect_mcp.py"))
 UPDATE_BASE = os.path.abspath(os.path.join(SKILLS, "sync-backup", "scripts", "update_base.py"))
 PLAN = os.path.abspath(os.path.join(SKILLS, "sync-restore", "scripts", "plan_mcp.py"))
+PRUNE = os.path.abspath(os.path.join(SKILLS, "sync-backup", "scripts", "prune_mcp.py"))
 
 A = {"command": "a"}
 B = {"command": "b"}
@@ -72,7 +73,7 @@ class Device:
         backup_path = os.path.join(self.repo, mc.BACKUP_RELPATH)
         plan = json.loads(self._run(PLAN, "plan", backup_path))
         servers = self.local()
-        for name in list(plan["add"]) + list(adopt):     # add-json
+        for name in list(bucket(plan, "add")) + list(adopt):     # add-json
             servers[name] = plan["configs"][name]
         for name in remove:                              # mcp remove
             servers.pop(name, None)
@@ -85,9 +86,19 @@ class Device:
         self._run(UPDATE_BASE, self.staging, mc.BACKUP_RELPATH)
         return plan
 
+    def prune(self, names):
+        """SKILL.md 6.5단계 「레포에서 정리한다」."""
+        return json.loads(self._run(PRUNE, self.repo, *names))
+
 
 def repo_servers(repo):
     return mc.load_backup(os.path.join(repo, mc.BACKUP_RELPATH))
+
+
+def bucket(plan, name):
+    """계획의 버킷 — `sections[<섹션>]` 안이다(spec 7). 섹션 이름은 어댑터에서 뽑는다."""
+    (section,) = mc.SECTIONS
+    return plan["sections"][section][name]
 
 
 def set_repo(repo, servers):
@@ -110,7 +121,7 @@ def test_case8_adopt_then_backup_converges_to_repo_value(tmp_path):
     set_repo(dev.repo, {"x": B})                  # 타 기기가 변경
     assert dev.backup()["repo_ahead"]["present"] == ["x"]
     plan = dev.restore(adopt=["x"])
-    assert plan["repo_ahead"] == ["x"]
+    assert bucket(plan, "repo_ahead") == ["x"]
     report = dev.backup()
     assert dev.local()["x"] == B
     assert repo_servers(dev.repo)["x"] == B
@@ -157,7 +168,7 @@ def test_case9_three_choices(tmp_path):
         return dev
 
     dev = setup("adopt")
-    assert dev.restore(adopt=["Z"])["both_changed"] == ["Z"]
+    assert bucket(dev.restore(adopt=["Z"]), "both_changed") == ["Z"]
     assert dev.backup()["conflicts"] == {"repo_kept": [], "repo_absent": []}
     assert repo_servers(dev.repo)["Z"] == B
 
@@ -178,7 +189,7 @@ def test_case7_restore_does_not_touch_local(tmp_path):
     dev.backup()
     dev.set_local({"x": A})                        # 아직 백업하지 않은 로컬 변경
     plan = dev.restore()
-    assert plan["local_ahead"] == ["x"]
+    assert bucket(plan, "local_ahead") == ["x"]
     assert dev.local()["x"] == A
 
 
@@ -189,7 +200,7 @@ def test_case4_keep_brings_server_back_and_stabilizes(tmp_path):
     set_repo(dev.repo, {"y": A})                   # 기기 A가 X를 지우고 백업한 결과
     assert dev.backup()["local_stale"] == ["X"]
     plan = dev.restore(keep_stale=["X"])
-    assert plan["local_stale"] == ["X"]
+    assert bucket(plan, "local_stale") == ["X"]
     assert "X" not in dev.base()
     dev.backup()
     assert sorted(repo_servers(dev.repo)) == ["X", "y"]
@@ -224,7 +235,8 @@ def test_two_cycles_reach_fixed_point(tmp_path):
         report = dev.backup()
         plan = dev.restore()                       # 무선택
         snapshots.append((repo_servers(dev.repo), dev.base(), report,
-                          {k: v for k, v in plan.items() if isinstance(v, list) and v}))
+                          {k: v for k, v in plan["sections"][mc.SECTIONS[0]].items()
+                           if isinstance(v, list) and v}))
     assert snapshots[1] == snapshots[2], "2주기와 3주기가 다르다 — 고정점이 아니다"
     assert snapshots[2][2]["local_stale"] == ["X"]
     assert snapshots[2][2]["repo_ahead"]["present"] == ["x"]
@@ -238,8 +250,8 @@ def test_v1_migration_restore_reports_unrestorable_without_failures(tmp_path):
     with open(os.path.join(dev.repo, mc.BACKUP_RELPATH), "w", encoding="utf-8") as f:
         json.dump(v1, f)
     plan = dev.restore()
-    assert sorted(plan["unrestorable"]) == ["claude.ai Notion", "context7"]
-    assert plan["add"] == [] and plan["needs_secret"] == []
+    assert sorted(bucket(plan, "unrestorable")) == ["claude.ai Notion", "context7"]
+    assert bucket(plan, "add") == [] and bucket(plan, "needs_secret") == []
     dev.backup()
     assert sorted(repo_servers(dev.repo)) == ["claude.ai Notion", "context7", "playwright"]
 
@@ -272,3 +284,46 @@ def test_skipped_backup_touches_neither_repo_nor_base(tmp_path):
     assert report["status"] == "skipped"
     assert repo_servers(dev.repo) == {"x": A}
     assert dev.base() == {"x": A}
+
+
+GARBAGE = {"url": "https://mcp.example/mcp", "type": "HTTP"}    # 2.x가 긁어 넣은 형태
+
+
+def test_pruned_garbage_does_not_come_back(tmp_path):
+    """spec 4.6 #1·#2 — 지운 뒤 두 번 더 백업해도 되살아나지 않고 보고가 비어 있다.
+
+    3회차와 2회차가 바이트 동일이어야 고정점이다. 기준선이 없는 첫 회차(합집합 degrade)에서도
+    목록이 나오는 것이 이 시나리오의 첫 단정이다.
+    """
+    dev = make_device(tmp_path, {"a": A}, repo_init={"a": A, "claude.ai G": GARBAGE})
+    assert dev.backup()["unrestorable"] == ["claude.ai G"]          # base 없음 — 그래도 실린다
+    assert dev.prune(["claude.ai G"])["pruned"] == ["claude.ai G"]
+    snapshots = []
+    for _ in range(2):
+        report = dev.backup()
+        assert report["unrestorable"] == [] and report["deleted"] == []
+        assert report["repo_ahead"] == {"present": [], "absent": []}
+        snapshots.append((repo_servers(dev.repo), dev.base()))
+    assert snapshots[0] == snapshots[1] == ({"a": A}, {"a": A})
+
+
+def test_a_device_that_really_has_the_server_is_asked_and_brings_it_back(tmp_path):
+    """spec 4.6 #3 — 다른 기기가 실제로 쓰는 서버를 정리했더라도 조용히 사라지지 않는다.
+
+    그 기기에서는 케이스 4(`local_stale`)로 **묻고**, 「유지」를 고르면 다음 백업이 진짜 값을
+    레포에 되돌리며, 되살아난 값은 복원 가능하다. 그 기기의 백업이 레포의 쓰레기 값을 만났을
+    때 `unrestorable`에 싣지 않는 것(로컬에 있다)도 여기서 함께 건다.
+    """
+    real = {"command": "g"}
+    dev = make_device(tmp_path, {"a": A, "g": real}, repo_init={"a": A, "g": real})
+    dev.backup()                                      # base {a, g(real)}
+    set_repo(dev.repo, {"a": A, "g": GARBAGE})        # 2.x가 덮어쓴 흔적
+    report = dev.backup()
+    assert report["repo_ahead"]["present"] == ["g"]   # 케이스 8 — 레포 값이 남는다
+    assert report["unrestorable"] == []               # 이 기기의 로컬에 있으므로 정리 후보가 아니다
+    set_repo(dev.repo, {"a": A})                      # 다른 기기가 6.5단계에서 정리했다
+    plan = dev.restore(keep_stale=["g"])
+    assert bucket(plan, "local_stale") == ["g"]       # 묻는 자리 — 조용한 삭제가 아니다
+    assert dev.local()["g"] == real
+    report = dev.backup()
+    assert repo_servers(dev.repo)["g"] == real and report["unrestorable"] == []
