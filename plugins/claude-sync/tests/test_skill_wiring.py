@@ -317,7 +317,7 @@ COMPAT_WIRING = {
             'python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"',
             COLLECT_MCP_CALL,
             'python3 "$SYNC_SCRIPTS/generate_metadata.py" "$SYNC_REPO/sync-metadata.json"',
-            'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${PUSHED_RELS[@]}"',
+            'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${BASE_RELS[@]}"',
             'python3 "$SYNC_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"',
         ),
     },
@@ -1175,6 +1175,31 @@ def test_backup_base_gate_distinguishes_push_failure_from_staging_failure():
     """
     sec = section("sync-backup", "11. base(.sync-state) 갱신 규칙")
     assert "REPO_HAS_CONTENT=0" in sec and "이미 존재한다" in sec
+
+
+FILE_BASE_CALL = 'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${BASE_RELS[@]}"'
+
+
+def test_backup_advances_file_bases_on_both_success_paths():
+    """②(spec 3.2) — 파일 base 갱신이 "변경사항 없음" 경로와 푸시 성공 경로 **둘 다**에 있고,
+    푸시 실패 경로에는 없다.
+
+    실측(2026-09-01): push가 비고 in_sync만 8개인 백업은 정확히 첫 경로로 빠졌고, 거기에
+    갱신이 없어 파일 기준선이 하나도 생기지 않았다. 그래서 ①이 백업만 하는 기기에서
+    **계속** 재발한다.
+    """
+    block = section("sync-backup", "10. 커밋 & 푸시")
+    sites = [m.start() for m in re.finditer(re.escape(FILE_BASE_CALL), block)]
+    assert len(sites) == 2, "파일 base 갱신 호출이 %d번이다 — 두 경로에 하나씩이어야 한다" % len(sites)
+    quiet = block.index("if git diff --cached --quiet; then")
+    commit = block.index("elif git commit")
+    fail = block.index("푸시에 실패했습니다")
+    assert quiet < sites[0] < commit < sites[1] < fail
+    # 대상은 push ∪ in_sync 이고 reject의 어느 갈래도 아니다.
+    src = block[block.index("mapfile -t BASE_RELS"):quiet]
+    assert "data.get('push', []) + data.get('in_sync', [])" in src
+    assert "reject" not in src, "방향을 모르는 파일의 base가 전진한다"
+    assert "in_sync 파일의 base ← 로컬 내용" in section("sync-backup", "11. base(.sync-state) 갱신 규칙")
 
 
 # 두 수집 단계(backup)와 두 apply-base(restore)가 **한 스킬 안에서** 같은 디렉토리를

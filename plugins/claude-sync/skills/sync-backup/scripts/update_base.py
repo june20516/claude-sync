@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""push된 파일의 base를 로컬 내용으로 갱신한다.
+"""push된 파일과 in_sync 파일의 base를 로컬 내용으로 갱신한다.
 
 사용: update_base.py <source_root> <rel> [<rel> ...]
   source_root: 로컬 기준 루트 (예: ~/.claude)
   rel...: 갱신할 파일들의 상대 경로
 
-push 성공 후 SKILL.md에서 호출한다. 핵심 계약:
-  push된 파일의 base ← 로컬 내용 (다음 sync의 merge-base)
+레포가 이번 결과와 정합한 뒤(푸시 성공, 또는 커밋할 변경 없음) SKILL.md 10단계에서
+호출한다. 핵심 계약:
+  push된 파일과 in_sync 파일의 base ← 로컬 내용 (다음 sync의 merge-base)
+
+`in_sync`가 대상인 이유는 로컬 == 레포이므로 base ← 로컬이 곧 base ← 레포이기
+때문이다. 이것을 빼면 백업만 하는 기기에는 파일 기준선이 영영 생기지 않고, 기준선
+없는 파일이 매번 `reject.no_base`로 뜬다(spec 3.2).
 """
 import os
 import sys

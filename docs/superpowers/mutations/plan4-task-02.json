@@ -1,0 +1,26 @@
+[
+ {"id": "M1", "desc": "축5 입력 축 — 대상에서 in_sync를 뺀다(BACKLOG가 말한 push만)",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "for r in data.get('push', []) + data.get('in_sync', []):",
+  "new": "for r in data.get('push', []):"},
+
+ {"id": "M2", "desc": "축2 축분리 — \"변경사항 없음\" 경로의 갱신 호출을 지운다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "  # **이 경로에도 있어야 한다.** push가 비고 in_sync만 있는 실행이 정확히 여기로 온다.\n  if [ \"${#BASE_RELS[@]}\" -gt 0 ]; then\n    python3 \"$SYNC_SCRIPTS/update_base.py\" \"$HOME/.claude\" \"${BASE_RELS[@]}\"\n  fi\n",
+  "new": ""},
+
+ {"id": "M3", "desc": "축3 {} vs None — 방향을 모르는 파일(no_base)의 base를 전진시킨다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "for r in data.get('push', []) + data.get('in_sync', []):",
+  "new": "for r in data.get('push', []) + data.get('in_sync', []) + data['reject']['no_base']:"},
+
+ {"id": "M4", "desc": "축4 I/O 층 — 푸시 실패 경로에도 갱신 호출을 넣는다",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "  echo \"푸시에 실패했습니다. base를 갱신하지 않습니다.\"",
+  "new": "  echo \"푸시에 실패했습니다. base를 갱신하지 않습니다.\"\n  python3 \"$SYNC_SCRIPTS/update_base.py\" \"$HOME/.claude\" \"${BASE_RELS[@]}\""},
+
+ {"id": "M5", "desc": "축1 훅 호출 계약 — base ← 레포 바이트로 바꾼다(앵커가 어긋난다)",
+  "file": "plugins/claude-sync/skills/sync-backup/SKILL.md",
+  "old": "    python3 \"$SYNC_SCRIPTS/update_base.py\" \"$HOME/.claude\" \"${BASE_RELS[@]}\"\n  fi\nelif git commit",
+  "new": "    python3 \"$SYNC_SCRIPTS/update_base.py\" \"$SYNC_REPO\" \"${BASE_RELS[@]}\"\n  fi\nelif git commit"}
+]

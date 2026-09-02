@@ -458,19 +458,28 @@ BASE_STAGING="${TMPDIR:-/tmp}/claude-sync-base-staging-backup"
 cd "$SYNC_REPO"
 REPO_HAS_CONTENT=0
 
+# 파일 base 갱신 대상 = push ∪ in_sync. **reject의 두 갈래는 넣지 않는다** — remote_ahead는
+# 로컬이 레포에 동의하지 않은 상태이고 no_base는 방향을 모르는 상태다.
+# in_sync는 로컬 == 레포이므로 base ← 로컬이 곧 base ← 레포다. 이것을 넣지 않으면 백업만
+# 하는 기기에는 파일 기준선이 영영 생기지 않는다(실측 — 2026-09-01: 파일 기준선 0개).
+mapfile -t BASE_RELS < <(python3 -c "
+import json
+data = json.load(open('/tmp/claude-sync-reconcile.json'))
+for r in data.get('push', []) + data.get('in_sync', []):
+    print(r)
+")
+
 if git diff --cached --quiet; then
   echo "변경사항이 없습니다. 모든 설정이 최신 상태입니다."
   REPO_HAS_CONTENT=1          # 레포가 이미 이번 결과와 정합하다
+  # **이 경로에도 있어야 한다.** push가 비고 in_sync만 있는 실행이 정확히 여기로 온다.
+  if [ "${#BASE_RELS[@]}" -gt 0 ]; then
+    python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${BASE_RELS[@]}"
+  fi
 elif git commit -m "sync: backup claude settings ($(date '+%Y-%m-%d %H:%M'))" && git push; then
   REPO_HAS_CONTENT=1
-  mapfile -t PUSHED_RELS < <(python3 -c "
-import json
-data = json.load(open('/tmp/claude-sync-reconcile.json'))
-for r in data.get('push', []):
-    print(r)
-")
-  if [ "${#PUSHED_RELS[@]}" -gt 0 ]; then
-    python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${PUSHED_RELS[@]}"
+  if [ "${#BASE_RELS[@]}" -gt 0 ]; then
+    python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${BASE_RELS[@]}"
   fi
 else
   echo "푸시에 실패했습니다. base를 갱신하지 않습니다."
@@ -493,7 +502,7 @@ fi
 
 ### 11. base(.sync-state) 갱신 규칙
 
-**파일**: 커밋 & 푸시에 성공한 경우에만 push된 각 파일의 base를 방금 올린 로컬 내용으로 갱신한다. **핵심 계약: push 성공 파일의 base ← 로컬 내용.**
+**파일**: 레포가 이번 결과와 정합한 경우(푸시 성공, 또는 커밋할 변경 없음)에만 갱신한다. **핵심 계약: push 성공 파일과 in_sync 파일의 base ← 로컬 내용.** `in_sync`는 로컬 == 레포이므로 그것이 곧 레포 내용이다. `reject`의 두 갈래(`remote_ahead`·`no_base`)는 어느 경로에서도 갱신하지 않는다 — 앞의 것은 로컬이 레포에 동의하지 않았고, 뒤의 것은 방향을 모른다. 푸시 실패 경로는 `in_sync`도 갱신하지 않는다 — 옳더라도(레포가 안 바뀌었으니 L == R은 여전하다) "푸시 실패 = base 불변"이라는 한 줄 규칙을 지킨다.
 
 **플러그인과 MCP 서버**: base는 레포 파일의 사본이 아니라 **"이 기기의 로컬이 동의한 부분"만 담는 파생 문서**다. 두 수집 스크립트가 계산한 `next_base`를 **같은 스테이징 디렉토리**에 써 두었다가 여기서 함께 옮긴다.
 
