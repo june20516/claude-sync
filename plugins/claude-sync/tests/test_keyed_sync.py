@@ -108,6 +108,35 @@ def test_load_backup_raises_on_broken_syntax(tmp_path):
     assert ks.load_backup(str(tmp_path / "none.json"), only_dict_with_items) == {}
 
 
+def test_the_skip_reason_states_the_fact_and_leaves_the_remedy_to_the_skill(tmp_path):
+    """⑤의 잔재(spec 5.3) — 코어의 `reason`은 **무슨 일이 있었는지**만 말한다.
+
+    처방은 스킬이 낸다. `broken_syntax`의 복구는 `/sync-backup` 4.5단계가 마지막 정상
+    판본으로 되돌릴지 **묻는** 것이고, 코어는 어느 스킬이 도는지 모른다. 그런데 이
+    메시지만 *"파일을 정상 JSON으로 고친 뒤 다시 실행한다"* 를 달고 있었다 — 행위자가
+    사용자인 그 문장이 spec 5.3이 SKILL.md 여섯 줄에서 걷어낸 바로 그것이고, 세
+    SKILL.md가 `reason`을 그대로 보여주라고 지시하므로 **스크립트 메시지를 통해
+    사용자에게 그대로 도달했다**(실측 — 2026-09-02 실기기 스모크 3-6).
+
+    옆의 `UnknownBackupSchema`가 기준이다 — 사실만 말하고("상위 버전이 쓴 백업일 수
+    있다") 처방("플러그인을 업데이트하라")은 SKILL.md에 있다. `broken_syntax`만 예외였다.
+    """
+    path = tmp_path / "backup.json"
+    path.write_text("{oops", encoding="utf-8")
+    with pytest.raises(ks.BrokenBackupSyntax) as exc:
+        ks.load_backup(str(path), only_dict_with_items)
+    broken = str(exc.value)
+    # 사실은 남는다 — SKILL.md가 `reason_kind`가 아니라 이 문장으로 분기하지는
+    # 않지만(test_report가 그것을 건다), 사용자가 무엇이 일어났는지는 알아야 한다.
+    assert "구문이 깨졌다" in broken and "이 문서를 건너뛴다" in broken
+    # **개수를 함께 건다.** `not in` 목록은 자기 축소를 탐지하지 못한다 — 항목 하나를
+    # 지우면 그 표현으로 쓴 손 복구 지시가 조용히 통과한다(변조 실측).
+    banned_phrasings = ("고친 뒤 다시 실행", "정상 JSON으로 되돌린")
+    assert len(banned_phrasings) == 2
+    for banned in banned_phrasings:
+        assert banned not in broken, "코어가 사용자에게 손 복구를 지시한다: %r" % broken
+
+
 @requires_permission_bits
 def test_load_backup_propagates_permission_error(tmp_path):
     """FileNotFoundError만 {}로 접는다. 다른 OSError를 접으면 못 읽은 백업이

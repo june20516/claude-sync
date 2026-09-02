@@ -1233,7 +1233,24 @@ def base_rels_block():
 # (`BASE_RELS+=(…)`·`${#RELS[@]}`)을 쓰고, 진짜 POSIX sh(dash)에는 배열이 없다.
 # `sh`를 요구하면 지킬 수 없는 계약을 적는 것이 된다. 실제로 스킬을 실행하는 두 셸이
 # 이 둘이고, 앞 판이 깨진 것도 정확히 이 둘에서였다.
-@pytest.mark.parametrize("shell", ["bash", "zsh"])
+PORTABLE_SHELLS = ("bash", "zsh")
+
+
+def test_the_step10_comment_names_the_shells_this_suite_actually_runs():
+    """산문이 주장하는 셸과 위 파라미터화가 재는 셸이 같아야 한다.
+
+    앞 판의 주석은 "while read는 **세 셸**에서 모두 돈다"였는데 `sh`는 프로세스 치환이
+    없어 거짓이었다. 주장이 측정과 묶여 있지 않으면 그 문장은 아무도 재지 않는다 —
+    `mapfile`을 놓친 것이 정확히 그 형태였다(가드가 텍스트만 봤다).
+    """
+    block = section("sync-backup", "10. 커밋 & 푸시")
+    for shell in PORTABLE_SHELLS:
+        assert shell in block, "주석이 %s를 말하지 않는다" % shell
+    assert "세 셸" not in block, "재지 않는 셋째 셸을 주장한다"
+    assert "POSIX sh" in block, "왜 sh가 빠지는지 적지 않았다"
+
+
+@pytest.mark.parametrize("shell", PORTABLE_SHELLS)
 def test_the_base_rels_block_runs_on_the_shells_users_actually_have(tmp_path, shell):
     """②(spec 3.2)의 목록이 **실제로 채워지는가** — 텍스트가 아니라 실행으로 잰다.
 
