@@ -294,6 +294,7 @@ COMPAT_CALL = 'python3 "$SYNC_LIB/compat.py" "$SYNC_REPO"'
 # 엉뚱한 줄을 보게 되고 아무도 그것을 알아채지 못한다.
 COLLECT_PLUGINS_CALL = 'python3 "$SYNC_SCRIPTS/collect_plugins.py" "$SYNC_REPO" "$BASE_STAGING"'
 COLLECT_MCP_CALL = 'python3 "$SYNC_SCRIPTS/collect_mcp.py" "$SYNC_REPO" "$BASE_STAGING"'
+PRUNE_CALL = 'python3 "$SYNC_SCRIPTS/prune_mcp.py" "$SYNC_REPO"'
 GENERATE_METADATA_CALL = ('python3 "$SYNC_SCRIPTS/generate_metadata.py"'
                           ' "$SYNC_REPO/sync-metadata.json" "$SYNC_REPO"')
 # 4단계의 제외 삭제 블록. 표식은 이 뒤에서 걷어야 한다(spec 3.3).
@@ -322,6 +323,7 @@ COMPAT_WIRING = {
             COLLECT_PLUGINS_CALL,
             'python3 "$SYNC_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"',
             COLLECT_MCP_CALL,
+            PRUNE_CALL,
             GENERATE_METADATA_CALL,
             'python3 "$SYNC_SCRIPTS/update_base.py" "$HOME/.claude" "${BASE_RELS[@]}"',
             'python3 "$SYNC_SCRIPTS/update_base.py" "$BASE_STAGING" "${RELS[@]}"',
@@ -1271,6 +1273,48 @@ def test_backup_base_gate_covers_both_relpaths():
     # spec 7.4가 막으려던 상태가 된다 — 파일 존재만으로는 그것을 막지 못한다.
     assert '[ "$REPO_HAS_CONTENT" = "1" ]' in block
     assert '[ -f "$MCP_STAGING/mcp-servers.json" ]' not in read_skill("sync-backup")
+
+
+def test_backup_prunes_between_mcp_collection_and_the_marker():
+    """spec 4.4 — 6.5단계는 6단계(정리 후보를 내는 곳) 뒤, 7단계(표식) 앞이다. 10단계의
+    커밋이 그 삭제를 함께 올린다."""
+    text = read_skill("sync-backup")
+    for anchor in ("### 6. mcp-servers.json", "### 6.5 복원 불가 항목 정리", "### 7. sync-metadata.json"):
+        assert anchor in text, anchor
+    assert (text.index("### 6. mcp-servers.json") < text.index("### 6.5 복원 불가 항목 정리")
+            < text.index("### 7. sync-metadata.json"))
+    assert (index_of(text, COLLECT_MCP_CALL, "sync-backup") < index_of(text, PRUNE_CALL, "sync-backup")
+            < index_of(text, GENERATE_METADATA_CALL, "sync-backup"))
+
+
+def test_backup_prune_step_asks_once_with_both_notices_and_suppresses_on_downgrade():
+    """spec 4.4·4.5 — 목록 전체에 한 번 묻고, 고지 둘(판정이 버전에 묶여 있다 / 다른 기기가
+    실제로 쓰면 묻는다)을 담고, 다운그레이드가 의심되면 정리 선택지를 주지 않는다."""
+    sec = section("sync-backup", "6.5 복원 불가 항목 정리")
+    assert "`unrestorable`" in sec and "`unrestorable_reasons`" in sec
+    assert "레포에서 정리한다" in sec and "이번엔 넘어간다" in sec
+    assert "목록 전체에 한 번 묻는다" in sec
+    assert "이 버전이 아는 형식" in sec, "판정이 버전에 묶여 있음을 고지하지 않는다"
+    assert "묻고" in sec and "조용히 사라지지 않습니다" in sec
+    assert '`files["%s"]`' % mc.BACKUP_RELPATH in sec and "`downgrade_suspected`" in sec
+    assert "정리 선택지를 주지 않는다" in sec
+    assert "`pruned`" in sec and "`refused`" in sec
+    assert "기억하지 않는다" in sec
+    # 4.6과 같은 자리의 실수를 막는다 — 그 문서 하나만 본다.
+    assert '`files["%s"]`' % pc.BACKUP_RELPATH not in sec, "plugins.json 판정으로 억제한다"
+
+
+def test_backup_mcp_table_excepts_unrestorable_from_the_install_promise():
+    """spec 4.2 — `repo_ahead.absent`의 "restore가 설치합니다"를 복원 불가 이름에는 쓰지 않는다."""
+    sec = section("sync-backup", "6. mcp-servers.json 생성")
+    assert "`unrestorable`에 있는 이름에는 쓰지 않는다" in sec
+    assert "6.5단계" in sec
+
+
+def test_backup_report_lists_what_was_pruned():
+    sec = section("sync-backup", "12. 결과 보고")
+    assert "`pruned`" in sec and "`refused`" in sec
+
 
 
 def test_restore_clears_the_shared_staging_before_both_apply_base_calls():
