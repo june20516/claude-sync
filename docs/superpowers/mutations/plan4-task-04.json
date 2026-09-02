@@ -1,0 +1,37 @@
+[
+ {
+  "id": "M1",
+  "desc": "축2 축분리 — 분할 조건을 뒤집는다(기준선 있는 충돌을 no_base로)",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/check_status.py",
+  "old": "    if cls == \"conflict\" and S is None:",
+  "new": "    if cls == \"conflict\" and S is not None:"
+ },
+ {
+  "id": "M2",
+  "desc": "축3 {} vs None — 분할을 통째로 지운다(옛 거짓 머리말로 되돌아간다)",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/check_status.py",
+  "old": "    if cls == \"conflict\" and S is None:\n        cls = \"no_base\"\n",
+  "new": ""
+ },
+ {
+  "id": "M3",
+  "desc": "축4 I/O 층 — 버킷은 채우되 labels에서 빼 찍히지 않게 한다",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/check_status.py",
+  "old": "    (\"no_base\", \"⚠ 기준선 없음 — 어느 쪽이 앞선지 알 수 없음 (restore 시 선택 필요)\"),\n",
+  "new": ""
+ },
+ {
+  "id": "M4",
+  "desc": "축5 입력 축 — 테스트의 대조군(기준선 쓰기) 절반을 삭제한다. **등가 변조**이므로 SURVIVED가 정상이고, 대조군이 사라진 것은 리뷰가 잡는다",
+  "file": "plugins/claude-sync/tests/test_reconcile.py",
+  "old": "    base = home / \".claude\" / \".sync-state\" / \"base\" / \"agents\"\n    base.mkdir(parents=True)\n    (base / \"keep.md\").write_text(\"옛 판본\")           # L ≠ S, R ≠ S → 진짜 충돌\n    out = run_check_status(home, repo).stdout\n    assert section_of(out, \"agents/keep.md\").startswith(\"⚠ 충돌 — 양쪽 변경\")\n    assert \"기준선 없음\" not in out\n",
+  "new": ""
+ },
+ {
+  "id": "M5",
+  "desc": "축1 훅 호출 계약 — 스크립트 머리말을 산문과 어긋나게 바꾼다",
+  "file": "plugins/claude-sync/skills/sync-status/scripts/check_status.py",
+  "old": "\"⚠ 기준선 없음 — 어느 쪽이 앞선지 알 수 없음 (restore 시 선택 필요)\"",
+  "new": "\"⚠ 기준선 미확정 — 방향 불명 (restore 시 선택 필요)\""
+ }
+]

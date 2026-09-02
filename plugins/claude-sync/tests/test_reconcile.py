@@ -372,6 +372,27 @@ def test_without_syncignore_the_same_file_is_reported(tmp_path):
     assert "agents/keep.md" in out
 
 
+def test_status_does_not_call_a_baseless_difference_a_two_sided_change(tmp_path):
+    """spec 3.4 — 기준선 없는 L≠R은 "양쪽 변경"이 아니라 "기준선 없음"이다.
+
+    `classify`는 그것을 conflict로 낸다(판정으로는 옳다 — 어느 쪽이 앞선지 모르니 restore가
+    선택을 받아야 한다). 거짓인 것은 머리말이다 — 아무도 양쪽을 바꾸지 않았을 수 있다.
+    대조군: 기준선을 두면 같은 파일이 진짜 충돌 머리말 아래로 간다.
+    """
+    home, repo = status_fixture(tmp_path)
+    (repo / "agents" / "keep.md").write_text("레포 판본")
+    out = run_check_status(home, repo).stdout
+    assert section_of(out, "agents/keep.md").startswith("⚠ 기준선 없음")
+    assert "양쪽 변경" not in out
+
+    base = home / ".claude" / ".sync-state" / "base" / "agents"
+    base.mkdir(parents=True)
+    (base / "keep.md").write_text("옛 판본")           # L ≠ S, R ≠ S → 진짜 충돌
+    out = run_check_status(home, repo).stdout
+    assert section_of(out, "agents/keep.md").startswith("⚠ 충돌 — 양쪽 변경")
+    assert "기준선 없음" not in out
+
+
 def run_reconcile_backup(home, repo):
     script = os.path.join(
         os.path.dirname(__file__), "..", "skills", "sync-backup", "scripts",

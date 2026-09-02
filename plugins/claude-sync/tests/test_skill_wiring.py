@@ -1660,6 +1660,19 @@ def test_status_step2_does_not_promise_a_metadata_branch():
     assert "단순 diff" not in sec
 
 
+
+def test_status_names_the_no_base_bucket_with_the_scripts_own_heading():
+    """spec 3.4 — 2단계가 `no_base` 묶음의 머리말을 스크립트에서 뽑은 그대로 싣고, 3단계의
+    어휘에도 그 갈래가 있다. 머리말을 손으로 적지 않는다 — excluded_in_repo와 같은 처방."""
+    with open(os.path.join(SKILLS_DIR, "sync-status", "scripts", "check_status.py"),
+              encoding="utf-8") as f:
+        label = re.search(r'\("no_base", "(.+?)"\)', f.read())
+    assert label, "check_status.py에서 no_base 머리말을 뽑지 못했다"
+    step2 = section("sync-status", "2. 로컬과 레포의 차이 분석")
+    assert label.group(1) in step2, "2단계가 그 묶음의 머리말을 그대로 싣지 않는다"
+    assert "`no_base`" in step2 and "양쪽 변경\"이 아니다" in step2
+    assert "- **no_base**" in section("sync-status", "3. 결과 요약")
+
 def test_extract_plugins_is_gone_everywhere():
     """12장 — 스킬이 새 스크립트를 부르게 된 뒤에 지운다. 그 전에 지우면 백업이 깨진다."""
     scripts = os.path.join(SKILLS_DIR, "sync-backup", "scripts")

@@ -112,7 +112,7 @@ python3 "$SYNC_BACKUP_SCRIPTS/detect_downgrade.py" "$SYNC_REPO"
 
 **여기서 `sync-metadata.json`은 읽지 않는다.** 그 파일을 보는 곳은 1.5단계의 호환성 검사 하나이고, 거기서 읽는 것은 `min_reader_version`·`written_by_version` 둘뿐이다 — `schema`와 `files` 맵을 읽는 곳은 프로덕션에 없다(실측). `check_status.py`에는 표식 유무로 갈리는 **분기가 없다** — 언제나 같은 base 해시 경로를 탄다.
 
-아직 base가 없는 파일은 로컬과 레포가 다르면 `conflict`로 분류된다. 어느 쪽이 앞선 것인지 판단할 근거가 없기 때문이며, 이것도 분기가 아니라 같은 3-way 분류의 결과다.
+아직 base가 없는 파일은 로컬과 레포가 다르면 **`no_base`**로 따로 묶인다 — 어느 쪽이 앞선 것인지 판단할 근거가 없기 때문이다. 3-way 분류로는 `conflict`와 같은 자리이지만 **"양쪽 변경"이 아니다** — 아무도 양쪽을 바꾸지 않았을 수 있다(실측 — 2026-09-01의 `agents/code-reviewer.md`는 로컬만 앞서 있었다). 스크립트가 찍는 머리말은 `⚠ 기준선 없음 — 어느 쪽이 앞선지 알 수 없음 (restore 시 선택 필요)`이다. 이것도 분기가 아니라 같은 3-way 분류의 결과를 기준선 유무로 가른 것이다.
 
 **`~/.claude/.syncignore`에 걸린 로컬 파일은 이 보고에 나오지 않는다.** 이 스크립트는 레포가 아니라 `~/.claude`를 직접 걷기 때문에 필터가 없으면 제외한 파일이 "backup 시 push"로 보고된다 — 백업은 그것을 실제로 push하지 않으므로 **보고만 어긋나는** 자리다. 매칭 규칙은 백업 4단계·`reconcile_backup.py`와 같은 한 벌(`lib/syncignore.py`)이고 — 백업 7단계의 `sync-metadata.json`은 이 필터의 소비자가 아니다(4단계가 지운 레포 트리를 걷는다), `.syncignore`가 무엇을 뜻하는지의 정본은 그 파일의 모듈 docstring이다 — **"올리지 않는다"(backup 방향 전용)**.
 
@@ -180,6 +180,7 @@ fi
 - **repo_only**: 레포에만 있는 새 파일 → restore 시 추가
 - **local_ahead / local_only**: 로컬이 앞섬 → backup 시 push
 - **conflict**: 양쪽 모두 base 이후 변경 → restore 시 해소 필요
+- **no_base**: 기준선이 없어 방향을 알 수 없음 → restore 시 양쪽을 보고 선택. 「백업 채택」은 로컬 변경을 버린다
 
 **플러그인과 MCP 서버의 어휘는 파일과 다르다.** 위의 "local_ahead / local_only: 로컬이 앞섬 → backup 시 push"는 그 둘에 적용되지 않는다. **버킷별 문구는 2단계를 따른다 — 여기에 정의를 다시 적지 않는다.** 두 벌이 되면 요약을 만드는 이 자리의 옛 정의가 2단계의 지시를 덮어써, `unrestorable` 항목에 "restore가 설치합니다"라고 말하거나 보류 항목을 `only_local`·`changed`로 내보내게 된다 — 둘 다 spec 9.2가 금지한 문구다.
 
