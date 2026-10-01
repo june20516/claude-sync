@@ -16,7 +16,7 @@ Works with just Git. If you need to install plugins afterwards, run `/sync-resto
 ### Option 2: claude-sync plugin
 
 ```bash
-claude plugin marketplace add claude-sync --source github --repo june20516/claude-sync
+claude plugin marketplace add june20516/claude-sync
 claude plugin install claude-sync@claude-sync
 ```
 

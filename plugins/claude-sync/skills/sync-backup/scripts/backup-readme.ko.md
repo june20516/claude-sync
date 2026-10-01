@@ -16,7 +16,7 @@ Git만 있으면 동작합니다. 파일 복원 후 플러그인 설치가 필�
 ### 방법 2: claude-sync 플러그인
 
 ```bash
-claude plugin marketplace add claude-sync --source github --repo june20516/claude-sync
+claude plugin marketplace add june20516/claude-sync
 claude plugin install claude-sync@claude-sync
 ```
 

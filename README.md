@@ -5,7 +5,7 @@ A Claude Code plugin that syncs your settings across devices via a Git repositor
 ## Installation
 
 ```bash
-claude plugin marketplace add claude-sync --source github --repo june20516/claude-sync
+claude plugin marketplace add june20516/claude-sync
 claude plugin install claude-sync@claude-sync
 ```
 
@@ -42,7 +42,7 @@ On first run, you'll be prompted for a backup Git repo URL. It will be reused au
 **Option 1: Install the plugin first, then restore**
 
 ```bash
-claude plugin marketplace add claude-sync --source github --repo june20516/claude-sync
+claude plugin marketplace add june20516/claude-sync
 claude plugin install claude-sync@claude-sync
 ```
 

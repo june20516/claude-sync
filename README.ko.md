@@ -5,7 +5,7 @@ Claude Code 설정을 Git 레포를 통해 기기 간 동기화하는 플러그�
 ## 설치
 
 ```bash
-claude plugin marketplace add claude-sync --source github --repo june20516/claude-sync
+claude plugin marketplace add june20516/claude-sync
 claude plugin install claude-sync@claude-sync
 ```
 
@@ -42,7 +42,7 @@ MCP 서버는 `~/.claude.json`의 top-level `mcpServers`(user 스코프)만 동�
 **방법 1: 플러그인 설치 후 복원**
 
 ```bash
-claude plugin marketplace add claude-sync --source github --repo june20516/claude-sync
+claude plugin marketplace add june20516/claude-sync
 claude plugin install claude-sync@claude-sync
 ```
 
